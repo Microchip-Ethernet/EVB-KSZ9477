@@ -1,0 +1,148 @@
+
+choice
+	prompt "Micrel Centaur Implementations"
+	depends on ARCH_MICREL_CENTAUR
+	default ARCH_KS8695P
+
+config ARCH_KS8695X
+	bool "KS8695X"
+	select KS8695X
+	help
+	  Support for KS8695X Soho Router platforms.
+
+config ARCH_KS8695P
+	bool "KS8695P"
+	select KS8695P
+	help
+	  Include support for KS8695P and KS8695P/X wireless Soho Router platforms.
+
+config ARCH_KS8695PM
+        bool "KS8695PM Mediabox"
+	select KS8695P
+	select KS8695M
+        help
+          Include support for KS8695PM Mediabox platforms.
+
+config ARCH_KS8695MB
+        bool "KS8695MB Mediabox"
+	select KS8695P
+	select KS8695M
+        help
+          Include support for KS8695MB Mediabox platforms.
+
+config ARCH_KS8695V
+        bool "KS8695PX VoIP"
+	select KS8695P
+        help
+          Include support for KS8695PX VoIP platforms.
+
+config ARCH_KS8695L
+        bool "KS8695L"
+	select KS8695X
+        help
+          Include support for KS8695L Soho Router platforms.
+
+endchoice
+
+choice
+	prompt "KS8695PX VoIP Revisions"
+	depends on ARCH_KS8695V
+	default KS8695V1
+
+config KS8695V0
+	bool "KS8695V0"
+	help
+	  Support for 16-bit KS8695PX VoIP platforms.
+
+config KS8695V1
+	bool "KS8695V1"
+	help
+	  Support for 32-bit KS8695PX VoIP platforms.
+
+config KS8695VS
+	bool "KS8695VS"
+	help
+	  Support for 16-bit/32-bit KS8695PX VoIP platforms.
+endchoice
+
+config ARCH_KS8695S
+	bool "KS8695P Special"
+	default n
+	depends on ARCH_KS8695P
+	help
+	  Support for special KS8695P Soho Router platforms.
+
+config KS8695PG
+	bool "KS8695P PCI Guest"
+	default n
+	depends on ARCH_KS8695P
+	help
+	  Support for KS8695P PCI Guest Mode.
+
+config VOIP_4PORT
+	bool "KS8695PX 4-port VoIP"
+	default n
+	depends on ARCH_KS8695P
+	help
+	  Support for KS8695PX with 4-port VoIP daughter board.
+
+config KS884X_LOAD_BOARD
+	bool "KS884X Load Board"
+	default n
+	depends on ARCH_KS8695X
+	help
+	  Support for KS884X Load Board.
+
+config KS8695P
+	bool
+	help
+	  KS8695P-based chip support.
+
+config KS8695X
+	bool
+	help
+	  KS8695X-based chip support.
+
+config KS8695M
+	bool
+	help
+	  KS8695P Mediabox support.
+
+config DELAYED_TIMER
+	bool "Enable delayed timer"
+	default n
+	depends on ARCH_MICREL_CENTAUR
+	help
+	  Enable microsecond timer for delayed tasks.
+
+config U_BOOT_LOADER
+	bool "Use U-Boot loader"
+	default n
+	depends on ARCH_MICREL_CENTAUR
+	help
+	  Use U-Boot loader instead of original Micrel bootloader.
+
+config CENTAUR_LOADER_SIZE
+	hex "Bootloader size"
+	depends on ARCH_MICREL_CENTAUR
+	default "0x10000"
+	help
+	  This is the maximum size of the bootloader for the Centaur
+	  KS8695P/X chips.
+
+config CENTAUR_KERNEL_SIZE
+	hex "Kernel size"
+	depends on ARCH_MICREL_CENTAUR
+	default "0xE0000"
+	help
+	  This is the maximum size of the kernel for the Centaur
+	  KS8695P/X chips.
+
+config CENTAUR_FS_SIZE
+	hex "Filesystem size"
+	depends on ARCH_MICREL_CENTAUR
+	default "0x60000"
+	help
+	  This is the size of the non-volatile filesystem for the
+	  Centaur KS8695P/X chips.
+

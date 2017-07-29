@@ -1,0 +1,223 @@
+diff -purN uboot-linux4sam_5.3.orig/board/atmel/sama5d3_xplained/sama5d3_xplained.c uboot-linux4sam_5.3/board/atmel/sama5d3_xplained/sama5d3_xplained.c
+--- uboot-linux4sam_5.3.orig/board/atmel/sama5d3_xplained/sama5d3_xplained.c	2016-04-13 18:26:28.000000000 -0700
++++ uboot-linux4sam_5.3/board/atmel/sama5d3_xplained/sama5d3_xplained.c	2016-09-09 13:23:48.935549395 -0700
+@@ -16,12 +16,44 @@
+ #include <atmel_mci.h>
+ #include <net.h>
+ #include <netdev.h>
++#include <spi.h>
+ #include <spl.h>
+ #include <asm/arch/atmel_mpddrc.h>
+ #include <asm/arch/at91_wdt.h>
+ 
+ DECLARE_GLOBAL_DATA_PTR;
+ 
++#ifndef CONFIG_DM_SPI
++int spi_cs_is_valid(unsigned int bus, unsigned int cs)
++{
++	return bus <= 1 && cs == 0;
++}
++
++void spi_cs_activate(struct spi_slave *slave)
++{
++	at91_set_pio_output(AT91_PIO_PORTC, 25, 0);
++}
++
++void spi_cs_deactivate(struct spi_slave *slave)
++{
++	at91_set_pio_output(AT91_PIO_PORTC, 25, 1);
++}
++#endif
++
++#ifdef CONFIG_ATMEL_SPI1
++static void board_spi1_hw_init(void)
++{
++	at91_set_a_periph(AT91_PIO_PORTC, 22, 0);	/* SPI1_MISO */
++	at91_set_a_periph(AT91_PIO_PORTC, 23, 0);	/* SPI1_MOSI */
++	at91_set_a_periph(AT91_PIO_PORTC, 24, 0);	/* SPI1_SPCK */
++
++	at91_set_pio_output(AT91_PIO_PORTC, 25, 1);	/* SPI1_CS0 */
++
++	/* Enable clock */
++	at91_periph_clk_enable(ATMEL_ID_SPI1);
++}
++#endif
++
+ #ifdef CONFIG_NAND_ATMEL
+ void sama5d3_xplained_nand_hw_init(void)
+ {
+@@ -89,6 +121,9 @@ int board_init(void)
+ 	/* adress of boot parameters */
+ 	gd->bd->bi_boot_params = CONFIG_SYS_SDRAM_BASE + 0x100;
+ 
++#ifdef CONFIG_ATMEL_SPI1
++	board_spi1_hw_init();
++#endif
+ #ifdef CONFIG_NAND_ATMEL
+ 	sama5d3_xplained_nand_hw_init();
+ #endif
+@@ -117,8 +152,10 @@ int board_eth_init(bd_t *bis)
+ {
+ #ifdef CONFIG_MACB
+ 	macb_eth_initialize(0, (void *)ATMEL_BASE_GMAC, 0x00);
++#ifndef CONFIG_SYS_HAVE_KSZ9897
+ 	macb_eth_initialize(0, (void *)ATMEL_BASE_EMAC, 0x00);
+ #endif
++#endif
+ 	return 0;
+ }
+ 
+diff -purN uboot-linux4sam_5.3.orig/cmd/Kconfig uboot-linux4sam_5.3/cmd/Kconfig
+--- uboot-linux4sam_5.3.orig/cmd/Kconfig	2016-04-13 18:26:28.000000000 -0700
++++ uboot-linux4sam_5.3/cmd/Kconfig	2016-09-08 19:40:00.490510580 -0700
+@@ -337,6 +337,11 @@ config CMD_SPI
+ 	help
+ 	  SPI utility command.
+ 
++config CMD_SPI_KSZ
++	bool "sspi_ksz"
++	help
++	  KSZ SPI utility command.
++
+ config CMD_I2C
+ 	bool "i2c"
+ 	help
+diff -purN uboot-linux4sam_5.3.orig/cmd/Makefile uboot-linux4sam_5.3/cmd/Makefile
+--- uboot-linux4sam_5.3.orig/cmd/Makefile	2016-04-13 18:26:28.000000000 -0700
++++ uboot-linux4sam_5.3/cmd/Makefile	2016-09-08 19:38:27.956717217 -0700
+@@ -115,6 +115,7 @@ obj-$(CONFIG_CMD_SHA1SUM) += sha1sum.o
+ obj-$(CONFIG_CMD_SETEXPR) += setexpr.o
+ obj-$(CONFIG_CMD_SOFTSWITCH) += softswitch.o
+ obj-$(CONFIG_CMD_SPI) += spi.o
++obj-$(CONFIG_CMD_SPI_KSZ) += spi_ksz.o
+ obj-$(CONFIG_CMD_SPIBOOTLDR) += spibootldr.o
+ obj-$(CONFIG_CMD_STRINGS) += strings.o
+ obj-$(CONFIG_CMD_TERMINAL) += terminal.o
+diff -purN uboot-linux4sam_5.3.orig/drivers/net/macb.c uboot-linux4sam_5.3/drivers/net/macb.c
+--- uboot-linux4sam_5.3.orig/drivers/net/macb.c	2016-04-13 18:26:28.000000000 -0700
++++ uboot-linux4sam_5.3/drivers/net/macb.c	2016-09-07 14:41:55.173095747 -0700
+@@ -126,12 +126,22 @@ static int gem_is_gigabit_capable(struct
+ 	return macb_is_gem(macb) && !cpu_is_sama5d2() && !cpu_is_sama5d4();
+ }
+ 
++#ifdef CONFIG_SYS_HAVE_KSZ9897
++static uchar default_eth_mac[] = {
++	0x00, 0x10, 0xA1, 0x98, 0x97, 0x01
++};
++#endif
++
+ static void macb_mdio_write(struct macb_device *macb, u8 reg, u16 value)
+ {
+ 	unsigned long netctl;
+ 	unsigned long netstat;
+ 	unsigned long frame;
+ 
++#ifdef CONFIG_SYS_HAVE_KSZ9897
++	if (!macb->phy_addr)
++		return;
++#endif
+ 	netctl = macb_readl(macb, NCR);
+ 	netctl |= MACB_BIT(MPE);
+ 	macb_writel(macb, NCR, netctl);
+@@ -159,6 +169,35 @@ static u16 macb_mdio_read(struct macb_de
+ 	unsigned long netstat;
+ 	unsigned long frame;
+ 
++#ifdef CONFIG_SYS_HAVE_KSZ9897
++	u16 status = 0xffff;
++
++	if (macb->phy_addr)
++		goto mdio;
++	switch (reg) {
++	case MII_PHYSID1:
++		status = 0x1622;
++		break;
++	case MII_BMSR:
++		status = BMSR_LSTATUS;
++		break;
++	case MII_ADVERTISE:
++		status = (ADVERTISE_100FULL | ADVERTISE_100HALF |
++			ADVERTISE_10FULL | ADVERTISE_10HALF);
++		break;
++	case MII_LPA:
++		status = (ADVERTISE_100FULL | ADVERTISE_100HALF |
++			ADVERTISE_10FULL | ADVERTISE_10HALF);
++		break;
++	case MII_STAT1000:
++		status = LPA_1000FULL | LPA_1000HALF;
++		break;
++	}
++	return status;
++
++mdio:
++#endif
++
+ 	netctl = macb_readl(macb, NCR);
+ 	netctl |= MACB_BIT(MPE);
+ 	macb_writel(macb, NCR, netctl);
+@@ -479,6 +518,7 @@ static int macb_phy_init(struct macb_dev
+ #endif
+ 
+ 	status = macb_mdio_read(macb, MII_BMSR);
++	status = macb_mdio_read(macb, MII_BMSR);
+ 	if (!(status & BMSR_LSTATUS)) {
+ 		/* Try to re-negotiate if we don't have link already. */
+ 		macb_phy_reset(macb);
+@@ -792,6 +832,30 @@ int macb_eth_initialize(int id, void *re
+ 
+ 	macb_writel(macb, NCFGR, ncfgr);
+ 
++#ifdef CONFIG_SYS_HAVE_KSZ9897
++	do {
++		int ret;
++		uchar enetaddr[6];
++
++		ret = eth_getenv_enetaddr("ethaddr", enetaddr);
++		if (!ret) {
++			memcpy(enetaddr, default_eth_mac, 6);
++			eth_setenv_enetaddr("ethaddr", enetaddr);
++		}
++		memcpy(netdev->enetaddr, enetaddr, 6);
++		phy_addr = getenv_ulong("phyaddr", 10, 0);
++		macb->phy_addr = phy_addr;
++		if (phy_addr) {
++			ret = macb_mdio_read(macb, MII_BMCR);
++			if (ret != 0xffff && (ret & BMCR_PDOWN)) {
++				macb_mdio_write(macb, MII_BMCR,
++					ret & ~BMCR_PDOWN);
++				udelay(100);
++			}
++		}
++	} while (0);
++#endif
++
+ 	eth_register(netdev);
+ 
+ #if defined(CONFIG_CMD_MII) || defined(CONFIG_PHYLIB)
+diff -purN uboot-linux4sam_5.3.orig/include/configs/sama5d3_xplained.h uboot-linux4sam_5.3/include/configs/sama5d3_xplained.h
+--- uboot-linux4sam_5.3.orig/include/configs/sama5d3_xplained.h	2016-04-13 18:26:28.000000000 -0700
++++ uboot-linux4sam_5.3/include/configs/sama5d3_xplained.h	2016-09-08 19:47:17.926988393 -0700
+@@ -80,6 +80,23 @@
+ #define CONFIG_CMD_MII
+ #define CONFIG_PHYLIB
+ 
++#ifdef CONFIG_SYS_HAVE_KSZ9897
++#undef CONFIG_MACB_SEARCH_PHY
++#undef CONFIG_CMD_MII
++#undef CONFIG_PHYLIB
++#endif
++
++/* SPI */
++#ifdef CONFIG_CMD_SPI_KSZ
++
++#define CONFIG_ATMEL_SPI
++#define CONFIG_ATMEL_SPI1
++#define CONFIG_DEFAULT_SPI_BUS		1
++#define CONFIG_DEFAULT_SPI_CS		0
++#define CONFIG_DEFAULT_SPI_SPEED	19000000
++#define CONFIG_DEFAULT_SPI_MODE		SPI_MODE_3
++#endif
++
+ /* MMC */
+ #define CONFIG_CMD_MMC
+ 

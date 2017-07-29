@@ -1,0 +1,70 @@
+#!/bin/sh
+#
+# Create a bridge linking two devices.
+#
+
+
+create_br_dev() {
+    ETH=0
+
+    if [ ! -z "$1" ]; then
+        ETH=$1
+    fi
+
+    VLAN=0
+    if [ -e "/sys/class/net/eth$ETH/sw/two_dev" ]; then
+        VLAN=$(cat /sys/class/net/eth$ETH/sw/two_dev)
+    fi
+    [ $VLAN -eq 0 ] && exit 0
+
+    ETHDEV=eth
+    PORTS=2
+
+    IP=$(ifconfig eth$ETH | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1)
+    SUBNET1=$(echo "$IP" | cut -d"." -f1)
+    SUBNET2=$(echo "$IP" | cut -d"." -f2)
+    SUBNET3=$(echo "$IP" | cut -d"." -f3)
+    SUBNET4=$(echo "$IP" | cut -d"." -f4)
+
+    MAC=$(ifconfig eth$ETH | grep "HWaddr " | cut -d" " -f11)
+    MAC_1=$(echo $MAC | cut -d":" -f1)
+    MAC_2=$(echo $MAC | cut -d":" -f2)
+    MAC_3=$(echo $MAC | cut -d":" -f3)
+    MAC_4=$(echo $MAC | cut -d":" -f4)
+    MAC_5=$(echo $MAC | cut -d":" -f5)
+    MAC_6=$(echo $MAC | cut -d":" -f6)
+
+    p=$ETH
+    while [ $p -lt $PORTS ]; do
+        ifconfig $ETHDEV$p hw ether $MAC
+        ifconfig $ETHDEV$p 0.0.0.0
+        let p=$p+1
+    done
+
+    brctl addbr br0
+
+    p=$ETH
+    while [ $p -lt $PORTS ]; do
+        brctl addif br0 $ETHDEV$p
+        let p=$p+1
+    done
+
+    ifconfig br0 $SUBNET1.$SUBNET2.$SUBNET3.$SUBNET4
+}
+
+start() {
+    create_br_dev
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        ;;
+    *)
+        echo "Usage: $0 {start}"
+        exit 1
+esac
+
+exit $?

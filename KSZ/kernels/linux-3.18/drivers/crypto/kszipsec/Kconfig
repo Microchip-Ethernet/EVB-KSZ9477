@@ -1,0 +1,45 @@
+
+config CRYPTO_DEV_KSZIPSEC
+	tristate "Pegasus IPsec driver"
+	depends on CRYPTO && ARCH_MICREL_PEGASUS
+	select CRYPTO_BLKCIPHER
+	default y
+	---help---
+	  This is not an option for Micrel Pegasus KSZ8692 family.  Say Y
+	  to include the IPsec driver in the kernel or M to load the
+	  driver as a module.
+
+config USE_KSZCRYPT
+	bool "Use Pegasus crypto engine"
+	depends on CRYPTO_DEV_KSZIPSEC
+	default y
+	help
+	  Say Y here in order to use the Pegasus crypto engine.
+
+config USE_KSZIPSEC
+	bool "Use Pegasus IPsec code"
+	depends on CRYPTO_DEV_KSZIPSEC
+	default n
+	help
+	  Say Y here in order to use the Pegasus IPsec code.
+
+config TEST_KSZIPSEC
+	bool "Test Pegasus IPsec code"
+	depends on CRYPTO_DEV_KSZIPSEC && !USE_KSZIPSEC
+	help
+	  Say Y here in order to test the Pegasus IPsec code.
+
+config DEBUG_KSZIPSEC
+	bool "Pegasus IPsec debug"
+	depends on CRYPTO_DEV_KSZIPSEC
+	help
+	  Say Y here in order to have the Pegasus IPsec code generate
+	  verbose debugging messages.
+
+config SIM_IPSEC
+	bool "Simulate IPsec for testing"
+	depends on CRYPTO_DEV_KSZIPSEC
+	help
+	  Say Y here in order to create initial IPsec connections for
+	  testing.
+

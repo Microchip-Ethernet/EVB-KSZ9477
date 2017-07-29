@@ -1,0 +1,10 @@
+--- Makefile.orig	2015-05-29 00:22:57.000000000 -0700
++++ Makefile	2015-06-19 13:08:03.541924420 -0700
+@@ -6,4 +6,7 @@ dsa_core-y += dsa.o slave.o
+ dsa_core-$(CONFIG_NET_DSA_TAG_BRCM) += tag_brcm.o
+ dsa_core-$(CONFIG_NET_DSA_TAG_DSA) += tag_dsa.o
+ dsa_core-$(CONFIG_NET_DSA_TAG_EDSA) += tag_edsa.o
++ifndef CONFIG_NET_DSA_TAG_TAIL
+ dsa_core-$(CONFIG_NET_DSA_TAG_TRAILER) += tag_trailer.o
++endif
++dsa_core-$(CONFIG_NET_DSA_TAG_TAIL) += tag_tail.o

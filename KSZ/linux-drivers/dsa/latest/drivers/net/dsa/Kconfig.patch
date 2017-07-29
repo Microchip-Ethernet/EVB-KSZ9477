@@ -1,0 +1,15 @@
+--- Kconfig.orig	2015-05-29 00:22:53.000000000 -0700
++++ Kconfig	2015-06-19 13:08:03.349921495 -0700
+@@ -57,4 +57,12 @@ config NET_DSA_BCM_SF2
+ 	  This enables support for the Broadcom Starfighter 2 Ethernet
+ 	  switch chips.
+ 
++config NET_DSA_MICREL_TAIL_TAG
++	bool "Micrel tail tagging switch chip support"
++	select NET_DSA
++	select NET_DSA_TAG_TAIL
++	---help---
++	  This enables support for the Micrel ethernet switch chips with tail
++	  tag feature.
++
+ endmenu

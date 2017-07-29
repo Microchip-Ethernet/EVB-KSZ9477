@@ -1,0 +1,444 @@
+SAM-BA Release Notes 
+---------------------
+Release version: 2.16
+Release date: 2016
+
+
+1 Overview
+
+The SAM Boot Assistant (SAM-BA) software provides a means of easily 
+programming different Atmel AT91SAM devices. They are based on a common 
+dynamic linked library (DLL), the sam-ba.dll. SAM-BA use the DLL to 
+communicate with the target board.
+
+You are strongly recommended to read through the following release notes 
+before completing the installation of SAM-BA v2.16.
+
+----------
+2 Downloading and Installing
+----------------------------
+The software can be found and downloaded from ATMEL's website at 
+http://www.atmel.com/tools/atmelsam-bain-systemprogrammer.aspx
+  
+- sam-ba_2.16.exe (current release) for Windows
+  Install files for the SAM-BA package. 
+  Execute sam-ba_2.16.exe to install. 
+  
+- sam-ba_2.16.zip (current release) for Linux
+  Install files for the SAM-BA package only. Uses standard CDC driver
+  Unzip the package zip file under a local folder on your PC.
+
+3 Contents
+-----------
+
+- sam-ba.dll v1.002 (A dynamic linked library connects AT91SAM-based targets 
+  through a USB, JTAG or COM port).
+
+- Segger JLINKARM.DLL 4.91.2.0 (DLL for using J-Link / J-Trace with third-party 
+  programs JTAG driver)
+
+- TCL Toolchain including tclsh can be downloaded from the following URL:
+  http://www.activestate.com/Products/ActiveTcl/
+
+- Documents
+  - SAM-BA User Guide.pdf
+  - Releasenote.txt
+  - readme.txt
+  - usb_notice.html
+
+- New features.
+
+  - Add support for same70-xplained-pro board
+  - Add Qspi support for samv71
+  - Add support for sam4s2-ek
+  - Add support for sam4c4-ek
+  - Add support for sam4cm4-db
+  - Add support for sam4cp16-mb
+  - Add support for samda1_xplained_pro[not factory programmed]
+  - Add support for saml22_xplained_pro[not factory programmed]
+  - Add support for samc21_xplained_pro[not factory programmed]
+
+  - Note for "not factory programmed" devices:
+    SAM-BA needs a monitor running if use USB or COM port. 
+    "not factory programmed" means that parts are shipped without monitor code.
+    To make Sam-BA works for such chips with USB or COM port, we need a proper monitor code running. 
+    ASF will include such monitor code as bootloader, Exact feature, such as: USB and/or COM port support, 
+    OS support like Windows/Linux, are the feature of the monitor, please check with the monitor code you are using.
+    For more information please visit product page at ATMEL's website.
+
+   - Note for EDGB users:
+    Sam-BA need to work with EDBG firmware version >= 2.11 or later. 
+    You can download, install, and perform a firmware upgrade via
+    https://gallery.atmel.com/Products/Details/6b4ba34d-d257-4ebb-9936-43952e724047.
+    You can also use Atmel Studio 7.0 or above. Please follow the associated document. 
+
+
+- SAMBA 2.16 supports the following AT91SAM based microcontrollers:
+  - at91sam3s16 at91sam3s8 at91sam3s4 at91sam3s2 at91sam3s1 rf231usb-rd
+  - at91sam3u4 at91sam3u2 at91sam3u1
+  - at91sam3n4 at91sam3n2 at91sam3n1
+  - at91sam3x8 at91sam3x4 at91sam3x2
+  - at91sam4s2 at91sam4s4 at91sam4s8 at91sam4s16 at91sam4sd32 sam4s-xpid
+  - at91sam7a3
+  - at91sam7l64 at91sam7l128
+  - at91sam7s161 at91sam7s321 at91sam7s32 at91sam7s64 at91sam7s128 at91sam7s256 at91sam7s512
+  - at91sam7se32 at91sam7se256 at91sam7se512
+  - at91sam7x128 at91sam7x256 at91sam7x512
+  - at91sam7xc128 at91sam7xc256 at91sam7xc512
+  - at91sam9260 
+  - at91sam9261
+  - at91sam9263
+  - at91sam9g10
+  - at91sam9g15 at91sam9g25 at91sam9g35 at91sam9x25 at91sam9x35
+  - at91sam9n12 at91sam9cn12 at91sam9n11 at91sam9cn11
+  - at91sam9g20
+  - at91sam9g45
+  - at91sam9m10 
+  - at91sam9rl64
+  - at91sam9xe128
+  - at91sam9xe128
+  - at91sam9xe256
+  - at91sam9xe512
+  - at91sama5d3x
+  - at91sama5d3x-cmp
+  - at91sama5d3-xplained
+  - at91sama5d4x
+  - at91samv71-xplained
+  - at91same70-xplained
+  - at91sam4cp16
+  - at91sam4cm4 at91sam4cm8 at91sam4cm16 at91sam4cm32
+  - at91sam4e8 at91sam4e16
+  - at91sam4c8 at91sam4c16 at91sam4c32
+  - at91sam3n0 at91sam3n00
+  - at91cap9
+  - sam4l[not factory programmed] 
+  - samd20e15 samd20e16 samd20e17 samd20e18 samd20g15 samd20g16 samd20g17 samd20g18
+    samd20j15 samd20j16 samd20j17[not factory programmed]
+  - saml21[not factory programmed] (only support rev.B and no USB support)
+  - saml22[not factory programmed] 
+  - samd21[not factory programmed] 
+  - samda1[not factory programmed]
+  - samc21[not factory programmed]
+  - [not factory programmed] parts need proper monitor code running, available from ASF.
+  - ASF 3.30 monitor code does not support Linux COM port connection. 
+
+4 Bug Fixes and Improvements
+----------------------------
+    - Optional DDR configuration for sama5d3 and sama5d4
+         LPDDR1 (MT46H128M16LFCK_5 X 2)
+         DDR2 (MT47H128M8CF-25E X 4)
+         DDR2 (MT47H128M16-25E X 2):
+         DDR2 (MT47H64M16-25 X 2):
+         LPDDR2 (MT42L128M32D1GU-25 X 2): 
+         LPDDR2 (MT42L128M16D1KL-25 X 4): 
+
+    - Add trimffs support for sama5d4x NAND applet.
+    - samv7 flash programming issue on Linux.
+    - Add support for samv/same7 qspiflash programming.
+    - sdmmc-massstorage.bin" applet doesn't work with SAMA5D3_Xplained board 
+    - SAMA5D3_Xplained board uses SAMA5D3X-EK TCL script verbatim 
+    - Fix un-aligned buffer size issue in sam4s2B flash applet .
+
+Known Issues
+------------
+    - Some boards cannot connect though USB CDC to a chip (with USB Full Speed) on AMD 
+      based computers.
+    - Some boards cannot work properly through USB/COM port connection without reseting 
+      ( or, power off / power on) the board.
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+5 History 
+---------------------
+
+v2.15:
+Improvements
+------------
+  - JLINKARM.DLL update to 4.91.2.0
+  - J-Link support SWD target interface
+  - J-Link SWD target interface support in command line with "_SWD"
+  - Fix connection issues on sam7se256 and sam7se512 new silicon revision (B) 
+  - Add ScriptSetSecurityBit & ScriptGPNMV for sam7s32/321
+
+Bug Fixes
+---------
+  - Add 0x27080340 device ID for sam7s321.
+  - Fix a JLINK SAM-ICE connection issue in samba.dll
+  - Add COM port ACK in samd20/1_xplained_pro applet
+
+v2.14:
+Improvements
+------------
+  - License agreement update
+  - add at91sam4cm8, at91sam4m32 board support
+
+Bug Fixes
+---------
+    - Fixed sam9x5 NAND flash programming issue while SD inserted in slot 0
+    - Fixed SDMMC mass storage format issue for sama5d3.  
+
+Known Issues
+---------
+    - Some boards cannot connect though USB CDC to a chip (with USB Full Speed) on AMD 
+      based computers.
+    - Some boards cannot work properly through USB/COM port connection without reseting 
+      ( or, power off / power on) the board.
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.13:
+Improvements
+------------
+  - Added atm6124 USB CDC signed driver for Windows(R) 7 and Windows(R) 8
+  - New programmable board detection algorithm
+  - Allows the user to select a specific J-Link to connect to by passing the units serial number
+  - Be able to change J-Link speed during SAM-BA operation
+  - Add SD/MMC support for sama5d3x and sama5d4x
+  - 'Enable OS PMECC parameters' script behaviour improvement
+  - Serial flash 4-bytes address mode support for at91sam9n12, at91sam9x5 and at91sama5d3x
+  - NAND flash non-onfi auto detection.
+
+  - fix NAND FLASH erase all script hangs issue 
+  - fix Error with custom board using custom lowlevel init 
+  - fix 'EraseBlocks wrong block calculation' 
+  - fix "Start Recording" function issue in the Linux OS 
+  - fix "Start Recording" function issue in the WIN7
+  - Fix sama5d3x max boot size to 64k.
+  - Force disable NAND internal ECC for sam9n12,sam9x5,sama5d3x.
+  - fix sam9g20 NAND flash usb timeout issue.
+  - fix sam3n1 applet stack overflow.
+  - fix sam3n2 COM port connection issue.
+  - sam3x8 remove the lowlevel init and SDRAM/Nandflash support.
+  - move PMECC_Correction_Algo() function in the applet for sama5d3x.
+  - Update NAND flash driver for sama5d3x to fix non-onfi NAND flash accessing issue.
+    
+----------------------------------------------------------------------------------------------------------------------------------
+v2.12:
+Improvements
+------------
+ - Adjust communication timeout parameters for COM port connection.
+    - Support devices multiple programming task management.
+        - New samba_multiple_programming example.
+    - New feature for JLINK timeout parameter configuration.
+    - LowlevelInit enhancement.
+        - Only supported crystals(specified in datasheet) are available in crystals list 
+          for giving board.
+        - All crystals (include bypass mode) in crystal list are able to connect with the 
+          customized board directly.
+    - sam-ba user guide updated.
+    - sam-ba installation path changed.
+
+Bug Fixes
+---------
+    - The startup time of SAM-BA is too slow in Window7 64bit system.
+    - An error occurs when trying to start a script record. (for Win7, recommend to run 
+      as administrator to be able to access 'Program Files' folder)
+    - Invalid parameter checking for PMECC configuration for sam9n12 and sam9x5. 
+    - The help document of SAM-BA V2.11 can't be displayed under Linux system.
+    - OOB issue about NAND programming with PMECC when writing rootfs.jffs2.
+    - JTAG connection issue for sam3x board.
+    - Incorrect ddr2 configuration on phase 17 for sam9m10/g45, sam9x5 and sam9n12.
+    - sam9m10/g45 is not able to connect with COM port.
+    - sam9g25 eeprom programming issue under vista.
+    - Some batches of SAM4S-EK boards can't be connected via JLink
+    - Wrong default DDRAM address(0x20000000) in MEMORY descriptor TCL file for sam9m10.
+    - SAM3U board flash can't be erased properly.
+    - Long erasing time for SAM9N12 serial Flash via COM port lead to timeout.
+    - Unlock sector is too slow for SAM4S-EK.
+    - "Compare sent file with memory" failed on some SAM4S-EK board.
+    - sam3n applet descriptor error for SST Serial Flash .
+    - COGENT SAM9X35 CANNOT Boot up after send boot file to NAND flash.
+    - "Compare sent file with memory" function failed under Linux system.
+    - PMECC configuration window can't display completely under Vista 32Bit.
+    - SAM9261-EK with MRLB silicon or SAM9G20-EK over USB connection
+    - SAM4S-EK - Flash Programming fails if Flash is not erased before.
+    - SAM-BA 2.11 with SAM9G20-EK through USB command line.
+    - Sam3s16 is not able to program without erase all.
+    - SAM9x5-EK (AT91SAM9G35) Compare sent file with memory failed.
+    - Sam3s16/sam4s lock/unlock and erase issue.
+    - Monitor.bin for sam9m10/g45 sources is not available.
+    - SAM-BA Installation Path must be coherent with other Atmel SW such as Studio.
+    - Support custom name in the kit name without the chip name into it.
+    - Buffer size is too big for some devices in flash applets.
+    - AT91Boot_Close and AT91Boot_Open should normally treat an exception due to its 
+      functionality internally.
+    - Fix for compile-time warning message.
+    - Remove RDY/BSY pin usage for sam4s applet.
+    - SAM-BA task management do not work under win7 64 bit.
+    - COM port could only send ACK character in case of INIT command in some applets.
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.11:
+Improvements
+------------
+    - Support USB CDC, JLINK and COM port connection for Vista (32/64) and Windows 7 (32/64)
+    - Upgrade to Tcl8.5.9 / Tk8.5.9  (samba 2.10 Tcl8.4.13 / Tk8.4.13)
+    - new sam-ba.dll instead of SAMBA_DLL.DLL
+    - using usbser.sys(Microsoft Windows USB modem driver system driver file)
+      instead of atm6124.sys
+    - nandflash applet : Remove RDY/BSY pin usage for SAM-BA
+    - remove DDRAM duplicated configurations in board_memories.c 
+    - Remove duplicated tcl_lib folder
+    - SAM9M10/G45 coherency
+    - Add One Wire EEPROM support for sam9x5 series
+    - SST Serial Flash support
+    - backup connection information and last used folder as soon as sam-ba used
+    - add a mask on revision field in JEDEC ID to be able to support several
+      version of a given flash
+    - Add support of modern Embedded Linux file systems(ubifs / yaffs2 / jffs2 support)
+    - Add Jlink speed interface
+    - Name of USB serial link
+    - TWI Address optional selection for EEPROM (9g15/9g25/9g35/9x25/9x35/9n12)
+    - Support /dev/ttyACMx for Linux version samba
+
+Bug Fixes
+---------
+    - sam3s lowlevel init prevents the user to use a crystal different 
+      from 12 MHz
+    - the external XTtal shall NOT be enabled for sam9m10
+    - descriptor error for SST Serial Flash
+    - File compare (>10K) not matched though COM port
+    - serial flash driver bug fix
+    - sam7x256 flash applet does not write using IAP ROM feature
+    - fixed sam7 with IAP flash loader issue
+    - fixed sam9m10-g45-ek board_lowlevelinit issue
+    - The customer should be allowed to use it's real board name
+    - reduce the erase size of serialflash applet
+    - No adaptive clocking for SAM3 devices
+    - sam7x512 Flash Erase command does not work for the 2nd flash bank
+    - Assembly code (in old applets) compilation
+    - Wrong lowlevel inits for sam3x applets 
+    - Cap9 SDRAM (extram) applet linker script issue
+    - Buffer size issue in example samba_dll_usage_VC6
+    - Miss "rc" indication in installer, folders and inside the program
+    - SAM-BA installer no admin right to install on WIN7 /Vista
+    - SAM-BA crashes when no_board selection.
+    - SDRAM and DDRAM panes shall not be displayed at the same time in the GUI
+    - Nandflash applet debug incorrect info of SEND BOOT FILE
+    - Incorrect board name displayed in main window (some board re-target)
+    - SAM9G15-ES2 : Cannot be launched twice without cpu reset
+    - Name of sam9x25 / x35 tcl files (devices) shall be lower-case
+    - TCL scan crash in some case for linux sam-ba
+    - After a TCL_Go, If the applet does not return, SAM-BA is frozen.
+    - Incorrect board name displayed in main window (some board re-target)
+    - Sam9n12 applet compile error in linux
+    - Missing ACK for COM connection in extram and lowlevel applet for 9xx5/9n12
+    
+Known Issues
+---------
+    - Some boards can't work properly through USB/COM port connection without reseting the board
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.10
+    - Fixed Jtag issue when the chip has booted on a program from an external memory (Nand, DF ...) and if that program has initialized the PLL and MCK. 
+    - Fixed Jtag issue if customers not running the chips with the same XTAL or external oscillator as on our EK boards.
+    - Add new at25 device AT25DF512B-SSH-B,AT25DF021-SSH-B,AT25DF021-MH-T,AT25DF161-SSH-B,AT25DF161-SH-B,AT25DF641-S3H-B.
+    - Fixed flash init problem on AT91SAM7S32/321.
+    - Fixed DataFlash init problem on AT91SAM7A3.
+    - Fixed dataFlash programming of large files fails (~>1Mbytes) on AT91SAM9G20 with COM port connection.
+    - Fixed flash applet initialization in CDC mode on SAM7.
+    - Fixed SAM7X/XC access cdc linux , Flash init fail with error message.
+    - Add "Send Boot File" for SAM9G10/G20/G45/M10 chips.
+    - Add lowlevel_init in flash applet for sam7 chip.
+    - Fix spell error "appletMAilboxAddr" at91sam7s128-ek.tcl.
+    - Fix security bit script for at91sam3u4-ek.tcl.
+    - Fixed  Nand flash program algorithm for SAM9M10/9G45.
+    - When using the JTAG it is not possible to program the 2nd flash bank of the SAM7X512 device.
+    - Fixed flash init problem on AT91SAM7S32/321.
+    - Add support to verify if an existing sam-ba task is running before launching sam-ba, ask to kill it.
+    - No Support for 8-bit Nand Small Blocks. The algorithm is not correctly implemented for such nandflash devices.
+    - An incorrect EEPROM::appletAddr in TCL definitions address to SDRAM could lead to crash for some at91sam9 boards.
+    - The applet initialization does not report any error in case no EEPROM is connected or an EEPROM different from the selected one 
+      is Enabled by the script.
+    - Latest large nandflash devices have bigger page size (4K for instance) and SAMBA and the SW library does not support it. This 
+      may be due to the new spare zone organization.
+    - An incorrect 'Enable Security Bit' descriptor for SAM3U.
+    - Add function to erase blocks for NAND flash applet (command line only)
+    - NOR flash not able to 'erese all' on sam9m10-g45-ek REV.A board
+    - When SAM-BA starts, it could not differentiate a real invalid ID from a communication error with the chip.
+    - Sam-ba could not detect real board, if user select a wrong board name from drop list.
+    - It is not possible to connect to SAMBA with a SAM9260-EK using the RS232 port.
+    - Some customer board could not program dataflash properly, improve the programming algorithm.
+    - Improved erase all algorithm for nandflash applet. Fixed Usb/com timeout problem on some 8-Bit Nand flash.
+    - Fixed eeprom program algorithm for SAM9260-EK.
+    - Add Dataflash (SPI0 CS3) support for SAM9261-EK.
+    - Flash applet in command mode could not unlock region before write.
+    - Fixed connection on SAM3S-EK with COM port.
+    - CDC version hang during flash init of SAM7 chips.
+    - Connect/disconnect functionality support.
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.9
+    - Added support for AT91SAM9M10, AT91SAM9G45, AT91SAM9G10, AT91SAM7SL.
+    - Added support for AT91SAM3U, with USB and COM port connection only (no SAM-ICE).
+    - Fixed Dataflash access on AT91SAM9G20 CU-A.
+    - Select 16/32 bits external SDRAM in board TCL file without applet compilation.
+    - External memory initialization failure at SAM-BA startup is indicated by a popup
+       window, but user can choose to use SAM-BA anyway.
+    - Added a listbox to choose applet debug traces level easily. Traces are sent to DBGU
+       port when using USB or JTAG connection link.
+    - Added Nandflash bad block listing script.
+    - Added a document to help user to customize SAM-BA and applets for a custom board.
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.8
+    - Added support for DataFlash in Binary mode (Power of 2 page size),
+    - Improved programming speed with applets running at higher CPU and MCK clock frequency,
+    - Fixed AT91SAM7L64/128 support,
+    - Fixed AT91SAM7XC support.
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.7
+    - New flash programming applets :
+        - NandFlash, DataFlash, SerialFlash, NorFlash,
+        - GCC code,
+        - based on at91lib software library. 
+    - Added support for AT91SAM7L64/128, AT91SAM9G20, AT91SAM9XE,
+        and AT91CAP9 (EK and STK).
+    - Fixed AT91SAM9RL64 support.
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.6
+    - Fixed AT91SAM9263 DataFlash script bug.
+    - Fixed AT91SAM7S512/SE512/X512 Flash programming bug.
+    - Fixed AT91SAM7SE/X/XC GPNVM accesses with JTAG.
+    - Added support for AT91SAM9RL64 and AT91CAP9.
+    - More NandFlash supported :
+        * Micron, Samsung, Toshiba, Fujitsu, National, and STMicro
+        * 1Gbit to 16Gbits, 8 and 16 bits bus size.
+    - Improved NandFlash bad block management (Skip block method).
+    - JTAG support for AT91SAM926x.
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.5
+    - Bypass of Connection Message Box when launching SAM-BA with port
+       and board name in command line parameter.
+    - Support for AT91SAM9XE family.
+    - Various bug fixes : script mode feature improved (no more message boxes),
+       open and save file dialog boxes displays now correctly.
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.4
+    - J-Link support improved for AT91SAM7A3
+    - AT91SAM9263 NandFlash block programming support
+    - Added SDRAM config for 48, 100 and 133 MHz MCK on SAM926x boards
+    - Minor GUI bug fixes
+
+----------------------------------------------------------------------------------------------------------------------------------
+v2.3
+    Supports:
+    - SAM7S32/321/64/128/256/512
+    - SAM7X(C)128/256/512
+    - SAM7SE32/256/512
+    - SAM9260/9261/9263
+    Only by adding/modifying TCL scripts in the lib directory, it is now
+      possible to add:
+    - Your own boards
+    - Your own memory algorithms
+----------------------------------------------------------------------------------------------------------------------------------
+
+
+6 Contact Information
+---------------------
+For support on AT91 Tools please visit www.atmel.com
+

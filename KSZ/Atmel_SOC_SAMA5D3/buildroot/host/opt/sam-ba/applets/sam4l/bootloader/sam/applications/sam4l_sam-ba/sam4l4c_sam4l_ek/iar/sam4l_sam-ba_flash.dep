@@ -1,0 +1,623 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+
+<project>
+  <fileVersion>2</fileVersion>
+  <fileChecksum>3783346071</fileChecksum>
+  <configuration>
+    <name>Debug</name>
+    <outputs>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\osc.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\class\cdc\device\udi_cdc.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\dfll.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\pll.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\sysclk.c</file>
+      <file>$PROJ_DIR$\..\..\sam_ba_monitor.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\sleepmgr\sam4l\sleepmgr.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\class\cdc\device\udi_cdc_desc.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\udc\udc.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\utils\interrupt\interrupt_sam_nvic.c</file>
+      <file>$PROJ_DIR$\..\..\main.c</file>
+      <file>$PROJ_DIR$\Debug\Obj\main.pbi</file>
+      <file>$PROJ_DIR$\..\..\usart_sam_ba.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\boards\sam4l_ek\init.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\bpm\bpm.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\flashcalw\flashcalw.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\gpio\gpio.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\usbc\usbc_device.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\source\templates\iar\startup_sam4l.c</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\source\templates\exceptions.c</file>
+      <file>$PROJ_DIR$\Debug\Obj\udc.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\sam4l_sam-ba_flash.pbd</file>
+      <file>$TOOLKIT_DIR$\inc\c\stdint.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\header_files\io.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\preprocessor\preprocessor.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\DLib_Config_Normal.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\dfll.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\preprocessor\tpaste.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\exceptions.o</file>
+      <file>$TOOLKIT_DIR$\inc\c\stddef.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\flashcalw.pbi</file>
+      <file>$PROJ_DIR$\Debug\Obj\udi_cdc.o</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\dfll.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\dfll.o</file>
+      <file>$TOOLKIT_DIR$\inc\c\ycheck.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\DLib_Product.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\compiler.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\genclk.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\gpio.o</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\include\sam4l4_patch_asf.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\udi_cdc_desc.o</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\bpm\bpm.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\interrupt_sam_nvic.pbi</file>
+      <file>$PROJ_DIR$\Debug\Obj\sleepmgr.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\bpm.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\sam_ba_monitor.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\osc.pbi</file>
+      <file>$TOOLKIT_DIR$\inc\c\DLib_Defaults.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\gpio\gpio.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\interrupt_sam_nvic.o</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\osc.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\status_codes.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\sleepmgr\sleepmgr.h</file>
+      <file>$PROJ_DIR$\..\..\sam_ba_monitor.h</file>
+      <file>$PROJ_DIR$\..\conf_sleepmgr.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\udc\udi.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\sleepmgr\sam4l\sleepmgr.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\source\templates\exceptions.h</file>
+      <file>$PROJ_DIR$\..\conf_board.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\flashcalw\flashcalw.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sysclk.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\sysclk.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\class\cdc\device\udi_cdc_conf.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\class\cdc\usb_protocol_cdc.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\class\cdc\device\udi_cdc.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\usbc\usbc_otg.h</file>
+      <file>$PROJ_DIR$\..\..\conf_usb.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\drivers\usbc\usbc_device.h</file>
+      <file>$PROJ_DIR$\..\..\main.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\usb_protocol.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\include\core_cmInstr.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\udc\udc_desc.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\usb_atmel.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\udc\udd.h</file>
+      <file>$PROJ_DIR$\Debug\Exe\sam4l_sam-ba_flash.out</file>
+      <file>$PROJ_DIR$\Debug\Obj\exceptions.pbi</file>
+      <file>$PROJ_DIR$\..\..\..\..\boards\sam4l_ek\sam4l_ek.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\pll.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\ystdio.h</file>
+      <file>$PROJ_DIR$\Debug\Exe\sam4l_sam-ba_flash.bin</file>
+      <file>$TOOLKIT_DIR$\inc\c\DLib_Threads.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\usbc_device.pbi</file>
+      <file>$PROJ_DIR$\Debug\Obj\sysclk.pbi</file>
+      <file>$PROJ_DIR$\Debug\Obj\flashcalw.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\usart_sam_ba.pbi</file>
+      <file>$TOOLKIT_DIR$\inc\c\ysizet.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\gpio.pbi</file>
+      <file>$PROJ_DIR$\asf.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\init.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\pll.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\dfll.pbi</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\utils\parts.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\stdlib.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\sam_ba_monitor.pbi</file>
+      <file>$TOOLKIT_DIR$\inc\c\intrinsics.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\init.pbi</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\utils\interrupt.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\pll.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\main.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\startup_sam4l.pbi</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\boards\board.h</file>
+      <file>$PROJ_DIR$\..\conf_clock.h</file>
+      <file>$TOOLKIT_DIR$\lib\m7M_tl.a</file>
+      <file>$TOOLKIT_DIR$\lib\dl7M_tln.a</file>
+      <file>$PROJ_DIR$\..\..\sam-ba_flash.icf</file>
+      <file>$TOOLKIT_DIR$\lib\rt7M_tl.a</file>
+      <file>$PROJ_DIR$\Debug\List\sam4l_sam-ba_flash.map</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\usb\udc\udc.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\DLib_Product_string.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\include\core_cm4.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\string.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\include\core_cmFunc.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\include\core_cm4_simd.h</file>
+      <file>$PROJ_DIR$\..\..\usart_sam_ba.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\usart_sam_ba.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\sysclk.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\startup_sam4l.o</file>
+      <file>$PROJ_DIR$\Debug\Obj\osc.o</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\include\sam4l4.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\xencoding_limits.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\stdio.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\sleepmgr.pbi</file>
+      <file>$PROJ_DIR$\Debug\Obj\udi_cdc_desc.pbi</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\osc.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\yvals.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\usbc_device.o</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\utils\interrupt\interrupt_sam_nvic.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\cmsis_iar.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\udi_cdc.pbi</file>
+      <file>$PROJ_DIR$\Debug\Obj\udc.pbi</file>
+      <file>$PROJ_DIR$\Debug\Obj\pll.pbi</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\preprocessor\mrepeat.h</file>
+      <file>$TOOLKIT_DIR$\inc\c\stdbool.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\utils\preprocessor\stringz.h</file>
+      <file>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\genclk.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\bpm.pbi</file>
+      <file>$PROJ_DIR$\Debug\Exe\sam4l_sam-ba_flash.hex</file>
+    </outputs>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\osc.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 117</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 46</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 50 91 101 123 100 36 29 34 124 47 25 35 119 80 85 94 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 76</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 85 39 120 124 126 101 29 91 22 127 100 24 132 92 34 78 123 23 36 76 94 47 133 118 111 112 50 96 119 80 25 35 27 131 109 70</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\services\usb\class\cdc\device\udi_cdc.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 31</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 128</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 66 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 100 76 62 63 68 69 72 73 71 55 107 64 110 108</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 124 118 63 25 69 107 62 94 91 34 47 80 133 24 78 36 23 35 22 39 127 119 72 66 108 73 64 110 100 68 29 120 132 92 96 85 27 131 109 111 112 55 71 70 126 76</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\dfll.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 33</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 90</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 26 101 32 37 134 50 123 100 76 97 77</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 34 94 23 27 132 119 100 96 85 124 22 70 127 32 50 91 123 26 29 24 120 92 47 131 109 101 134 36 80 25 35 133 118 39 111 112 78 126 37 97 76 77</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\pll.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 89</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 130</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 97 101 77 50 123 100 76</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 36 76 119 132 34 23 24 92 124 27 29 91 120 22 47 70 127 101 97 94 96 85 80 25 35 131 109 133 118 39 111 112 78 126 77 50 123 100</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\services\clock\sam4l\sysclk.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 115</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 82</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 60 101 61 100 76 26 32 37 134 50 123 97 77 59</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 91 100 85 101 96 124 131 36 132 23 50 34 109 27 123 22 60 94 47 70 127 119 37 76 32 134 77 59 29 24 120 92 80 25 35 133 118 39 111 112 78 126 61 26 97</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\sam_ba_monitor.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 45</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 93</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 87 57 118 22 34 124 47 25 35 119 80 109 70 127 94 111 112 39 41 36 29 85 91 24 27 133 131 23 120 78 132 92 96 126 51 59 48 100 76 56 54 52 60 101 61 26 32 37 134 50 123 97 77 67 65 63 64 66 62 68 69 72 73 71 55 107 53 58 113 110 108</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 124 111 107 24 91 23 110 96 63 87 51 60 109 85 119 101 22 68 34 58 41 48 56 112 131 78 132 36 54 61 100 50 97 65 66 73 108 53 113 57 59 52 67 64 118 39 127 94 27 76 32 71 69 47 80 25 35 70 29 120 92 133 126 26 37 134 123 77 55 62 72</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\services\sleepmgr\sam4l\sleepmgr.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 43</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 121</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 52 56 54 41</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 36 132 34 22 94 124 24 92 131 112 29 91 120 47 27 118 111 52 23 96 85 119 80 25 35 133 39 127 78 126 56 109 70 54 41</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\services\usb\class\cdc\device\udi_cdc_desc.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 40</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 122</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 66 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 100 76 62 63 68 73 69 72 71 55 64</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 69 132 119 109 92 34 63 100 120 22 27 78 55 71 68 29 96 85 131 127 66 73 64 36 62 94 91 24 23 124 47 80 25 35 133 118 39 111 112 72 70 126 76</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\services\usb\udc\udc.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 20</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 129</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 66 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 100 76 62 63 68 69 72 73 71 55 107</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 39 85 68 119 126 55 96 34 127 69 66 73 100 94 23 35 78 36 71 107 62 29 91 24 120 132 22 92 124 47 80 25 133 118 111 112 76 63 27 131 109 70 72</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\..\common\utils\interrupt\interrupt_sam_nvic.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 49</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 42</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 126 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 131 124 127 24 85 29 22 34 70 36 94 120 47 27 91 23 132 92 119 80 25 35 133 118 109 126 39 111 112 78 96</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\main.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 98</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 11</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 87 57 118 22 34 124 47 25 35 119 80 109 70 127 94 111 112 39 41 36 29 85 91 24 27 133 131 23 120 78 132 92 96 126 51 59 48 100 76 56 54 52 60 101 61 26 32 37 134 50 123 97 77 67 65 63 64 66 62 68 69 72 73 71 55 107 58 53 113</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 92 62 120 107 22 96 87 68 51 60 109 132 85 36 91 134 101 113 41 48 56 63 35 127 78 126 29 26 27 50 100 77 66 69 58 53 57 59 52 67 64 73 118 39 34 47 80 25 124 70 94 133 24 23 97 37 123 71 119 111 112 131 76 54 61 32 65 55 72</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\usart_sam_ba.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 114</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 84</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 87 57 118 22 34 124 47 25 35 119 80 109 70 127 94 111 112 39 41 36 29 85 91 24 27 133 131 23 120 78 132 92 96 126 51 59 48 100 76 56 54 52 60 101 61 26 32 37 134 50 123 97 77 67 65 63 64 66 62 68 69 72 73 71 55 107 113 58</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 52 127 27 24 69 66 36 118 39 32 55 100 64 22 124 76 101 63 113 57 59 91 67 73 119 34 94 41 132 72 87 58 51 48 96 56 60 107 109 111 112 23 85 131 78 54 61 50 97 65 68 71 47 80 25 35 70 29 120 92 133 126 26 37 134 123 77 62</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\boards\sam4l_ek\init.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 88</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 95</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 76 58 48 100</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 96 85 36 35 34 22 94 124 100 119 133 24 112 58 23 80 25 118 111 91 76 48 29 120 132 92 47 39 127 78 126 27 131 109 70</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\drivers\bpm\bpm.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 44</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 135</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 41 52 56 54 48</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 35 34 96 85 127 119 22 70 36 52 94 23 80 25 124 27 41 48 29 91 24 120 132 92 47 131 109 133 118 39 111 112 78 126 56 54</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\drivers\flashcalw\flashcalw.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 83</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 30</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 59 29 34 124 47 25 35 119 80 85 132 36 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 92 96 126</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 119 23 34 94 132 124 78 47 96 39 127 29 36 85 80 25 35 91 24 120 22 92 133 118 111 112 59 27 131 109 70 126</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\drivers\gpio\gpio.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 38</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 86</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 48 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 132 119 109 92 34 120 22 27 70 127 94 91 48 29 96 85 131 36 24 23 124 47 80 25 35 133 118 39 126 111 112 78</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\drivers\usbc\usbc_device.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 125</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 81</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 66 36 29 34 124 47 25 35 119 80 85 94 91 24 27 133 131 23 118 22 109 70 127 111 112 39 120 78 132 92 96 126 100 76 62 63 68 60 101 61 26 32 37 134 50 123 97 77 73 69 72 71 55 65 67 110 108</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 34 111 32 29 96 124 68 85 131 101 71 72 69 60 65 110 100 120 132 22 92 119 27 109 112 91 66 73 67 36 62 94 24 23 47 80 25 35 133 118 39 127 78 63 61 50 97 70 126 76 26 37 134 123 77 55 108</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\source\templates\iar\startup_sam4l.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 116</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 99</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 22 34 124 47 25 35 119 80 57 118 109 70 127 94 111 112 39</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 124 109 127 118 119 34 57 47 80 25 35 22 39 70 94 111 112</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\..\..\..\..\utils\cmsis\sam4l\source\templates\exceptions.c</name>
+      <outputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 28</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 75</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ICCARM</name>
+          <file> 57 118 22 34 124 47 25 35 119 80 109 70 127 94 111 112 39</file>
+        </tool>
+        <tool>
+          <name>BICOMP</name>
+          <file> 35 127 118 22 39 109 34 47 80 25 124 70 94 57 119 111 112</file>
+        </tool>
+      </inputs>
+    </file>
+    <file>
+      <name>[ROOT_NODE]</name>
+      <outputs>
+        <tool>
+          <name>ILINK</name>
+          <file> 74 106</file>
+        </tool>
+      </outputs>
+    </file>
+    <file>
+      <name>$PROJ_DIR$\Debug\Exe\sam4l_sam-ba_flash.out</name>
+      <outputs>
+        <tool>
+          <name>ILINK</name>
+          <file> 106</file>
+        </tool>
+        <tool>
+          <name>OBJCOPY</name>
+          <file> 136</file>
+        </tool>
+      </outputs>
+      <inputs>
+        <tool>
+          <name>ILINK</name>
+          <file> 104 44 33 28 83 38 88 49 98 117 89 45 43 116 115 20 31 40 114 125 105 102 103</file>
+        </tool>
+      </inputs>
+    </file>
+  </configuration>
+  <configuration>
+    <name>Release</name>
+    <outputs/>
+    <forcedrebuild>
+      <name>[MULTI_TOOL]</name>
+      <tool>ILINK</tool>
+    </forcedrebuild>
+  </configuration>
+</project>
+
+

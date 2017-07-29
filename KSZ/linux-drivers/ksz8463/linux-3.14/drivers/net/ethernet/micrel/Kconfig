@@ -1,0 +1,54 @@
+
+menuconfig MICREL_SWITCHES
+	tristate "Drivers for Micrel switches"
+	---help---
+	  Supports Micrel switches.
+
+if MICREL_SWITCHES
+
+comment "Micrel switch device drivers"
+
+config MICREL_SWITCH
+	bool
+	default n
+
+config MICREL_SWITCH_EMBEDDED
+	bool
+	default n
+	select MICREL_SWITCH
+
+config HAVE_SPI_KSZ8463
+	bool
+	default n
+
+config SPI_KSZ8463
+	tristate "SPI driver for Micrel KSZ8463 switch"
+	select MICREL_SWITCH if !NET_DSA_TAG_TAIL
+	select HAVE_SPI_KSZ8463
+	---help---
+	  Supports the Micrel KSZ8463 switch.
+
+config MICREL_KSZ8463_EMBEDDED
+	bool "Micrel KSZ8463 switch support in network controller"
+	depends on SPI_KSZ8463 = n && !NET_DSA_TAG_TAIL
+	select MICREL_SWITCH_EMBEDDED
+	select HAVE_SPI_KSZ8463
+	---help---
+	  Supports the Micrel KSZ8463 switch used with a network controller.
+
+config MICREL_KSZ8463_PTP
+	bool "1588 PTP support"
+	depends on SPI_KSZ8463 || MICREL_KSZ8463_EMBEDDED
+	default y
+	help
+	  Enable 1588 PTP support.
+
+config MICREL_KSZ8463_STP
+	bool "STP support"
+	depends on SPI_KSZ8463 || MICREL_KSZ8463_EMBEDDED
+	default n
+	help
+	  Enable STP support.
+
+endif
+

@@ -1,0 +1,66 @@
+
+menuconfig MICREL_SWITCHES
+	tristate "Drivers for Micrel switches"
+	---help---
+	  Supports Micrel switches.
+
+if MICREL_SWITCHES
+
+comment "Micrel switch device drivers"
+
+config MICREL_SWITCH
+	bool
+	default n
+
+config MICREL_SWITCH_EMBEDDED
+	bool
+	default n
+	select MICREL_SWITCH
+
+config HAVE_KSZ9897
+	bool
+	default n
+
+config HAVE_SPI_KSZ9897
+	bool
+	default n
+	select HAVE_KSZ9897
+
+config I2C_KSZ9897
+	tristate "I2C driver for Micrel KSZ9897 switch"
+	select MICREL_SWITCH if !NET_DSA_TAG_TAIL
+	select HAVE_KSZ9897
+	---help---
+	  Supports the Micrel KSZ9897 switch.
+
+config SPI_KSZ9897
+	tristate "SPI driver for Micrel KSZ9897 switch"
+	select MICREL_SWITCH if !NET_DSA_TAG_TAIL
+	select HAVE_SPI_KSZ9897
+	---help---
+	  Supports the Micrel KSZ9897 switch.
+
+config MICREL_KSZ9897_EMBEDDED
+	bool "Micrel KSZ9897 switch support in network controller"
+	depends on SPI_KSZ9897 = n && !NET_DSA_TAG_TAIL
+	select MICREL_SWITCH_EMBEDDED
+	select HAVE_SPI_KSZ9897
+	---help---
+	  Supports the Micrel KSZ9897 switch used within a network controller.
+
+config MICREL_KSZ9897_PTP
+	bool "1588 PTP support"
+	depends on HAVE_KSZ9897
+	default y
+	help
+	  Enable 1588 PTP support.
+
+config MICREL_KSZ9897_STP
+	bool "STP support"
+	depends on HAVE_KSZ9897
+	default n
+	help
+	  Enable STP support.
+
+endif
+

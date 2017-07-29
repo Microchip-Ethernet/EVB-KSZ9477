@@ -1,0 +1,46 @@
+#!/bin/sh
+#
+# Start PTP related programs.
+#
+
+
+ETH=0
+
+VLAN=0
+if [ -e "/sys/class/net/eth$ETH/sw/vlan_start" ]; then
+	VLAN=$(cat /sys/class/net/eth$ETH/sw/vlan_start)
+fi
+
+AVB=0
+if [ -e "/sys/class/net/eth$ETH/sw/avb" ]; then
+	AVB=$(cat /sys/class/net/eth$ETH/sw/avb)
+fi
+
+start_avb() {
+    if [ $AVB -gt 0 ] && [ $VLAN -gt 0 ]; then
+        [ -x /ptp/avb/linuxptp.sh ] && cd /ptp/avb && ./linuxptp.sh &
+        [ -x /ptp/avb/mrpd.sh ] && cd /ptp/avb && ./mrpd.sh
+	sleep 1
+        [ -x /ptp/avb/phc.sh ] && [ -e /var/run/ptp4l ] && /ptp/avb/phc.sh &
+    fi
+}
+
+start() {
+    start_avb
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        killall ptp4l 2> /dev/null
+        killall phc2sys 2> /dev/null
+        killall mrpd 2> /dev/null
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+esac
+
+exit $?

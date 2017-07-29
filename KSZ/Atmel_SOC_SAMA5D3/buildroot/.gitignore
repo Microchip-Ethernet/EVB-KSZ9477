@@ -1,0 +1,11 @@
+output
+dl
+.*
+ubootEnvtFileNandFlash.bin
+!.gitignore
+*.depend
+*.o
+*.patch
+*.diff
+*.orig
+*.rej

@@ -1,0 +1,7 @@
+config BR2_PACKAGE_KSZ_OPENAVB
+	bool "OpenAVB"
+	select BR2_PACKAGE_KSZ_PTP_SCRIPTS
+	help
+	  The OpenAVB includes daemons like mrpd for Multiple Registration
+	  Protocol and simple AVB test utilities.
+

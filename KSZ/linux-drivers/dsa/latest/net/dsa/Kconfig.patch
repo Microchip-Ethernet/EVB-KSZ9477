@@ -1,0 +1,11 @@
+--- Kconfig.orig	2015-05-29 00:22:57.000000000 -0700
++++ Kconfig	2015-06-19 13:08:03.541924420 -0700
+@@ -24,4 +24,8 @@ config NET_DSA_TAG_EDSA
+ config NET_DSA_TAG_TRAILER
+ 	bool
+ 
++config NET_DSA_TAG_TAIL
++	bool
++	select NET_DSA_TAG_TRAILER
++
+ endif

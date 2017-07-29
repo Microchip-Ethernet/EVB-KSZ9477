@@ -1,0 +1,26 @@
+
+config KSZ8462_HLI
+	tristate "Micrel KSZ8462/KSZ8441/KSZ8852 HLI support"
+	select KSZ8462_HLI_EXT if ARCH_PEGASUS
+	select NET_CORE
+	select MII
+	select CRC32
+	select EEPROM_93CX6
+	help
+	  This platform driver is for Micrel KSZ8462/KSZ8441/KSZ8852
+	  address/data bus multiplexed network chip.
+
+config KSZ8462_HLI_PTP
+	bool "1588 PTP support"
+	depends on KSZ8462_HLI
+	default y
+	help
+	  Enable 1588 PTP support.
+
+config KSZ8462_HLI_STP
+	bool "STP support"
+	depends on KSZ8462_HLI
+	default n
+	help
+	  Enable STP support.
+

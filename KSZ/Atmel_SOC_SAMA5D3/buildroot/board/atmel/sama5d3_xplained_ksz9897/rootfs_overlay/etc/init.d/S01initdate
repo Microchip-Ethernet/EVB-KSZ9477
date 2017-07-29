@@ -1,0 +1,94 @@
+#!/bin/sh
+#
+# Initialize system date after power up.
+#
+
+
+get_timestamp() {
+	if [ -f $1 ] || [ -d $1 ]; then
+		DATE=$(date -r $1 -Iseconds)
+
+		TIME=$(echo $DATE | cut -d"T" -f2)
+		DATE=$(echo $DATE | cut -d"T" -f1)
+		TIME=$(echo $TIME | cut -d"+" -f1)
+		TIME=$(echo $TIME | cut -d"-" -f1)
+
+		YEAR=$(echo $DATE | cut -d"-" -f1)
+		MON=$(echo $DATE | cut -d"-" -f2)
+		DAY=$(echo $DATE | cut -d"-" -f3)
+		HOUR=$(echo $TIME | cut -d":" -f1)
+		MIN=$(echo $TIME | cut -d":" -f2)
+		SEC=$(echo $TIME | cut -d":" -f3)
+	else
+		YEAR=2009
+		MON=07
+		DAY=15
+		HOUR=12
+		MIN=00
+		SEC=00
+	fi
+	echo $YEAR $MON $DAY $HOUR $MIN $SEC
+}
+
+update_time() {
+	DEV=$(echo $1 | cut -c-4)
+	if [ $DEV = "/dev" ]; then
+		DATE=$(dumpe2fs -h $1 2> /dev/null | grep "Last write" | cut -c27- | /etc/conv_date)
+		if [ -z "$DATE" ]; then
+			DATE=$(get_timestamp /)
+		fi
+	else
+		DATE=$(get_timestamp $1)
+	fi
+	YEAR=$(echo $DATE | cut -d" " -f1)
+	MON=$(echo $DATE | cut -d" " -f2)
+	DAY=$(echo $DATE | cut -d" " -f3)
+	HOUR=$(echo $DATE | cut -d" " -f4)
+	MIN=$(echo $DATE | cut -d" " -f5)
+	SEC=$(echo $DATE | cut -d" " -f6)
+
+	CURDATE=$(date -Iseconds)
+
+	CURTIME=$(echo $CURDATE | cut -d"T" -f2)
+	CURDATE=$(echo $CURDATE | cut -d"T" -f1)
+	CURTIME=$(echo $CURTIME | cut -d"+" -f1)
+	CURTIME=$(echo $CURTIME | cut -d"-" -f1)
+
+	CURYEAR=$(echo $CURDATE | cut -d"-" -f1)
+	CURMON=$(echo $CURDATE | cut -d"-" -f2)
+	CURDAY=$(echo $CURDATE | cut -d"-" -f3)
+	CURHOUR=$(echo $CURTIME | cut -d":" -f1)
+	CURMIN=$(echo $CURTIME | cut -d":" -f2)
+	CURSEC=$(echo $CURTIME | cut -d":" -f3)
+
+        DATE=$YEAR$MON$DAY
+	CURDATE=$CURYEAR$CURMON$CURDAY
+	TIME=$HOUR$MIN$SEC
+	CURTIME=$CURHOUR$CURMIN$CURSEC
+	if [ $DATE -gt $CURDATE ]  ||
+			[ $DATE -eq $CURDATE  -a  $TIME -gt $CURTIME ]; then
+		date -s $YEAR.$MON.$DAY-$HOUR:$MIN:$SEC
+	fi
+}
+
+start() {
+    update_time /etc/timestamp
+}
+
+stop() {
+    touch /etc/timestamp
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+esac
+
+exit $?

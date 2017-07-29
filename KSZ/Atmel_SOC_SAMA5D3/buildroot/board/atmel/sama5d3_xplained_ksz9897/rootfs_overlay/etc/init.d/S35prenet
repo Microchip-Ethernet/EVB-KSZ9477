@@ -1,0 +1,69 @@
+#!/bin/sh
+#
+# Read from U-Boot environment and update /etc/network/interfaces.
+#
+
+
+FILE=/etc/network/interfaces
+
+update_interfaces() {
+    [ -x /sbin/fw_printenv ] || exit 1
+
+    [ -d /sys/class/net/eth0 ] || exit 1
+
+    MMC=$(grep "root=/dev/mmcblk0p2" /proc/cmdline)
+    if [ ! -z "$MMC" ]; then
+        if [ ! -d /boot ]; then
+            mkdir /boot
+            sed -i "s/\/dev\/mtd/#\/dev\/mtd/" /etc/fw_env.config
+            sed -i "s/#\/boot\/uboot/\/boot\/uboot/" /etc/fw_env.config
+        fi
+        mount /dev/mmcblk0p1 /boot
+    fi
+
+    ETHADDR=$(fw_printenv -n ethaddr 2> /dev/null)
+    IPADDR=$(fw_printenv -n ipaddr 2> /dev/null)
+    NETMASK=$(fw_printenv -n netmask 2> /dev/null)
+
+    MAC=$(ifconfig eth0 | grep HWaddr | cut -d"r" -f3 | cut -d" " -f2)
+    ETHADDR=$(echo $ETHADDR | tr 'a-f' 'A-F')
+    if [ ! -z "$ETHADDR" ] && [ "$MAC" != "$ETHADDR" ]; then
+        ifconfig eth0 hw ether $ETHADDR
+    fi
+
+    CUR=$(grep address $FILE | cut -d" " -f2)
+    if [ ! -z "$IPADDR" ] && [ "$CUR" != "$IPADDR" ]; then
+        sed -i "s/address $CUR/address $IPADDR/" $FILE
+    fi
+
+    CUR=$(grep netmask $FILE | cut -d" " -f2)
+    if [ ! -z "$NETMASK" ] && [ "$CUR" != "$NETMASK" ]; then
+        sed -i "s/netmask $CUR/netmask $NETMASK/" $FILE
+    fi
+    sync
+}
+
+start() {
+    update_interfaces
+}
+
+stop() {
+    MMC=$(grep /boot /proc/mounts)
+    if [ ! -z "$MMC" ]; then
+        umount /boot
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    *)
+        echo "Usage: $0 {start}"
+        exit 1
+esac
+
+exit $?

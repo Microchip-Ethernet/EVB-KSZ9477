@@ -1,0 +1,4 @@
+# From https://lists.gnupg.org/pipermail/gnupg-announce/2016q3/000392.html
+sha1 85a6a936bcab4c3c05f5efbf6ce847f23d35c0c4  libgcrypt-1.7.2.tar.bz2
+# Calculated based on the hash above
+sha256 3d35df906d6eab354504c05d749a9b021944cb29ff5f65c8ef9c3dd5f7b6689f  libgcrypt-1.7.2.tar.bz2

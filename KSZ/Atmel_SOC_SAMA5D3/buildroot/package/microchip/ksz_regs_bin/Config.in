@@ -1,0 +1,11 @@
+config BR2_PACKAGE_KSZ_REGS_BIN
+	bool "Microchip regs_bin"
+	default y
+	help
+	  Microchip register access utility.
+
+	  This package builds and installs the userspace 'regs_bin'
+	  command. It is up to the user to ensure that the kernel
+	  configuration has all suitable options enabled to allow a
+	  proper operation of 'regs_bin'.
+

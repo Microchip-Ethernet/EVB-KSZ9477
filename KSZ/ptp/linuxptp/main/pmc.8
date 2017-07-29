@@ -1,0 +1,152 @@
+.TH PMC 8 "October 2013" "linuxptp"
+.SH NAME
+pmc \- PTP management client
+
+.SH SYNOPSIS
+.B pmc
+[
+.B \-2
+|
+.B \-4
+|
+.B \-6
+|
+.B \-u
+] [
+.BI \-b " boundary-hops"
+] [
+.BI \-d " domain-number"
+] [
+.BI \-i " interface"
+] [
+.BI \-s " uds-address"
+] [
+.BI \-t " transport-specific-field"
+] [
+.B \-v
+] [
+.B \-z
+] [ command ] ...
+
+.SH DESCRIPTION
+.B pmc
+is a program which implements a PTP management client according to IEEE
+standard 1588. The program reads from the standard input or from the command
+line actions specified by name and management ID, sends them over the selected
+transport and prints any received replies. There are three actions supported:
+.B GET
+retrieves the specified information,
+.B SET
+updates the specified information and
+.B CMD
+(or
+.BR COMMAND )
+initiates the specified event.
+
+By default the management commands are addressed to all ports. The
+.B TARGET
+command can be used to select a particular clock and port for the
+subsequent messages.
+
+Command
+.B help
+can be used to get a list of supported actions and management IDs.
+
+.SH OPTIONS
+.TP
+.B \-2
+Select the IEEE 802.3 network transport.
+.TP
+.B \-4
+Select the UDP IPv4 network transport. This is the default transport.
+.TP
+.B \-6
+Select the UDP IPv6 network transport.
+.TP
+.B \-u
+Select the Unix Domain Socket transport.
+.TP
+.BI \-b " boundary-hops"
+Specify the boundary hops value in sent messages. The default is 1.
+.TP
+.BI \-d " domain-number"
+Specify the domain number in sent messages. The default is 0.
+.TP
+.BI \-i " interface"
+Specify the network interface. The default is /var/run/pmc.$pid for the Unix Domain
+Socket transport and eth0 for the other transports.
+.TP
+.BI \-s " uds-address"
+Specifies the address of the server's UNIX domain socket.
+The default is /var/run/ptp4l.
+.TP
+.BI \-t " transport-specific-field"
+Specify the transport specific field in sent messages as a hexadecimal number.
+The default is 0x0.
+.TP
+.B \-h
+Display a help message.
+.TP
+.B \-v
+Prints the software version and exits.
+.TP
+.B \-z
+The official interpretation of the 1588 standard mandates sending
+GET actions with valid (but meaningless) TLV values. Therefore the
+pmc program normally sends GET requests with properly formed TLV
+values. This option enables the legacy option of sending zero
+length TLV values instead.
+
+.SH MANAGEMENT IDS
+
+.TP
+.B ANNOUNCE_RECEIPT_TIMEOUT
+.TP
+.B CLOCK_ACCURACY
+.TP
+.B CLOCK_DESCRIPTION
+.TP
+.B CURRENT_DATA_SET
+.TP
+.B DEFAULT_DATA_SET
+.TP
+.B DELAY_MECHANISM
+.TP
+.B DOMAIN
+.TP
+.B GRANDMASTER_SETTINGS_NP
+.TP
+.B LOG_ANNOUNCE_INTERVAL
+.TP
+.B LOG_MIN_PDELAY_REQ_INTERVAL
+.TP
+.B LOG_SYNC_INTERVAL
+.TP
+.B NULL_MANAGEMENT
+.TP
+.B PARENT_DATA_SET
+.TP
+.B PORT_DATA_SET
+.TP
+.B PORT_DATA_SET_NP
+.TP
+.B PRIORITY1
+.TP
+.B PRIORITY2
+.TP
+.B SLAVE_ONLY
+.TP
+.B TIMESCALE_PROPERTIES
+.TP
+.B TIME_PROPERTIES_DATA_SET
+.TP
+.B TIME_STATUS_NP
+.TP
+.B TRACEABILITY_PROPERTIES
+.TP
+.B USER_DESCRIPTION
+.TP
+.B VERSION_NUMBER
+
+.SH SEE ALSO
+.BR ptp4l (8)

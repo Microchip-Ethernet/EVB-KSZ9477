@@ -1,0 +1,21 @@
+--- ptp_clock.c.old	2015-01-27 13:51:30.447429862 -0800
++++ ptp_clock.c	2014-11-03 15:31:51.267468703 -0800
+@@ -148,6 +148,18 @@
+ 
+ 		err = ops->adjfreq(ops, scaled_ppm_to_ppb(tx->freq));
+ 	}
++#ifdef CONFIG_PTP_1588_CLOCK_MICREL
++	else if (!tx->modes) {
++		long freq;
++
++		err = ops->gettime(ops, NULL);
++		freq = err;
++		freq <<= 13;
++		freq /= 125;
++		tx->freq = freq;
++		err = 0;
++	}
++#endif
+ 
+ 	return err;
+ }

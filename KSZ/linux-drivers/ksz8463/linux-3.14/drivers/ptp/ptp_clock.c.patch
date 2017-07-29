@@ -1,0 +1,20 @@
+--- ptp_clock.c.orig	2015-01-23 08:56:37.000000000 -0800
++++ ptp_clock.c	2015-05-18 12:22:05.909053587 -0700
+@@ -146,6 +146,17 @@ static int ptp_clock_adjtime(struct posi
+ 		ptp->dialed_frequency = tx->freq;
+ 	} else if (tx->modes == 0) {
+ 		tx->freq = ptp->dialed_frequency;
++#if defined(CONFIG_MICREL_KSZ8463_PTP) || defined(CONFIG_MICREL_KSZ8462_PTP) || defined(CONFIG_MICREL_KSZ9897_PTP)
++		do {
++			long freq;
++
++			err = ops->gettime(ops, NULL);
++			freq = err;
++			freq <<= 13;
++			freq /= 125;
++			tx->freq = freq;
++		} while (0);
++#endif
+ 		err = 0;
+ 	}
+ 

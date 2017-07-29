@@ -1,0 +1,19 @@
+--- Kconfig.old	2015-01-27 13:51:10.823057090 -0800
++++ Kconfig	2015-01-27 13:50:58.574824037 -0800
+@@ -53,6 +53,16 @@
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called ptp_ixp46x.
+ 
++config PTP_1588_CLOCK_MICREL
++	bool "Micrel PTP clock"
++	depends on PTP_1588_CLOCK
++	depends on MICREL_KSZ9897_PTP
++	help
++	  This adds support for using Micrel PTP clock device as a PTP
++	  clock. This clock is only useful if your PTP programs are
++	  getting hardware time stamps on the PTP Ethernet packets
++	  using the SO_TIMESTAMPING API.
++
+ comment "Enable PHYLIB and NETWORK_PHY_TIMESTAMPING to see the additional clocks."
+ 	depends on PTP_1588_CLOCK && (PHYLIB=n || NETWORK_PHY_TIMESTAMPING=n)
+ 

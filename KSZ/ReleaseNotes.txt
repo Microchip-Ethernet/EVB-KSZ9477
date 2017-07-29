@@ -1,0 +1,60 @@
+KSZ9xxx/KSZ85xx Ethernet Switch Software - Version: 1.1.2
+=========================================================
+
+Contenets:
+---------
+1. Platform and Kernel versions
+2. Device support
+3. Software description
+4. Release History
+5. Known Issues
+
+1. Platform and Kernel versions 
+-------------------------------
+ Kernel version: 3.18
+ ARM - Atmel SAMA5D3 SOC 
+
+2. Device support
+-----------------
+ KSZ98xx, KSZ95xx, KSZ94xx, KSZ85xx
+
+3. Software description
+-----------------------
+ The software release contains the build root, Linux kernel 3.18, KSZ
+ switch driver, applications - Linux PTP and OpenAVB.
+ 
+4. Release History
+------------------
+
+V1.1.2 : 07/19/2017
+	1. Linux PTP utilities are updated to better support the PTP stack.
+	2. An SD card can be used to boot and run the system.
+
+V1.1.1 : 05/03/2017
+	1. Linux PTP is updated to version 1.8.  The pmc utility can use
+	   Management messages to pass information from the PTP stack.  There
+	   is an explicit command to change the neighborPropDelayThresh and
+	   asCapable settings on the fly.
+	2. MSTP support is added to KSZ9897.  It is still not enabled by
+	   default and requires manual kernel configuration to enable it.  The
+	   old RSTP code is still being used.
+
+V1.1.0 : 02/08/2017
+	1. Newer revision of UNG8071 board is used.  As such the GPIO
+	   interrupt is changed from 10 to 28.
+	2. DLR daemon is added to communicate with DLR management program so
+	   that a DLR demo can be run.
+	3. The Atmel Cadence MAC driver can use IBA-only mode for demo
+	   purpose.
+	4. The MAC and switch drivers can be run as modules and unloaded.
+	5. UNG8087 board is supported.  However, it requires a different
+	   Device Tree configuration as the RGMII setting is different.
+
+V1.0 : 12/23/2016 
+	1. Ethernet Switch Driver with VLAN, ACL, 802.1x, RSTP support.
+	2. LinuxPTP, OpenAVB support -  Beta version.
+	3. DLR , HSR support - Beta version
+
+5. Known Issues:
+---------------
+  None.

@@ -1,0 +1,20 @@
+--- ptp_clock.c.orig	2015-05-29 00:22:54.000000000 -0700
++++ ptp_clock.c	2015-06-19 13:08:03.385922044 -0700
+@@ -149,6 +149,17 @@ static int ptp_clock_adjtime(struct posi
+ 		ptp->dialed_frequency = tx->freq;
+ 	} else if (tx->modes == 0) {
+ 		tx->freq = ptp->dialed_frequency;
++#if defined(CONFIG_KSZ_PTP)
++		do {
++			long freq;
++
++			err = ops->gettime(ops, NULL);
++			freq = err;
++			freq <<= 13;
++			freq /= 125;
++			tx->freq = freq;
++		} while (0);
++#endif
+ 		err = 0;
+ 	}
+ 

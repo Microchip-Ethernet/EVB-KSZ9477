@@ -1,0 +1,11 @@
+config BR2_PACKAGE_KSZ_PTP_TEST
+	bool "Microchip PTP Test"
+	default y
+	help
+	  Microchip PTP test utility.
+
+	  This package builds and installs the userspace 'ptp'
+	  command. It is up to the user to ensure that the kernel
+	  configuration has all suitable options enabled to allow a
+	  proper operation of 'ptp'.
+

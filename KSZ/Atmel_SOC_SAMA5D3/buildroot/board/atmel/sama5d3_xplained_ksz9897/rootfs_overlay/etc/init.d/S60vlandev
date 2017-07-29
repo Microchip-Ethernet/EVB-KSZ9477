@@ -1,0 +1,92 @@
+#!/bin/sh
+#
+# Create virtual VLAN devices for use with PTP stacks that nees actual
+# network devices for running in TC mode.
+#
+
+
+create_vlan_dev() {
+    ETH=0
+    VLAN=0
+
+    if [ ! -z "$1" ]; then
+        ETH=$1
+    fi
+
+    if [ -e "/sys/class/net/eth$ETH/sw/vlan_start" ]; then
+        VLAN=$(cat /sys/class/net/eth$ETH/sw/vlan_start)
+    fi
+    [ $VLAN -eq 0 ] && exit 0
+
+    let VLAN=$VLAN+1
+
+    PORTS=2
+    if [ -e "/sys/class/net/eth$ETH/sw/ports" ]; then
+        PORTS=$(cat /sys/class/net/eth$ETH/sw/ports)
+    fi
+
+    HOST_PORT=3
+    if [ -e "/sys/class/net/eth$ETH/sw/host_port" ]; then
+        HOST_PORT=$(cat /sys/class/net/eth$ETH/sw/host_port)
+        let PORTS=$PORTS-1
+    fi
+
+    if [ -e "/sys/class/net/eth$ETH.$VLAN" ]; then
+        exit 0
+    fi
+
+    p=0
+    while [ $p -lt $PORTS ]; do
+        let q=$VLAN+$p
+        vconfig add eth$ETH $q
+        if [ ! -z "$2" ]; then
+            vconfig set_egress_map eth$ETH.$q 0 $2
+        fi
+        let p=$p+1
+    done
+
+    if [ ! -z "$3" ] && [ -e "/sys/class/net/eth$ETH/ptp/vid" ]; then
+        echo "$3" > "/sys/class/net/eth$ETH/ptp/vid"
+        echo "$3" > "/sys/class/net/eth$ETH/sw/vid"
+    fi
+
+    MAC=$(ifconfig eth$ETH | grep HWaddr | cut -d":" -f7)
+    SUBNET=$(ifconfig eth$ETH | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1)
+    if [ ! -z "$SUBNET" ]; then
+        SUBNET1=$(echo "$SUBNET" | cut -d"." -f1)
+        SUBNET2=$(echo "$SUBNET" | cut -d"." -f2)
+        SUBNET3=$(echo "$SUBNET" | cut -d"." -f3)
+    else
+        SUBNET1="10"
+        SUBNET2="1"
+        SUBNET3="157"
+    fi
+    MAC1=$((0x$MAC))
+
+    p=0
+    while [ $p -lt $PORTS ]; do
+        let q=$VLAN+$p
+# Assigning an IP address may cause the VLAN device to become default when
+# the main network device changes IP address.
+#        ifconfig eth$ETH.$q $SUBNET1.$SUBNET2.$SUBNET3.$MAC1
+        ifconfig eth$ETH.$q up
+        let p=$p+1
+    done
+}
+
+start() {
+    create_vlan_dev
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        ;;
+    *)
+        echo "Usage: $0 {start}"
+        exit 1
+esac
+
+exit $?

@@ -1,0 +1,44 @@
+
+menuconfig MICREL_SWITCHES
+	tristate "Drivers for Micrel switches"
+	---help---
+	  Supports Micrel switches.
+
+if MICREL_SWITCHES
+
+comment "Micrel switch device drivers"
+
+config MICREL_SWITCH
+	bool
+	default n
+
+config MICREL_SWITCH_EMBEDDED
+	bool
+	default n
+	select MICREL_SWITCH
+
+config HAVE_KSZ8895
+	bool
+	default n
+
+config HAVE_SPI_KSZ8895
+	bool
+	default n
+	select HAVE_KSZ8895
+
+config SPI_KSZ8895
+	tristate "SPI driver for Micrel KSZ8895 switch"
+	select MICREL_SWITCH if !NET_DSA_TAG_TAIL
+	select HAVE_SPI_KSZ8895
+	---help---
+	  Supports the Micrel KSZ8895 switch.
+
+config MICREL_KSZ8895_STP
+	bool "STP support"
+	depends on HAVE_KSZ8895
+	default n
+	help
+	  Enable STP support.
+
+endif
+

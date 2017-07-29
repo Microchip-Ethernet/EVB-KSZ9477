@@ -1,0 +1,14 @@
+config BR2_PACKAGE_WEB_GUI
+	bool "WEB GUI"
+	default y
+	select BR2_TOOLCHAIN_BUILDROOT_WCHAR
+	select BR2_PACKAGE_PYTHON
+	select BR2_PACKAGE_THTTPD
+	help
+	  WEB GUI Configuration utility.
+
+	  This package builds and installs the web packages.
+	  It is up to the user to ensure that the kernel
+	  configuration has all suitable options enabled to allow a
+	  proper operation of web gui.
+

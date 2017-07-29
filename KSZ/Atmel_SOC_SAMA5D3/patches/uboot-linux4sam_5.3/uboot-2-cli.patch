@@ -1,0 +1,128 @@
+diff -purN uboot-linux4sam_5.3.orig/common/cli_hush.c uboot-linux4sam_5.3/common/cli_hush.c
+--- uboot-linux4sam_5.3.orig/common/cli_hush.c	2016-04-13 18:26:28.000000000 -0700
++++ uboot-linux4sam_5.3/common/cli_hush.c	2016-10-11 18:09:39.875298956 -0700
+@@ -2764,6 +2764,43 @@ static int parse_group(o_string *dest, s
+ }
+ #endif
+ 
++/* This function checks if a required variable inside the variable exists. */
++static char *chk_var(char *src)
++{
++	char *env;
++	char *ptr;
++	char *q;
++	char *start;
++	char *stop;
++	char buf[CONFIG_SYS_PBSIZE];
++
++	strncpy(buf, src, CONFIG_SYS_PBSIZE - 1);
++	buf[CONFIG_SYS_PBSIZE - 1] = '\0';
++	ptr = buf;
++	do {
++		stop = NULL;
++		start = strchr(ptr, '$');
++		if (start && *(start + 1) == '{') {
++			env = start + 2;
++			stop = strchr(env, '}');
++			if (stop) {
++				*stop = '\0';
++
++				/* variable starts with _ is not essential. */
++				if (*env != '_') {
++					q = getenv(env);
++					if (!q) {
++						start = NULL;
++						src = NULL;
++					}
++				}
++				ptr = stop + 1;
++			}
++		}
++	} while (start && stop);
++	return src;
++}
++
+ /* basically useful version until someone wants to get fancier,
+  * see the bash man page under "Parameter Expansion" */
+ static char *lookup_param(char *src)
+@@ -2796,6 +2833,68 @@ static char *lookup_param(char *src)
+ 	p = getenv(src);
+ 	if (!p)
+ 		p = get_local_var(src);
++	else if (getenv_yesno("subst_var")) {
++		char *env;
++		char *start;
++		char *stop;
++		char *q;
++		char *ptr;
++		int left;
++		int len;
++		char buf[CONFIG_SYS_PBSIZE];
++		static char res[CONFIG_SYS_PBSIZE];
++
++		len = strlen(p);
++		do {
++			ptr = res;
++			left = CONFIG_SYS_PBSIZE;
++			start = stop = NULL;
++			if (len < CONFIG_SYS_PBSIZE) {
++				strncpy(buf, p, len);
++				buf[len] = '\0';
++				start = strchr(buf, '$');
++			}
++			if (start && *(start + 1) == '{') {
++				len = start - buf;
++				env = start + 2;
++				stop = strchr(env, '}');
++				if (stop) {
++					*start = '\0';
++					*stop = '\0';
++					q = getenv(env);
++					if (q)
++						q = chk_var(q);
++					strncpy(ptr, buf, len);
++					ptr[len] = '\0';
++					ptr += len;
++					left -= len;
++					len = strlen(stop + 1);
++					left -= len;
++					if (q) {
++						len = strlen(q);
++						if (len < left) {
++							strncpy(ptr, q, len);
++							ptr[len] = '\0';
++							ptr += len;
++							left -= len;
++						} else {
++							/* Cannot expand. */
++							*start = '$';
++							*stop = '}';
++							stop = start - 1;
++							start = NULL;
++						}
++					} else if (' ' == *(stop + 1))
++						++stop;
++					strcpy(ptr, stop + 1);
++					p = res;
++					len = strlen(res);
++				}
++			}
++		} while (start && stop);
++		if (p == res && ' ' == res[len - 1])
++			res[len - 1] = '\0';
++	}
+ 
+ 	if (!p || strlen(p) == 0) {
+ 		p = default_val;
+diff -purN uboot-linux4sam_5.3.orig/include/configs/at91-sama5_common.h uboot-linux4sam_5.3/include/configs/at91-sama5_common.h
+--- uboot-linux4sam_5.3.orig/include/configs/at91-sama5_common.h	2016-04-13 18:26:28.000000000 -0700
++++ uboot-linux4sam_5.3/include/configs/at91-sama5_common.h	2016-10-11 16:36:31.606547747 -0700
+@@ -122,7 +122,7 @@
+ 
+ #define CONFIG_BAUDRATE			115200
+ 
+-#define CONFIG_SYS_CBSIZE		256
++#define CONFIG_SYS_CBSIZE		512
+ #define CONFIG_SYS_MAXARGS		16
+ #define CONFIG_SYS_LONGHELP
+ #define CONFIG_CMDLINE_EDITING

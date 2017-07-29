@@ -1,0 +1,145 @@
+
+
+Multiple Registration Protocol (MRP) utility README
+
+This utility is used to simulate receiving MRP frames and passing their
+information to the driver so that the switch can be configured according to
+the requests.
+
+For Multiple MAC Registration Protocol receiving two MAC declarations from at
+least two ports will create a lookup entry connecting these ports.
+
+For Multiple VLAN Registration Protocol receiving two VLAN declarations from
+at least two ports will create a VLAN entry connecting these ports.
+
+For Multiple Stream Reservation Protocol it requires a pair of talker
+declaration and listener declaration.  Normally the talker declaration will be
+declared first, so the listener declaration can be sent with the correct
+stream id.  Once a listener declaration is received the switch will be
+programmed to connect these ports using the lookup and VLAN tables.  And the
+bandwidth required will be set in the credit shaping registers.
+
+The commands used in the utilities are organized with two letters.  The first
+letter indicates the action, and the second indicates the type.
+
+The actions are 'r' for receive, 'v' for leave, 'a' for activate, 'z' for
+disable.  Activate is the same as receive without the reporting as MRP frames
+are not going to be sent.  Likewise disable is same as leave.  Use the command
+"g" to flush out the reporting information.  Otherwise just use "a" and "z"
+for AVB operation.
+
+There is an action 'm" for declaring the attribute, and action 'n' for
+dropping the declaration.
+
+The types are 'm' for MAC, 'v' for VLAN, 'l' for listener, 't' for talker, and
+'d' for domain.
+
+The second parameter in these actions is the port, where 1 means port 1 and so
+on.  The number 0 can be used to indicate the host port.
+
+Typically commands are:
+
+rm 1 -> receive MAC declaration from port 1
+rm 2 -> receive MAC declaration from port 2
+vm 1 -> receive MAC withdrawal from port 1
+vm 2 -> receive MAC withdrawal from port 2
+
+rt 1 -> receive talker declaration from port 1
+rl 2 -> receive listener declaration from port 2
+vl 2 -> receive listener withdrawal from port 2
+vt 1 -> receive talke withdrawal from port 1
+
+
+As this utility was designed to debug the driver, the command line is very
+short and other parameters required are pulled from variables set beforehand.
+
+The command "dest" is used to set the MAC addresss.  This is also used to set
+the destination address of the stream.
+
+The command "vid" is used to set the VLAN id.  This is also used to set the
+VLAN id of the stream.
+
+The command "sid" is used to set the stream id, which contains 8 bytes.  As it
+is too long to type the string whenver this stream id is changed, another
+command "uid" can be used to just set the last 2 bytes.
+
+The command "bid" is used to set the bridge id, which contains 8 bytes.
+
+The third parameter of the commands related to MAC declaration can be the last
+byte of the MAC address, which allows easy substitation to the stored MAC
+address.
+
+dest 01:12:34:56:78:90
+rm 1 12 -> receive MAC address 01:12:34:56:78:12 declaration from port 1
+rm 2 -> receive MAC address 01:12:34:56:78:90 declaration from port 2
+
+
+The rest of commands involve talker declaration information.
+
+These commands are simple get/set typs of command.  Entering the command
+without the parameter means retrieving the data from the stored variable.
+Providing a valid paramter will update the variable.
+
+The command "pt" is used to set the priority of the stream.
+
+The command "kt" is used to set the rank of the stream.
+
+The command "ft" is used to set the MaxFrameSize of the stream.
+
+The command "it" is used to set the MaxIntervalFrames of the stream.
+
+The command "lt" is used to set the AccumulatedLatency of the stream.
+
+The command "ct" is used to set the FailureCode of the stream.
+
+The command "sl" is used to set the substate of the listener declaration.
+
+The command "ll" is used to change the port speed to simulate different
+connections are dropped and restarted due to bandwidth requirements.
+
+
+For purpose of programming the switch to provide certain bandwidth it is just
+necessary to adjust MaxFrameSize and MaxIntervalFrames values to achieve that
+bandwidth.
+
+ft <#>
+it <#>
+dest <##>
+at 1
+al 2
+al 3
+al 4
+
+
+To verify the hardware is programmed correctly the following sysfs files can
+be read to view the switch configuration:
+
+The sysfs files starts at the /sys/bus/spi/devices/spi0.0 directory.
+
+"cat sw/dynamic_table" displays the dynamic MAC table, which should have an
+entry with the destination address.
+
+"cat sw/vlan_table" displays the VLAN table, which should have an entry with
+the VLAN id.
+
+Note the table display is using kernel function so the display may not be
+visible.  In this case use the "dmesg" command to dump the kernel log.
+
+The subdirectory "sw0" means port 1, "sw1" for port 2, and so on.
+
+Use the command "echo 1 > sw/info" to provide more information when reading
+those sysfs files.
+
+There is a "0_q_index" in "sw0", and "1_q_index" in "sw1", and so on.  This is
+the queue index of the port.
+
+"echo 2 > sw0/0_q_index" sets the queue index of port 1 to 2.
+
+The other files "0_q_credit_hi", "0_q_credit_incr", and "0_q_credit_lo" are
+related to the credit shaper.  Using the "cat" command will display them as
+programmed in the switch hardware.
+
+The "0_q_shaping" file indicates whether the credit shaping is on.
+
+The "0_q_scheduling" file should indicate strict priority is on.
+

@@ -1,0 +1,8 @@
+source "package/microchip/ksz_linuxptp/Config.in"
+source "package/microchip/ksz_ptp_scripts/Config.in"
+source "package/microchip/ksz_regs_bin/Config.in"
+source "package/microchip/ksz_ptp_cli/Config.in"
+source "package/microchip/ksz_ptp_test/Config.in"
+source "package/microchip/ksz_OpenAVB/Config.in"
+source "package/microchip/mdio-tool/Config.in"
+source "package/microchip/web_gui/Config.in"

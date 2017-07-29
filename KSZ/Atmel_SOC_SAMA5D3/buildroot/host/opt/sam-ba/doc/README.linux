@@ -1,0 +1,107 @@
+SAM-BA 2.13 Readme file for Linux platforms
+
+
+This version of SAM-BA is designed to communicate with ATMEL AT91SAM ARM(R) Thumb(R) -based 
+devices devices only via a USB CDC Serial communication channel on Linux.
+
+Install :
+
+You just have to unzip the 'sam-ba_x.y.zip' archive in a folder of your choice.
+
+Note : packages needed : tcl8.4 tclx8.4 tk8.4.
+
+
+USB CDC Serial driver mount procedure :
+
+1/ Login with administrator rights
+
+2/ Unload usbserial module if it is already running
+#rmmod usbserial
+
+3/ Load usbserial kernel module
+#modprobe usbserial vendor=0x03eb product=0x6124
+
+4/ Verify that the USB connection is established
+#lsusb -d 03eb:6124
+Bus 004 Device 006: ID 03eb:6124 Atmel Corp
+
+5/ Know which USB connection is established
+#dmesg
+...
+kernel: usb 4-2: new full speed USB device using uhci_hcd and address 5
+kernel: usb 4-2: configuration #1 chosen from 1 choice
+kernel: usbserial_generic 4-2:1.0: generic converter detected
+kernel: usbserial_generic: probe of 4-2:1.0 failed with error -5
+kernel: usbserial_generic 4-2:1.1: generic converter detected
+kernel: usb 4-2: generic converter now attached to ttyUSBx
+
+=> you will have to use /dev/ttyUSBx to connect to your board
+
+
+Running SAM-BA CDC Serial version :
+
+Launch 'sam-ba_cdc_x.y.linux_zz' file, and select your board and the /dev/ttyUSBx
+device where your board in mounted on. 
+
+Sam-ba Linux
+
+**************
+*** Ubuntu ***
+**************
+
+- Update the kernel: 
+# apt-get install linux-image-generic linux-headers-generic
+- On 64 bits version install 32 bits libraries:
+# apt-get install ia32-libs
+- Give sam-ba execute permission if needed:
+$ chmod +x sam-ba
+- Connect the board
+- Create a symlink on /dev/ttyACM0
+# ln -s /dev/ttyACM0 /dev/ttyUSB0
+- Launch sam-ba
+
+Tested on: 
+Ubuntu 10.04 64 bits 2.6.32-33-generic (2.6.32-33.70)
+Ubuntu 10.10 32 bits 2.6.35.30-generic (2.6.35-30.56)
+Ubuntu 10.10 64 bits 2.6.35.30-generic (2.6.35-30.56)
+Ubuntu 10.10 64 bits 2.6.38-10-generic (2.6.38-10.25)
+Ubuntu 11.10 64 bits alpha3
+
+**************
+*** Fedora ***
+**************
+
+- On 64 bits version install 32 bits libraries:
+# yum install glibc libstdc++ libX11
+# yum install glibc.i686 libstdc++.i686 libX11.i686
+The first line upate your 64 bits libraries in order to have the same version as 32 bits libraries. If you don't do this, Fedora may complain that you have multilib versions
+- Give sam-ba execute permission if needed:
+chmod +x sam-ba
+- Add yourself into dialout group
+Edit the /etc/group file and add your username at the end of the line starting with 'dialout'.
+dialout:x:18:myusername
+Logout and login.
+- Connect the board
+- Create a symlink on /dev/ttyACM0
+# ln -s /dev/ttyACM0 /dev/ttyUSB0
+- Launch sam-ba
+
+
+Tested on
+Fedora 14 32 bits 2.6.35.6-45.fc14.i686
+Fedora 14 64 bits 2.6.35.6-45.fc14.x86_64
+Fedora 15 64 bits 2.6.38.6-26.rc1.fc15.x86_64
+
+**************
+*** Others ***
+**************
+
+How to check if your kernel is up to date ?
+$ dmesg
+If you have something like that (not exactly the same) it's ok:
+[227274.230016] usb 5-1: new full speed USB device using uhci_hcd and address 5
+[227274.395739] cdc_acm 5-1:1.0: This device cannot do calls on its own. It is not a modem.
+[227274.395768] cdc_acm 5-1:1.0: ttyACM0: USB ACM device
+If you don't have this part: 'This device cannot do calls on its own. It is not a modem.',
+your kernel is probably not up to date or the cdc_acm patch has not been backported.
+

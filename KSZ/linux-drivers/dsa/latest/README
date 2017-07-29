@@ -1,0 +1,73 @@
+
+
+2017-02-09
+
+These are the updated files for DSA support in Microchip KSZ switches which
+use the tail tagging method for port direction.  Please copy them to the
+appropriate directories under the Linux kernel source tree.
+
+Please patch the Kconfig and Makefile files in their associated directories.
+
+The "Kconfig" file adds a new NET_DSA_TAG_TAIL configuration, which uses the
+NET_DSA_TAG_TRAILER configuration for most of the operation.
+
+The "tag_tail.c" file contains specific code for NET_DSA_TAG_TAIL
+configuration.
+
+The "setup_dsa.c" file should be included in the network driver, which needs to
+call the "ksz_switch_init" function during initialization to setup the DSA
+devices.  A MDIO bus is required, so the network driver should acquire that
+first.  The KSZ8692 network driver contains sample code for that operation as
+documented in the Microchip KSZ switch driver operation document.
+
+struct ksz_sw *sw get_sw_ptr(struct net_device *dev)
+{
+	/* Get the switch pointer from the net device. */
+	struct dev_priv *priv = netdev_priv(dev);
+	struct dev_info *hw_priv = priv->adapter;
+
+	return hw_priv->sw;
+}  /* get_sw_ptr */
+
+static void setup_dsa_switch(struct net_device *dev)
+{
+	struct phy_device *phydev;
+	struct ksz_sw *sw = get_sw_ptr(dev);
+
+	if (!sw)
+		return;
+	phydev = sw->phydev;
+	ksz_switch_init(&ksz_switch_plat_data, NO_IRQ,
+		&dev->dev, &phydev->bus->dev, sw);
+}  /* setup_dsa_switch */
+
+The following functions should be defined in the network driver as they are
+used in the tag_tail code:
+
+void net_add_tail_tag(struct sk_buff *skb, struct net_device *dev, int port)
+{
+	struct ksz_sw *sw = get_sw_ptr(dev);
+
+	sw->net_ops->add_tail_tag(sw, skb, 1 << port);
+}  /* net_add_tail_tag */
+
+int net_get_tail_tag(struct sk_buff *skb, struct net_device *dev, int *port)
+{
+	u8 *trailer;
+	struct ksz_sw *sw = get_sw_ptr(dev);
+
+	trailer = skb_tail_pointer(skb) - 1;
+	return sw->net_ops->get_tail_tag(trailer, port);
+}  /* net_get_tail_tag */
+
+The switch API add_tail_tag is used to insert the tag specific to the switch.
+
+The switch API get_tail_tag is used to get the tag information.
+
+As the Microchip KSZ switch requires tag tailing all the time if that feature
+is enabled, it is necessary to call the "tail_xmit" function in the network
+driver during packet transmission to make sure a tail tag is attached to the
+packet.
+
+This is done inside the switch API final_skb.
+

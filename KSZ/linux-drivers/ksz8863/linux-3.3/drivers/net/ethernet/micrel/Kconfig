@@ -1,0 +1,60 @@
+
+menuconfig MICREL_SWITCHES
+	tristate "Drivers for Micrel switches"
+	depends on SPI
+	---help---
+	  Supports Micrel switches.
+
+if MICREL_SWITCHES
+
+comment "Micrel switch device drivers"
+
+config MICREL_SWITCH
+	bool
+	default n
+
+config MICREL_SWITCH_EMBEDDED
+	bool
+	default n
+	select MICREL_SWITCH
+
+config HAVE_KSZ8863
+	bool
+	default n
+
+config HAVE_SPI_KSZ8863
+	bool
+	default n
+	select HAVE_KSZ8863
+
+config SPI_KSZ8863
+	tristate "SPI driver for Micrel KSZ8863 switch"
+	select MICREL_SWITCH if !NET_DSA_TAG_TAIL
+	select HAVE_SPI_KSZ8863
+	---help---
+	  Supports the Micrel KSZ8863 switch.
+
+config I2C_KSZ8863
+	tristate "I2C driver for Micrel KSZ8863 switch"
+	select MICREL_SWITCH if !NET_DSA_TAG_TAIL
+	select HAVE_KSZ8863
+	---help---
+	  Supports the Micrel KSZ8863 switch.
+
+config MICREL_KSZ8863_EMBEDDED
+	bool "Micrel KSZ8863 switch support in network controller"
+	depends on I2C_KSZ8863 = n && SPI_KSZ8863 = n && !NET_DSA_TAG_TAIL
+	select MICREL_SWITCH_EMBEDDED
+	select HAVE_SPI_KSZ8863
+	---help---
+	  Supports the Micrel KSZ8863 switch used within a network controller.
+
+config MICREL_KSZ8863_STP
+	bool "STP support"
+	depends on HAVE_KSZ8863
+	default n
+	help
+	  Enable STP support.
+
+endif
+

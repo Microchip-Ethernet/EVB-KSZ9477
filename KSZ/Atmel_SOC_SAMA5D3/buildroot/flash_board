@@ -1,0 +1,1 @@
+./board/atmel/flasher.sh $KSZ_HOME/Atmel_SOC_SAMA5D3/buildroot/output /dev/ttyACM0 sama5d3_xplained

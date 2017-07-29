@@ -1,0 +1,53 @@
+#!/bin/sh
+#
+# Run daemon in background
+#
+
+
+run_dlr_daemon() {
+    ETH=0
+
+    if [ ! -z "$1" ]; then
+        ETH=$1
+    fi
+
+    [ -d "/sys/class/net/eth$ETH/dlrfs" ] || exit 0
+
+    DAEMON=$(fw_printenv -n dlr_daemon 2> /dev/null)
+    PREC=$(fw_printenv -n dlr_prec 2> /dev/null)
+
+    BR=0
+    if [ -e "/sys/class/net/eth$ETH/sw/two_dev" ]; then
+        BR=$(cat /sys/class/net/eth$ETH/sw/two_dev)
+    fi
+    if [ $BR -gt 0 ]; then
+        BR=br0
+    else
+        BR=eth$ETH
+    fi
+
+    if [ ! -z "$PREC" ] && [ $PREC -gt 0 ]; then
+        echo "1 $PREC 400 1960 0" > /sys/class/net/eth$ETH/dlrfs/cfg
+    fi
+
+    if [ ! -z "$DAEMON" ]; then
+        [ $DAEMON -eq 0 ] || dlr_daemon $BR &
+    fi
+}
+
+start() {
+    run_dlr_daemon
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        ;;
+    *)
+        echo "Usage: $0 {start}"
+        exit 1
+esac
+
+exit $?

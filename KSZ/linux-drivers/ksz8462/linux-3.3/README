@@ -1,0 +1,82 @@
+
+
+2015-07-07
+
+These are the files for the KSZ8462/KSZ8441/KSZ8852 HLI driver.  Please copy
+them to the appropriate directories under the Linux kernel source tree.
+
+The files under drivers/net/ethernet/micrel can be copied without changes if
+they do not exist in the original Linux kernel.
+
+The "Kconfig" file contains a KSZ8462_HLI configuration.  Please patch the
+change to the Micrel network drivers Kconfig file.
+
+The "Makefile" file contains a line to compile the KSZ8462 driver.  Please add
+it to the Micrel network drivers Makefile file.
+
+The "arch_setup_ksz8462" file contains sample code to register the KSZ8462 HLI
+device.  Please update it appropriately for the host system.
+
+If 1588 PTP function is required then the files under drivers/ptp should be
+patched to the files in that directory.
+
+
+These are the shared files for the KSZ8463 switch:
+
+	ks846xReg.h
+	ks886xReg.h
+	ksz8463.h
+	ksz_sw.h
+	ksz_sw.c
+	ksz_sw_sysfs.c
+
+These are the shared files for the 1588 PTP function:
+
+	ksz_ptp.h
+	ksz_ptp.c
+	ksz_ptp_sysfs.c
+	micrel_ptp.c
+
+This is a shared file for the KSZ8462 drivers:
+
+	ksz8462.h
+
+These are the shared files for Micrel drivers:
+
+	ksz_req.h
+	ksz_req.c
+	ksz_common.c
+
+
+Note the 1588 PTP function is defaulted to be on for KSZ8462/KSZ8841.  For
+KSZ8852 that does not require PTP function it needs to be manually turned off
+in the kernel configuration.
+
+The kernel configuration utility is invoked by the "make ARCH=arm menuconfig"
+command, where CPU architecture may be different.
+
+Select Device Drivers -> Network device support -> Ethernet driver support and
+go down to Micrel devices.  There are bunch of Micrel Ethernet devices listed.
+One of them is "Micrel KSZ8462 HLI support."  The "1588 PTP support" underneath
+it is enabled by default.  Disable that option and then exit the configuration
+utility to save the kernel configurations.
+
+An alternative way is to modify the provided Kconfig file and set the default
+to "n" before patching it.  But then it needs to be manually turned on for
+KSZ8462/KSZ8841.
+
+Another quick way to disable PTP function in the driver is not to define the
+CONFIG_1588_PTP conditional.
+
+
+The tools directory contains user applications that interacts with the switch.
+
+The regs_bin utility uses the standard Linux register access API to access the
+switch registers.  The network device "eth0" or SPI device "spi0.0" needs to
+be supplied to specify which device to use with the register access API.
+
+The ptp_cli utility can be used to access the 1588 PTP function of the switch.
+
+The ptp utility in the ptp_net directory can be used to send and receive PTP
+messages for testing purpose.
+

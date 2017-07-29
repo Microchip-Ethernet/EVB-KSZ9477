@@ -1,0 +1,150 @@
+#!/usr/bin/python
+######################################
+import sys
+import subprocess
+#####################################
+
+####################### Function to display HELP Menu ##################################
+def	usage():
+	print "############################################# Command Help###################################################################"
+	print "config.py [GlobalCfg | PortCfg | PhyCfg | SwitchCfg | SystemCfg] [get | set | (cmd)] {(Port)} {[(Reg) | (Entry)]} {(value)}"
+	print "To Set/Get Switch Global Configurations"
+	print "config.py GlobalCfg set vlan_table <val>"
+	print "config.py GlobalCfg get vlan_table"
+	print "To Set/Get Switch Port Configurations"
+	print "config.py PortCfg set <PortNum> vid <val>"
+	print "config.py PortCfg get <PortNum> vid"
+	print "To Set/Get PHY Port Configurations"
+	print "config.py PhyCfg set <PortNum> <RegAddr> <val>"
+	print "config.py PhyCfg get <PortNum> <RegAddr>"
+	print "To Set/Get Switch Register"
+	print "config.py SwitchCfg set <RegAddr> <val>"
+	print "config.py SwitchCfg get <RegAddr>"
+	print "To Set/Get System configurations"
+	print "config.py SystemCfg \"ifconfig eth0 up\""
+	print "config.py SystemCfg \"ifconfig eth0\""
+	print "#############################################################################################################################"
+	return;
+
+################# Function to execute Shell Commands ###########################
+## cmd: Shell Command
+## return: Returns output of shell command
+
+def	exe_shell_cmd(cmd):
+	proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True)
+	(out, err) = proc.communicate()
+	
+	return out;
+
+################# Function to get KSZ Interface ###########################
+## return: On Success KSZ interface Name, failure -1
+def	get_interface():
+
+	out = exe_shell_cmd("dmesg | grep attached| grep KSZ")
+
+	if len(out) != 0:
+		interface = (out.split()[4]).split(":",1)[0]
+		out = exe_shell_cmd("ifconfig " + interface + " | grep " + interface)
+
+		if len(out) and interface == out.split()[0]:
+			return interface;
+		else:
+			return -1;
+
+	return -1;
+
+if len(sys.argv) == 1:
+	usage()
+	exit()
+
+interface = "eth0"
+
+if isinstance(interface, int):
+	print "No Device Found!"
+	exit()
+
+sysfs	= "/sys/class/net/"+ interface
+sw	= sysfs + "/sw"
+
+############## Set/Get sysfs entries for sw ####################
+## GetSet: set/get
+## Entry: sysfs entry: vlan_table, vlan etc
+## return: returns the shell output
+
+def	sysfs_sw_entry(GetSet, Entry):
+	if GetSet == "get":
+		output = exe_shell_cmd("cat " + sw + "/" + Entry)
+	elif GetSet == "set":
+		output = exe_shell_cmd("echo " + sys.argv[4] + " > " + sw + "/" + Entry)
+	else:
+		usage()
+		exit()
+
+	return output;
+
+############## Set/Get sysfs entries for sw ports ####################
+## GetSet: set/get
+## Entry: sysfs entry of port: vid, ingress
+## Port: <0-6>
+## return: returns the shell output
+
+def	sysfs_swx_entry(GetSet, Entry, Port):
+	if GetSet == "get":
+		output = exe_shell_cmd("cat " + sw + Port + "/" + Port + "_" + Entry)
+	elif GetSet == "set":
+		output = exe_shell_cmd("echo " + sys.argv[5] + " > " + sw + Port + "/" + Port + "_" + Entry)
+	else:
+		usage()
+		exit()
+
+	return output;
+
+############## Set/Get sysfs  PHY Registers  ####################
+## GetSet: get/set
+## phy_id: <1-6>
+## reg: register address (argv holds reg value in set case )
+## return: returns the shell output
+
+def	mdio_access(GetSet, phy_id, reg):
+	if GetSet == "get":
+		output = exe_shell_cmd("/usr/sbin/mdio-tool r " + interface + " " + reg + " " + phy_id)
+	elif GetSet == "set":
+		output = exe_shell_cmd("/usr/sbin/mdio-tool w " + interface + " " + reg + " " + phy_id + " " + sys.argv[5])
+	else:
+		usage()
+		exit()
+
+	return output;
+
+############## Set/Get sysfs  KSZ switch  Registers  ####################
+## GetSet: get/set
+## reg: register address (argv holds reg value in set case )
+## return: returns the shell output
+
+def	ksz_access(GetSet, reg):
+	proc = subprocess.Popen("/usr/sbin/regs_bin spi1.0 ", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, shell=True)
+	if GetSet == "get":
+		proc.stdin.write("r " + reg)
+		(out, err) = proc.communicate()
+		return (out.split()[2]);
+	elif GetSet == "set":
+		proc.stdin.write("w " + reg + " " + sys.argv[4])
+		return "";
+	else:
+		usage()
+		exit()
+
+if sys.argv[1] == "GlobalCfg" :
+	print sysfs_sw_entry(sys.argv[2], sys.argv[3])
+elif sys.argv[1] == "PortCfg" :
+	print sysfs_swx_entry(sys.argv[2], sys.argv[4], sys.argv[3])
+elif sys.argv[1] == "PhyCfg" :
+	print mdio_access(sys.argv[2], sys.argv[3], sys.argv[4])
+elif sys.argv[1] == "SwitchCfg" :
+	print ksz_access(sys.argv[2],sys.argv[3])
+elif sys.argv[1] == "SystemCfg" :
+	print exe_shell_cmd(sys.argv[2])
+else:
+	print "\n\nInvalid Request\n\n"
+	usage()
+	exit ()

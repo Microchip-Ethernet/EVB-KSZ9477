@@ -1,0 +1,187 @@
+
+choice
+	prompt "Micrel Pegasus Implementations"
+	depends on ARCH_MICREL_PEGASUS
+	default ARCH_KS8692P
+
+config ARCH_KS8692P
+	bool "KSZ8692P"
+	select KS8692P
+	help
+	  Include support for KSZ8692P SoC platforms.
+
+endchoice
+
+config KS8692P
+	bool
+	help
+	  KSZ8692P-based chip support.
+
+choice
+	prompt "KSZ8692P Revisions"
+	depends on ARCH_KS8692P
+	default KSZ8692VB
+
+config KSZ8692VB
+	bool "KSZ8692 Rev. B"
+	help
+	  Support for first revision KSZ8692P platforms.
+endchoice
+
+config KSZ8692_MII
+	bool "Use MII mode"
+	depends on NET_PEGASUS
+	help
+	  Use MII mode instead of RGMII.
+
+config PEGASUS_WAN_ONLY
+	bool
+	depends on NET_PEGASUS
+	default n
+	help
+	  LAN port is used for some other device.
+
+config PEGASUS_LAN_SPECIAL
+	bool
+	depends on NET_PEGASUS
+	default n
+	help
+	  LAN port is connected to some other device.
+
+config PEGASUS_NO_MDIO
+	bool
+	depends on NET_PEGASUS
+	default n
+	help
+	  WAN port is not connected to PHY.
+
+config PEGASUS_NO_PCI
+	bool
+	depends on KSZ8692VB
+	default n
+	help
+	  PCI is disabled.
+
+config KSZ8462_HLI_EXT
+	bool
+	default n
+	depends on ARCH_MICREL_PEGASUS
+	help
+	  Support for KSZ8462-HLI chip on external bus.
+
+config SPECIAL_BOARD
+	bool "Special Board"
+	depends on KSZ8692VB
+	select PEGASUS_NO_PCI
+	---help---
+	  Special boards do not have PCI support.
+
+choice
+	prompt "Board types"
+	depends on SPECIAL_BOARD
+	default KSZ_CTRL_BOARD
+
+config KSZ_CTRL_BOARD
+	bool "Micrel Control Board"
+	select PEGASUS_WAN_ONLY if NET_PEGASUS
+	select PEGASUS_NO_MDIO if NET_PEGASUS
+	---help---
+	  Supports the Micrel Control Board.
+
+config KSZ_CTRL_MII_BOARD
+	bool "Micrel Control Board with MII"
+	---help---
+	  Supports the Micrel Control Board with MII extension.
+
+config MICREL_FPGA_BOARD
+	bool "Micrel FPGA Board"
+	select PEGASUS_LAN_SPECIAL if NET_PEGASUS
+	---help---
+	  Supports the Micrel FPGA Board.
+endchoice
+
+config CONSOLE_PORT
+	int "Console port"
+	default "0"
+	depends on ARCH_MICREL_PEGASUS
+	help
+	  Change default console port.
+
+config DELAYED_TIMER
+	bool "Enable delayed timer"
+	default n
+	depends on ARCH_MICREL_PEGASUS
+	help
+	  Enable microsecond timer for delayed tasks.
+
+config U_BOOT_LOADER
+	bool "Use U-Boot loader"
+	default y
+	depends on ARCH_MICREL_PEGASUS
+	help
+	  Use U-Boot loader.
+
+config CENTAUR_LOADER_SIZE
+	hex "Bootloader size"
+	depends on ARCH_MICREL_PEGASUS
+	default "0x10000"
+	help
+	  This is the maximum size of the bootloader for the Pegasus
+	  chips.
+
+config CENTAUR_KERNEL_SIZE
+	hex "Kernel size"
+	depends on ARCH_MICREL_PEGASUS
+	default "0xE0000"
+	help
+	  This is the maximum size of the kernel for the Pegasus
+	  chips.
+
+config CENTAUR_FS_SIZE
+	hex "Filesystem size"
+	depends on ARCH_MICREL_PEGASUS
+	default "0x60000"
+	help
+	  This is the size of the non-volatile filesystem for the
+	  Pegasus chips.
+
+config CENTAUR_SPARE_SIZE
+	hex "Spare size"
+	depends on ARCH_MICREL_PEGASUS
+	default "0x40000"
+	help
+	  This is the size of the spare space for other uses.
+
+config CENTAUR_NAND_SIZE
+	hex "NAND size"
+	depends on ARCH_MICREL_PEGASUS
+	default "0x2000000"
+	help
+	  This is the size of the NAND flash chip to use.
+
+choice
+	prompt "DDR memory types"
+	depends on ARCH_KS8692P
+	default MICRON_200_DDR
+
+config SAMSUNG_166_DDR
+	bool "Samsung 166 MHz DDR"
+	help
+	  Support for Samsung 166 MHz DDR chips.
+
+config SAMSUNG_200_DDR
+	bool "Samsung 200 MHz DDR"
+	help
+	  Support for Samsung 200 MHz DDR chips.
+
+config MICRON_166_DDR
+	bool "Micron 166 MHz DDR"
+	help
+	  Support for Micron 166 MHz DDR chips.
+
+config MICRON_200_DDR
+	bool "Micron 200 MHz DDR"
+	help
+	  Support for Micron 200 MHz DDR chips.
+endchoice
+

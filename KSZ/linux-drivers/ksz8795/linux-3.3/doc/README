@@ -1,0 +1,245 @@
+
+
+2016-01-29
+
+These are the files for the KSZ8795 SPI switch driver.  Please copy them to
+the appropriate directories under the Linux kernel source tree.
+
+The files under drivers/net/ethernet/micrel can be copied without changes if
+they do not exist in the original Linux kernel.
+
+The "Kconfig" file contains a SPI_KSZ8795 configuration.  Please patch the
+change to the Micrel network drivers Kconfig file.
+
+The "Makefile" file contains a line to compile the KSZ8795 driver.  Please add
+it to the Micrel network drivers Makefile file.
+
+The "setup_ksz8795" file under arch directory contains sample code to register
+the KSZ8795 SPI device.  Please update it appropriately for the host system.
+
+
+These are the shared files for the KSZ8795 switch:
+
+	ksz8795.h
+	ksz_sw_8795.h
+	ksz_sw_8795.c
+	ksz_sw_sysfs_8795.c
+
+These are the shared files for the KSZ8795 and network controller drivers:
+
+	ksz_sw_phy.h
+	ksz_spi_net.h
+	ksz_cfg_8795.h
+	ksz_sw_8795.h
+	ksz_sw_sysfs_8795.c
+
+This is a shared file for DSA support:
+
+	ksz_dsa.c
+
+These are the shared files for Micrel drivers:
+
+	ksz_common.c
+	ksz_common.h
+
+
+The KSZ8795 driver creates a virtual MDIO bus and exposes each port in the
+switch as a PHY device under that MDIO bus.  To access the switch from the
+network controller driver a PHY device with PHY id 0 needs to be retrieved
+from the virtual MDIO bus.  Inside the PHY device's private data is a pointer
+to the switch structure.  With that pointer all the switch functions can be
+accessed.
+
+The "setup_sw.c" file contains sample code to incorporate this switch access
+function.
+
+The "micrel_sw_check" function is used to check whether the switch driver is
+correctly loaded and running.
+
+The "micrel_sw_attach" function is used to retrieve the PHY device to access
+the switch.
+
+
+The switch register access uses pre-defined member functions like r8, r16, r32,
+w8, w16, and w32 so that the same switch code can be used in both SPI driver
+using SPI access and other driver using direct access.
+
+struct ksz_sw_reg_ops {
+	int (*r)(struct ksz_sw *sw, u32 reg, void *buf, unsigned len);
+	int (*w)(struct ksz_sw *sw, u32 reg, void *buf, unsigned len);
+
+	u8 (*r8)(struct ksz_sw *sw, unsigned reg);
+	u16 (*r16)(struct ksz_sw *sw, unsigned reg);
+	u32 (*r32)(struct ksz_sw *sw, unsigned reg);
+	void (*w8)(struct ksz_sw *sw, unsigned reg, unsigned val);
+	void (*w16)(struct ksz_sw *sw, unsigned reg, unsigned val);
+	void (*w32)(struct ksz_sw *sw, unsigned reg, unsigned val);
+
+	int (*get)(struct ksz_sw *sw, u32 reg, size_t count, char *buf);
+	int (*set)(struct ksz_sw *sw, u32 reg, size_t count, char *buf);
+};
+
+The acquire function should be called first before accessing the switch.
+Afterwards the release function should be called.
+
+
+struct ksz_sw_net_ops {
+	void (*setup_special)(struct ksz_sw *sw, int *port_cnt,
+		int *mib_port_cnt, int *dev_cnt);
+	void (*setup_dev)(struct ksz_sw *sw, struct net_device *dev,
+		char *dev_name, struct ksz_port *port, int i, int port_cnt,
+		int mib_port_cnt);
+	u8 (*get_state)(struct net_device *dev);
+	void (*set_state)(struct net_device *dev, u8 state);
+	struct ksz_port *(*get_priv_port)(struct net_device *dev);
+
+	void (*start)(struct ksz_sw *sw, u8 *addr);
+	int (*stop)(struct ksz_sw *sw, int complete);
+	void (*open_dev)(struct ksz_sw *sw, struct net_device *dev, u8 *addr);
+	void (*open_port)(struct ksz_sw *sw, struct net_device *dev,
+		struct ksz_port *port, u8 *state);
+	void (*close_port)(struct ksz_sw *sw, struct net_device *dev,
+		struct ksz_port *port);
+	void (*open)(struct ksz_sw *sw);
+	void (*close)(struct ksz_sw *sw);
+
+	void (*netdev_start_queue)(struct ksz_sw *sw, struct net_device *dev);
+	void (*netdev_stop_queue)(struct ksz_sw *sw, struct net_device *dev);
+	void (*netdev_wake_queue)(struct ksz_sw *sw, struct net_device *dev);
+	void (*netdev_open_port)(struct ksz_sw *sw, struct net_device *dev);
+
+	u8 (*set_mac_addr)(struct ksz_sw *sw, struct net_device *dev,
+		u8 promiscuous, int port);
+
+	int (*get_tx_len)(struct ksz_sw *sw, struct sk_buff *skb);
+	void (*add_tail_tag)(struct ksz_sw *sw, struct sk_buff *skb, int ports);
+	int (*get_tail_tag)(u8 *trailer, int *port);
+	struct sk_buff *(*check_tx)(struct ksz_sw *sw, struct net_device *dev,
+		struct sk_buff *skb, struct ksz_port *priv);
+	struct net_device *(*rx_dev)(struct ksz_sw *sw, u8 *data, u32 *len,
+		int *tag, int *port);
+	int (*match_pkt)(struct ksz_sw *sw, struct net_device **dev,
+		void **priv, int (*get_promiscuous)(void *ptr),
+		int (*match_multi)(void *ptr, u8 *data),
+		struct sk_buff *skb, u8 h_promiscuous);
+	struct net_device *(*parent_rx)(struct ksz_sw *sw,
+		struct net_device *dev, struct sk_buff *skb, int forward,
+		struct net_device **parent_dev, struct sk_buff **parent_skb);
+	int (*port_vlan_rx)(struct ksz_sw *sw, struct net_device *dev,
+		struct net_device *parent_dev, struct sk_buff *skb,
+		int forward, int tag, void *ptr,
+		void (*rx_tstamp)(void *ptr, struct sk_buff *skb));
+	int (*drop_icmp)(struct sk_buff *skb, int extra_skb);
+	struct sk_buff *(*final_skb)(struct ksz_sw *sw, struct sk_buff *skb,
+		struct net_device *dev, struct ksz_port *port);
+	int (*drv_rx)(struct ksz_sw *sw, struct sk_buff *skb, int port);
+
+#ifdef CONFIG_KSZ_STP
+	u8 (*get_port_state)(struct net_device *dev,
+		struct net_device **br_dev);
+
+	void (*set_multi)(struct ksz_sw *sw, struct net_device *dev,
+		struct ksz_port *priv);
+	int (*stp_rx)(struct ksz_sw *sw, struct net_device *dev,
+		struct sk_buff *skb, int port, int *forward);
+	int (*blocked_rx)(struct ksz_sw *sw, u8 *data);
+	void (*monitor_ports)(struct ksz_sw *sw);
+#endif
+};
+
+These are the switch functions that have something to do with network
+forwarding.  The host network driver should integrate the code properly to get
+the benefit of the switch.
+
+
+struct ksz_sw_ops {
+	void (*acquire)(struct ksz_sw *sw);
+	void (*release)(struct ksz_sw *sw);
+
+	int (*chk)(struct ksz_sw *sw, u32 addr, SW_D bits);
+	void (*cfg)(struct ksz_sw *sw, u32 addr, SW_D bits, int set);
+
+	int (*port_get_link_speed)(struct ksz_port *port);
+	void (*port_set_link_speed)(struct ksz_port *port);
+	void (*port_force_link_speed)(struct ksz_port *port);
+
+	int (*port_r_cnt)(struct ksz_sw *sw, int port);
+	void (*get_mib_counters)(struct ksz_sw *sw, int first, int cnt,
+		u64 *counter);
+
+	ssize_t (*sysfs_read)(struct ksz_sw *sw, int proc_num,
+		struct ksz_port *port, ssize_t len, char *buf);
+	ssize_t (*sysfs_read_hw)(struct ksz_sw *sw, int proc_num, ssize_t len,
+		char *buf);
+	int (*sysfs_write)(struct ksz_sw *sw, int proc_num,
+		struct ksz_port *port, int num, const char *buf);
+	ssize_t (*sysfs_port_read)(struct ksz_sw *sw, int proc_num, int port,
+		ssize_t len, char *buf);
+	ssize_t (*sysfs_port_read_hw)(struct ksz_sw *sw, int proc_num,
+		int port, ssize_t len, char *buf);
+	int (*sysfs_port_write)(struct ksz_sw *sw, int proc_num, int port,
+		int num, const char *buf);
+	ssize_t (*sysfs_mac_read)(struct ksz_sw *sw, int proc_num, ssize_t len,
+		char *buf);
+	int (*sysfs_mac_write)(struct ksz_sw *sw, int proc_num, int num,
+		const char *buf);
+	ssize_t (*sysfs_vlan_read)(struct ksz_sw *sw, int proc_num,
+		ssize_t len, char *buf);
+	int (*sysfs_vlan_write)(struct ksz_sw *sw, int proc_num, int num);
+	ssize_t (*sysfs_acl_read)(struct ksz_sw *sw, int proc_num, int port,
+		ssize_t len, char *buf);
+	int (*sysfs_acl_write)(struct ksz_sw *sw, int proc_num, int port,
+		int num, const char *buf);
+
+	void (*cfg_mac)(struct ksz_sw *sw, u8 index, u8 *dest, u32 ports);
+	void (*cfg_vlan)(struct ksz_sw *sw, u8 index, u16 vid, u32 ports);
+	u8 (*alloc_mac)(struct ksz_sw *sw);
+	void (*free_mac)(struct ksz_sw *sw, u8 index);
+	u8 (*alloc_vlan)(struct ksz_sw *sw);
+	void (*free_vlan)(struct ksz_sw *sw, u8 index);
+
+	int (*get_id)(struct ksz_sw *sw, u8 *id1, u8 *id2);
+	void (*cfg_tail_tag)(struct ksz_sw *sw, int enable);
+	void (*cfg_each_port)(struct ksz_sw *sw, int p, int cpu);
+	int (*port_to_phy_addr)(struct ksz_sw *sw, int p);
+	void (*set_port_addr)(struct ksz_sw *sw, int p, u8 *addr);
+
+};
+
+These are other switch functions that control the switch.
+
+
+If Sysfs support is needed the "init_sysfs" function can be used to create the
+Sysfs files.  Then the "exit_sysfs" function is used to remove them.
+
+The switch driver has the same set of Sysfs files under the
+/sys/bus/spi/devices/spi?.? directory.
+
+The file ksz_sw_sysfs_8795.c provides this function.
+
+
+The entire KSZ8795 driver code can be embedded in the network controller
+driver for better performance and memory size reduction.  The configuration
+CONFIG_MICREL_KSZ8795_EMBEDDED should be selected.  In the network controller
+driver the "ksz8795_init" function should be called during driver
+initialization and the "ksz8795_exit" function should be called during driver
+exit.
+
+
+The "ksz_dsa" file is used for DSA support if the necessary changes for DSA are
+already incorporated as shown in the Micrel DSA package.  It is still necessary
+for the host network driver to make some changes for DSA to work.
+
+
+The "ksz8692.c" file contains the full KSZ9692 network driver to show how the
+KSZ8795 switch is utilized inside the driver.  Note the KSZ9692 network
+driver was already designed to be able to use virtual network devices, so it
+will need additional work to modify the host network driver.
+
+
+The tools directory contains user applications that interacts with the switch.
+
+The regs_bin utility uses the standard Linux register access API to access the
+switch registers.  The network device "eth0" or SPI device "spi0.0" needs to
+be supplied to specify which device to use with the register access API.
+

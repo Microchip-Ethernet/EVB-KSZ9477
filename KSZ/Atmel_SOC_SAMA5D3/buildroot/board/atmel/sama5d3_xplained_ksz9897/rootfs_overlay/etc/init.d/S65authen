@@ -1,0 +1,66 @@
+#!/bin/sh
+#
+# Start the authenticator program
+#
+
+
+start_authen() {
+    ETH=0
+    VLAN=201
+
+    if [ ! -z "$1" ]; then
+        ETH=$1
+    fi
+
+    AUTHEN=0
+    if [ -e "/sys/class/net/eth$ETH/sw/authen" ]; then
+        AUTHEN=$(cat /sys/class/net/eth$ETH/sw/authen)
+    fi
+    [ $AUTHEN -eq 0 ] && exit 0
+
+    if [ -e "/sys/class/net/eth$ETH/sw/vlan_start" ]; then
+        VLAN=$(cat /sys/class/net/eth$ETH/sw/vlan_start)
+        let VLAN=$VLAN+1
+    fi
+
+    PORTS=2
+    if [ -e "/sys/class/net/eth$ETH/sw/ports" ]; then
+        PORTS=$(cat /sys/class/net/eth$ETH/sw/ports)
+    fi
+
+    HOST_PORT=3
+    if [ -e "/sys/class/net/eth$ETH/sw/host_port" ]; then
+        HOST_PORT=$(cat /sys/class/net/eth$ETH/sw/host_port)
+        let PORTS=$PORTS-1
+    fi
+
+    if [ ! -e "/sys/class/net/eth$ETH.$VLAN" ]; then
+        exit 0
+    fi
+
+    SERVER=$(grep "RADIUS_SERVER" /etc/sysconfig | cut -d":" -f2 | cut -d";" -f1)
+    [ "$SERVER" = "" ] && echo Need RADIUS_SERVER && exit 0
+
+    SECRET=$(grep "RADIUS_SECRET" /etc/sysconfig | cut -d"\"" -f2 | cut -d"\"" -f1)
+    [ "$SECRET" = "" ] && echo Need RADIUS_SECRET && exit 0
+
+    [ -x /usr/sbin/authen ] && authen eth$ETH.$VLAN -p$PORTS -u $SERVER -s $SECRET -d0
+}
+
+start() {
+    start_authen
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+	killall authen 2> /dev/null
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+esac
+
+exit $?

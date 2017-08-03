@@ -61,9 +61,13 @@ static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 
 #if defined(CONFIG_HAVE_KSZ9897)
 #include "../micrel/spi-ksz9897.c"
+#elif defined(CONFIG_HAVE_KSZ8795)
+#include "../micrel/spi-ksz8795.c"
 #endif
 #elif defined(CONFIG_HAVE_KSZ9897)
 #include "../micrel/ksz_cfg_9897.h"
+#elif defined(CONFIG_HAVE_KSZ8795)
+#include "../micrel/ksz_cfg_8795.h"
 #endif
 
 #if defined(HAVE_KSZ_SWITCH) && !defined(CONFIG_KSZ_SWITCH_EMBEDDED)
@@ -98,6 +102,8 @@ static void get_sysfs_data_(struct net_device *dev,
 
 #if defined(CONFIG_HAVE_KSZ9897)
 #include "../micrel/ksz_sw_sysfs_9897.c"
+#elif defined(CONFIG_HAVE_KSZ8795)
+#include "../micrel/ksz_sw_sysfs_8795.c"
 #endif
 
 #ifdef CONFIG_1588_PTP
@@ -541,6 +547,9 @@ int macb_mii_init(struct macb *bp)
 	dev_set_drvdata(&bp->dev->dev, bp->mii_bus);
 
 	np = bp->pdev->dev.of_node;
+#ifdef CONFIG_FIXED_PHY
+	np = NULL;
+#endif
 	if (np) {
 		/* try dt phy registration */
 		err = of_mdiobus_register(bp->mii_bus, np);
@@ -3212,12 +3221,14 @@ static struct ksz_port *get_priv_port(struct net_device *dev)
 	return &priv->port;
 }  /* get_priv_port */
 
+#if defined(CONFIG_HAVE_KSZ9897)
 static int get_net_ready(struct net_device *dev)
 {
 	struct macb *priv = netdev_priv(dev);
 
 	return priv->hw_priv->ready;
 }  /* get_net_ready */
+#endif
 
 static void prep_sw_first(struct ksz_sw *sw, int *port_count,
 	int *mib_port_count, int *dev_count, char *dev_name)
@@ -3229,7 +3240,9 @@ static void prep_sw_first(struct ksz_sw *sw, int *port_count,
 	sw->net_ops->get_state = get_priv_state;
 	sw->net_ops->set_state = set_priv_state;
 	sw->net_ops->get_priv_port = get_priv_port;
+#if defined(CONFIG_HAVE_KSZ9897)
 	sw->net_ops->get_ready = get_net_ready;
+#endif
 	sw->net_ops->setup_special(sw, port_count, mib_port_count, dev_count);
 }  /* prep_sw_first */
 
@@ -3752,6 +3765,32 @@ static int __init macb_probe(struct platform_device *pdev)
 
 	err = macb_mii_init(bp);
 
+#ifdef CONFIG_FIXED_PHY
+	if (err) {
+		struct device_node *np = bp->pdev->dev.of_node;
+
+		if (of_phy_is_fixed_link(np)) {
+			err = of_phy_register_fixed_link(np);
+			if (!err)
+				bp->phy_node = of_node_get(np);
+		}
+		if (bp->phy_node) {
+			err = -ENXIO;
+#ifndef HAVE_KSZ_SWITCH
+			bp->phy_dev = of_phy_connect(dev, bp->phy_node,
+				&macb_handle_link_change, 0,
+				bp->phy_interface);
+			if (bp->phy_dev) {
+				bp->link = 0;
+				bp->speed = 0;
+				bp->duplex = -1;
+				err = 0;
+			}
+#endif
+		}
+	}
+#endif
+
 #ifdef HAVE_KSZ_SWITCH
 	bp->hw_priv = bp;
 
@@ -3888,6 +3927,8 @@ static int __exit macb_remove(struct platform_device *pdev)
 		}
 next:
 #endif
+		if (bp->phy_node)
+			of_node_put(bp->phy_node);
 		unregister_netdev(dev);
 
 #ifdef HAVE_KSZ_SWITCH

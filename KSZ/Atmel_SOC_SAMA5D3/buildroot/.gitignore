@@ -5,7 +5,7 @@ ubootEnvtFileNandFlash.bin
 !.gitignore
 *.depend
 *.o
-*.patch
+/*.patch
 *.diff
 *.orig
 *.rej

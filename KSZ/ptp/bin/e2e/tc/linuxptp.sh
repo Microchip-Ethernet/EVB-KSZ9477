@@ -3,7 +3,7 @@
 # This script invokes Linux PTP to run in E2E mode.
 
 ETH=0
-VLAN=201
+VLAN=0
 VERBOSE="-l 4"
 START=
 
@@ -22,9 +22,15 @@ if [ "$1" = "-v" ]; then
     shift
 fi
 
-if [ -e "/sys/class/net/eth$ETH/sw/vlan_start" ]; then
+if [ $VLAN -eq 0 ] && [ -e "/sys/class/net/eth$ETH/sw/dev_start" ]; then
+    VLAN=$(cat /sys/class/net/eth$ETH/sw/dev_start)
+fi
+
+if [ $VLAN -eq 0 ] && [ -e "/sys/class/net/eth$ETH/sw/vlan_start" ]; then
     VLAN=$(cat /sys/class/net/eth$ETH/sw/vlan_start)
-    let VLAN=$VLAN+1
+    if [ $VLAN -gt 0 ]; then
+        let VLAN=$VLAN+1
+    fi
 fi
 
 PORTS=2

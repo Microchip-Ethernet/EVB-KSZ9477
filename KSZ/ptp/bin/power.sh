@@ -5,6 +5,7 @@
 ETH=0
 VLAN=0
 PRIO=4
+DEV=0
 
 if [ ! -z "$1" ]; then
     VLAN=$1
@@ -20,22 +21,46 @@ if [ -e "/sys/class/net/eth$ETH.$VLAN" ]; then
     exit 0
 fi
 
+if [ -e "/sys/class/net/eth$ETH/sw/dev_start" ]; then
+    DEV=$(cat /sys/class/net/eth$ETH/sw/dev_start)
+fi
+
+PORTS=2
+if [ -e "/sys/class/net/eth$ETH/sw/ports" ]; then
+    PORTS=$(cat /sys/class/net/eth$ETH/sw/ports)
+fi
+
+MASK=0x7
+
+HOST_PORT=3
+if [ -e "/sys/class/net/eth$ETH/sw/host_port" ]; then
+    HOST_PORT=$(cat /sys/class/net/eth$ETH/sw/host_port)
+    if [ $PORTS -eq 7 ]; then
+        MASK=0x7f
+    elif [ $PORTS -eq 6 ]; then
+        MASK=0x3f
+    fi
+    let PORTS=$PORTS-1
+fi
+
 vconfig add eth$ETH $VLAN
 vconfig set_egress_map eth$ETH.$VLAN 0 $PRIO
-MAC=$(ifconfig eth$ETH | grep HWaddr | cut -d":" -f7)
-SUBNET=$(ifconfig eth$ETH | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1)
-if [ ! -z "$SUBNET" ]; then
-    SUBNET1=$(echo "$SUBNET" | cut -d"." -f1)
-    SUBNET2=$(echo "$SUBNET" | cut -d"." -f2)
-    SUBNET3=$(echo "$SUBNET" | cut -d"." -f3)
-else
-    SUBNET1="10"
-    SUBNET2="1"
-    SUBNET3="157"
+ifconfig eth$ETH.$VLAN up
+
+if [ $DEV -gt 0 ]; then
+    p=0
+    while [ $p -lt $PORTS ]; do
+        let q=$DEV+$p
+        vconfig add eth$ETH.$q $VLAN
+        vconfig set_egress_map eth$ETH.$q.$VLAN 0 $PRIO
+        ifconfig eth$ETH.$q.$VLAN up
+        let p=$p+1
+    done
 fi
-MAC=$((0x$MAC))
-ifconfig eth$ETH.$VLAN $SUBNET1.$SUBNET2.$VLAN.$MAC
-if [ -e "/sys/class/net/eth$ETH/ptp/vid" ]; then
-    echo "$VLAN" > "/sys/class/net/eth$ETH/ptp/vid"
+
+if [ -e "/sys/class/net/eth$ETH/sw/vlan_index" ]; then
+    echo $VLAN > "/sys/class/net/eth$ETH/sw/vlan_index"
+    echo $MASK > "/sys/class/net/eth$ETH/sw/vlan_ports"
+    echo 1 > "/sys/class/net/eth$ETH/sw/vlan_valid"
 fi
 

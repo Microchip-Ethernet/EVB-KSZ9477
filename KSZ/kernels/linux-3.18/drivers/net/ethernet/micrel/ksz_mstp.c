@@ -877,7 +877,7 @@ static void sw_cfg_forwarding(struct ksz_sw *sw, int port, int open)
 	if (member != info->member[i]) {
 		int cnt = 0;
 
-#ifdef CONFIG_HAVE_KSZ9897
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 		for (port = 0; port < sw->mib_port_cnt; port++) {
 			if (skip_host_port(sw, port))
 				continue;
@@ -5488,7 +5488,7 @@ static void stp_link_change(struct ksz_stp_info *stp, int update)
 		return;
 	mutex_lock(&br->lock);
 	for (i = 0; i < br->port_cnt; i++) {
-#ifdef CONFIG_HAVE_KSZ9897
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 		if (skip_host_port(sw, i))
 			continue;
 #endif
@@ -5528,7 +5528,7 @@ static void stp_start(struct ksz_stp_info *stp)
 
 	stp->dev = sw->main_dev;
 	sw->ops->acquire(sw);
-#ifdef CONFIG_HAVE_KSZ9897
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 	for (i = 0; i < sw->mib_port_cnt; i++) {
 		if (skip_host_port(sw, i))
 			continue;
@@ -5580,7 +5580,7 @@ static void stp_stop(struct ksz_stp_info *stp, int hw_access)
 
 	if (hw_access) {
 		sw->ops->acquire(sw);
-#ifdef CONFIG_HAVE_KSZ9897
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 		for (i = 0; i < sw->mib_port_cnt; i++) {
 			if (skip_host_port(sw, i))
 				continue;
@@ -5911,9 +5911,11 @@ static int sysfs_stp_write(struct ksz_sw *sw, int proc_num, int num,
 		set = !!num;
 		if (set != br->bridgeEnabled) {
 			br->bridgeEnabled = set;
-			if (br->bridgeEnabled)
+			if (br->bridgeEnabled) {
+				mutex_unlock(&stp->br.lock);
 				stp_start(stp);
-			else
+				mutex_lock(&stp->br.lock);
+			} else
 				stp_stop(stp, true);
 		}
 		break;
@@ -6413,8 +6415,10 @@ br->port_cnt = 3;
 	}
 
 	sw->info->vid2fid[0] = sw->info->vid2fid[NUM_OF_VID + 1] = 0;
+	for (i = 1; i < NUM_OF_VID; i++) {
+		sw->info->vid2fid[i] = ((i - 1) % (FID_ENTRIES - 1)) + 1;
+	}
 	for (i = 1; i <= NUM_OF_MSTI; i++) {
-		sw->info->vid2fid[i] = (i - 1) % FID_ENTRIES;
 		num = i / VID_IN_DATA;
 		j = (VID_IN_DATA - 1) - (i % VID_IN_DATA);
 		sw->info->vid[num] |= (1 << j);

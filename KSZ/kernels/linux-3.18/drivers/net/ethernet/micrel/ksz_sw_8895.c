@@ -5854,6 +5854,68 @@ static void sw_free_fid(struct ksz_sw *sw, u16 fid)
 	}
 }  /* sw_free_fid */
 
+static const u8 *sw_get_br_id(struct ksz_sw *sw)
+{
+	u8 id[8];
+	const u8* ret = id;
+
+	memcpy(&id[2], sw->info->mac_addr, ETH_ALEN);
+	id[0] = 0x80;
+	id[1] = 0x00;
+
+#ifdef CONFIG_KSZ_STP
+	ret = stp_br_id(&sw->info->rstp);
+#endif
+	return ret;
+}  /* sw_get_br_id */
+
+static void sw_from_designated(struct ksz_sw *sw, int p)
+{
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp->ops->from_designated(mrp, p);
+	}
+#endif
+}  /* sw_from_designated */
+
+static void sw_to_designated(struct ksz_sw *sw, int p)
+{
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp->ops->to_designated(mrp, p);
+	}
+#endif
+}  /* sw_to_designated */
+
+static void sw_tc_detected(struct ksz_sw *sw, int p)
+{
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp->ops->tc_detected(mrp, p);
+	}
+#endif
+}  /* sw_tc_detected */
+
+static int sw_get_tcDetected(struct ksz_sw *sw, int p)
+{
+	int ret = false;
+
+#ifdef CONFIG_KSZ_STP
+	if (sw->features & STP_SUPPORT) {
+		struct ksz_stp_info *info = &sw->info->rstp;
+
+		ret = info->ops->get_tcDetected(info, p);
+	}
+#endif
+	return ret;
+}  /* sw_get_tcDetected */
+
 #define FAMILY_ID_88			0x95
 #define CHIP_ID_8895			0x40
 #define CHIP_ID_8895R			0x60
@@ -6109,18 +6171,20 @@ static int sw_match_pkt(struct ksz_sw *sw, struct net_device **dev,
 }  /* sw_match_pkt */
 
 static struct net_device *sw_parent_rx(struct ksz_sw *sw,
-	struct net_device *dev, struct sk_buff *skb, int forward,
+	struct net_device *dev, struct sk_buff *skb, int *forward,
 	struct net_device **parent_dev, struct sk_buff **parent_skb)
 {
 	if (sw->dev_offset && dev != sw->netdev[0]) {
 		*parent_dev = sw->netdev[0];
-		if (!forward)
-			forward = FWD_MAIN_DEV | FWD_STP_DEV;
-		if ((forward & (FWD_MAIN_DEV | FWD_STP_DEV)) ==
+		if (!*forward)
+			*forward = FWD_MAIN_DEV | FWD_STP_DEV;
+		if ((*forward & (FWD_MAIN_DEV | FWD_STP_DEV)) ==
 		    (FWD_MAIN_DEV | FWD_STP_DEV))
 			*parent_skb = skb_clone(skb, GFP_ATOMIC);
-		else if (!(forward & FWD_STP_DEV))
+		else if (!(*forward & FWD_STP_DEV))
 			dev = *parent_dev;
+		else
+			*forward &= ~FWD_VLAN_DEV;
 	}
 	return dev;
 }  /* sw_parent_rx */
@@ -6139,6 +6203,12 @@ static int sw_port_vlan_rx(struct ksz_sw *sw, struct net_device *dev,
 	if (!tag || !(sw->features & VLAN_PORT))
 		return false;
 	tag += VLAN_PORT_START;
+
+	/* Only forward to one network device. */
+	if (!(forward & FWD_MAIN_DEV)) {
+		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
+		return true;
+	}
 	vlan_skb = skb_clone(skb, GFP_ATOMIC);
 	if (!vlan_skb)
 		return false;
@@ -6679,7 +6749,8 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 
 		if (stp->br.bridgeEnabled)
 			stp_start(stp);
-	}
+	} else
+		stp_set_addr(&sw->info->rstp, sw->info->mac_addr);
 #endif
 }  /* sw_start */
 
@@ -8018,6 +8089,12 @@ static struct ksz_sw_ops sw_ops = {
 	.free_vlan		= sw_free_vlan,
 	.alloc_fid		= sw_alloc_fid,
 	.free_fid		= sw_free_fid,
+
+	.get_br_id		= sw_get_br_id,
+	.from_designated	= sw_from_designated,
+	.to_designated		= sw_to_designated,
+	.tc_detected		= sw_tc_detected,
+	.get_tcDetected		= sw_get_tcDetected,
 
 	.get_id			= sw_get_id,
 	.cfg_tail_tag		= sw_cfg_tail_tag,

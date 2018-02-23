@@ -354,8 +354,6 @@ struct mstp_port_vars {
 
 struct ksz_stp_bridge;
 
-#define NUM_OF_VID			4094
-#define NUM_OF_MSTI			8
 #define NUM_OF_PORT_STATE_MACHINES	9
 
 struct ksz_stp_dbg_times {

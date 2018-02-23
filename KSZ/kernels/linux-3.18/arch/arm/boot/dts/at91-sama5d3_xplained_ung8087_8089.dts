@@ -107,15 +107,11 @@
 			macb0: ethernet@f0028000 {
 				phy-mode = "rgmii-id";
 				status = "okay";
+				#address-cells = <1>;
+				#size-cells = <0>;
 
-				ethernet-phy@1 {
-					reg = <0x1>;
-					txen-skew-ps = <900>;
-					txd0-skew-ps = <900>;
-					txd1-skew-ps = <900>;
-					txd2-skew-ps = <900>;
-					txd3-skew-ps = <900>;
-					txc-skew-ps = <1860>;
+				phy1: ethernet-phy@1 {
+					reg = <7>;
 					interrupt-parent = <&pioB>;
 					interrupts = <28 IRQ_TYPE_EDGE_FALLING>;
 				};
@@ -195,10 +191,15 @@
 			macb1: ethernet@f802c000 {
 				phy-mode = "rmii";
 				status = "okay";
-				fixed-link {
-					speed = <100>;
-					full-duplex;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				phy2: ethernet-phy@2 {
+					reg = <7>;
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_EDGE_FALLING>;
 				};
+
 			};
 
 			dbgu: serial@ffffee00 {

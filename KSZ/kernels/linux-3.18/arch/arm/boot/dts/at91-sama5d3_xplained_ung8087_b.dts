@@ -47,6 +47,19 @@
 				cs-gpios = <&pioD 13 0>, <0>, <0>, <&pioD 16 0>;
 				id = <0>;
 				status = "okay";
+
+				ksz9477: ksz9477@0 {
+					compatible = "microchip,ksz9477", "microchip,ksz9893";
+					reg = <0>;
+
+					/* Bus clock is 132 MHz. */
+					spi-max-frequency = <44000000>;
+					spi-cpha;
+					spi-cpol;
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
+					status = "okay";
+				};
 			};
 
 			can0: can@f000c000 {
@@ -154,19 +167,6 @@
 				cs-gpios = <&pioC 25 0>;
 				id = <1>;
 				status = "okay";
-
-				ksz9477: ksz9477@0 {
-					compatible = "microchip,ksz9477", "microchip,ksz9893";
-					reg = <0>;
-
-					/* Bus clock is 132 MHz. */
-					spi-max-frequency = <44000000>;
-					spi-cpha;
-					spi-cpol;
-					interrupt-parent = <&pioB>;
-					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
-					status = "okay";
-				};
 			};
 
 			adc0: adc@f8018000 {
@@ -298,8 +298,8 @@
 		usb1: ohci@00600000 {
 			num-ports = <3>;
 			atmel,vbus-gpio = <0
-					   &pioE 3 GPIO_ACTIVE_LOW
-					   &pioE 4 GPIO_ACTIVE_LOW
+					   &pioE 3 GPIO_ACTIVE_HIGH
+					   &pioE 4 GPIO_ACTIVE_HIGH
 					  >;
 			status = "okay";
 		};

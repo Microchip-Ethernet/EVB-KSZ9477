@@ -700,6 +700,7 @@ struct ptp_work {
 	int output;
 	int result;
 	int used;
+	int wait;
 	union {
 		struct ptp_cfg_options cfg;
 		struct ptp_tsi_info tsi;
@@ -717,6 +718,7 @@ struct ptp_work {
 #define PTP_WORK_LAST			(PTP_WORK_NUM - 1)
 
 struct ptp_access {
+	struct mutex lock;
 	int index;
 	struct ptp_work works[PTP_WORK_NUM];
 };
@@ -765,7 +767,8 @@ struct ptp_ops {
 	int (*update_msg)(u8 *data, u32 port, u32 overrides);
 	void (*get_rx_tstamp)(void *ptr, struct sk_buff *skb);
 	void (*get_tx_tstamp)(struct ptp_info *ptp, struct sk_buff *skb);
-	int (*hwtstamp_ioctl)(struct ptp_info *ptp, struct ifreq *ifr);
+	int (*hwtstamp_ioctl)(struct ptp_info *ptp, struct ifreq *ifr,
+			      u16 ports);
 	int (*ixxat_ioctl)(struct ptp_info *ptp, unsigned int cmd,
 		struct ifreq *ifr);
 	int (*dev_req)(struct ptp_info *ptp, int start, char *arg,
@@ -782,7 +785,7 @@ struct ptp_ops {
 		const char *buf);
 
 	int (*drop_pkt)(struct ptp_info *ptp, struct sk_buff *skb, u32 vlan_id,
-		int *tag, int *ptp_tag);
+		int *tag, int *ptp_tag, int *forward);
 
 	void (*get_rx_info)(struct ptp_info *ptp, u8 *data, u8 port,
 		u32 timestamp);
@@ -894,6 +897,7 @@ struct ptp_info {
 	int tx_msg_parsed;
 	u32 tx_ports;
 	int cap;
+	int forward;
 	int op_mode;
 	int op_state;
 
@@ -955,6 +959,8 @@ struct ptp_info {
 	unsigned long delay_ticks;
 	int rx_en;
 	int tx_en;
+	u16 rx_en_ports;
+	u16 tx_en_ports;
 	int utc_offset;
 
 	u32 clk_divider;
@@ -1019,6 +1025,7 @@ enum {
 	DEV_PTP_UTC_OFFSET,
 	DEV_PTP_TIMESTAMP,
 	DEV_PTP_MSG,
+	DEV_PTP_PORT_CFG,
 };
 
 #ifndef TSM_CMD_CLOCK_SET
@@ -1106,12 +1113,16 @@ struct tsm_get_time {
 	u32 nsec;
 } __packed;
 
-#define PTP_CAN_RX_TIMESTAMP		(1 << 0)
-#define PTP_KNOW_ABOUT_LATENCY		(1 << 1)
-#define PTP_HAVE_MULT_DEVICES		(1 << 2)
-#define PTP_HAVE_MULT_PORTS		(1 << 3)
-#define PTP_KNOW_ABOUT_MULT_PORTS	(1 << 4)
-#define PTP_USE_RESERVED_FIELDS		(1 << 5)
+#define PTP_CAN_RX_TIMESTAMP		BIT(0)
+#define PTP_KNOW_ABOUT_LATENCY		BIT(1)
+#define PTP_HAVE_MULT_DEVICES		BIT(2)
+#define PTP_HAVE_MULT_PORTS		BIT(3)
+#define PTP_KNOW_ABOUT_MULT_PORTS	BIT(4)
+#define PTP_USE_RESERVED_FIELDS		BIT(5)
+#define PTP_SEPARATE_PATHS		BIT(6)
+
+#define PTP_PORT_ENABLED		BIT(0)
+#define PTP_PORT_ASCAPABLE		BIT(1)
 
 #ifdef __KERNEL__
 struct ptp_attributes {

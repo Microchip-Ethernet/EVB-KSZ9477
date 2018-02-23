@@ -366,7 +366,7 @@ struct ksz_sw_net_ops {
 		int (*match_multi)(void *ptr, u8 *data),
 		struct sk_buff *skb, u8 h_promiscuous);
 	struct net_device *(*parent_rx)(struct ksz_sw *sw,
-		struct net_device *dev, struct sk_buff *skb, int forward,
+		struct net_device *dev, struct sk_buff *skb, int *forward,
 		struct net_device **parent_dev, struct sk_buff **parent_skb);
 	int (*port_vlan_rx)(struct ksz_sw *sw, struct net_device *dev,
 		struct net_device *parent_dev, struct sk_buff *skb,
@@ -445,6 +445,12 @@ struct ksz_sw_ops {
 	void (*free_vlan)(struct ksz_sw *sw, u8 index);
 	u16 (*alloc_fid)(struct ksz_sw *sw, u16 vid);
 	void (*free_fid)(struct ksz_sw *sw, u16 fid);
+
+	const u8 *(*get_br_id)(struct ksz_sw *sw);
+	void (*from_designated)(struct ksz_sw *sw, int p);
+	void (*to_designated)(struct ksz_sw *sw, int p);
+	void (*tc_detected)(struct ksz_sw *sw, int p);
+	int (*get_tcDetected)(struct ksz_sw *sw, int p);
 
 	int (*get_id)(struct ksz_sw *sw, u8 *id1, u8 *id2, char *name);
 	void (*cfg_tail_tag)(struct ksz_sw *sw, int enable);

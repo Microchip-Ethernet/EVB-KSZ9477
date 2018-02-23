@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2017 Microchip Technology Inc.
+ * Copyright (c) 2015-2018 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -160,8 +160,14 @@ enum {
 #endif
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+	PROC_SET_MRP_SRC_ADDR,
+
 #ifdef CONFIG_KSZ_MSRP
 	PROC_GET_MSRP_INFO,
+	PROC_SET_MSRP_ENABLED,
+	PROC_SET_MSRP_SR_A,
+#endif
 #endif
 
 #ifdef CONFIG_KSZ_HSR
@@ -358,6 +364,10 @@ enum {
 	PROC_SET_PORT_DUPLEX,
 	PROC_SET_PORT_SPEED,
 
+	PROC_SET_MAC_OPERATIONAL,
+	PROC_SET_VLAN_RESTRICTED,
+	PROC_SET_VLAN_UNTAGGED,
+
 #ifdef CONFIG_KSZ_STP
 	PROC_GET_STP_INFO,
 	PROC_SET_STP_ON,
@@ -371,7 +381,18 @@ enum {
 	PROC_SET_STP_AUTO_ISOLATE,
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+	PROC_SET_PORT_MMRP_ENABLED,
+	PROC_SET_PORT_MMRP_MAC,
+	PROC_SET_PORT_MMRP_SVC,
+	PROC_SET_PORT_MMRP_REG,
+	PROC_SET_PORT_MVRP_ENABLED,
+	PROC_SET_PORT_MVRP_VID,
+	PROC_SET_PORT_MVRP_REG,
+
 #ifdef CONFIG_KSZ_MSRP
+	PROC_SET_PORT_ASCAPABLE,
+	PROC_SET_PORT_MSRP_ENABLED,
 	PROC_SET_TC_DELTA_BANDWIDTH,
 	PROC_SET_TC_ADMIN_IDLE_SLOPE,
 	PROC_GET_TC_OPER_IDLE_SLOPE,
@@ -382,6 +403,7 @@ enum {
 	PROC_GET_SR_1_RX_PRIO,
 	PROC_SET_SR_1_TX_PRIO,
 	PROC_GET_SR_1_SRP_DOMAIN_BOUNDARY,
+#endif
 #endif
 
 	PROC_SET_LINK_MD,
@@ -394,7 +416,7 @@ enum {
 
 /* -------------------------------------------------------------------------- */
 
-static inline int chk_last_port(struct ksz_sw *sw, int p)
+static inline int chk_last_port(struct ksz_sw *sw, uint p)
 {
 #ifdef USE_FEWER_PORTS
 	if (sw->last_port && p == sw->last_port)
@@ -403,7 +425,7 @@ static inline int chk_last_port(struct ksz_sw *sw, int p)
 	return p;
 }  /* chk_last_port */
 
-static inline int skip_host_port(struct ksz_sw *sw, int p)
+static inline int skip_host_port(struct ksz_sw *sw, uint p)
 {
 	int skip = false;
 
@@ -469,7 +491,7 @@ static u32 sw_get_dest_port(struct ksz_sw *sw, int start, int num, u32 ports)
  * This function converts virtual port used inside the network device to
  * actual port in the switch.
  */
-static u32 sw_get_dev_port(struct ksz_sw *sw, int start, int num, int port)
+static u32 sw_get_dev_port(struct ksz_sw *sw, int start, int num, uint port)
 {
 	if (0 == port || port > num)
 		return sw->HOST_PORT;
@@ -488,7 +510,7 @@ static u32 sw_get_dev_port(struct ksz_sw *sw, int start, int num, int port)
  * This function converts physical port used in the switch to virtual port used
  * by the network device.
  */
-static u32 sw_get_net_port(struct ksz_sw *sw, int start, int num, int port)
+static u32 sw_get_net_port(struct ksz_sw *sw, int start, int num, uint port)
 {
 	if (port == sw->HOST_PORT)
 		return num + 1;
@@ -518,10 +540,7 @@ static void get_mac_table_info(struct ksz_mac_table *mac, u32 data[])
 		ALU_V_PRIO_AGE_CNT_M;
 	mac->mstp = data[0] & ALU_V_MSTP_M;
 	mac->override = !!(data[1] & ALU_V_OVERRIDE);
-	if (mac->ignore_use_fid)
-		mac->use_fid = 1;
-	else
-		mac->use_fid = !!(data[1] & ALU_V_USE_FID);
+	mac->use_fid = !!(data[1] & ALU_V_USE_FID);
 	mac->ports = data[1] & ALU_V_PORT_MAP;
 	mac->fid = data[2] >> ALU_V_FID_S;
 	mac->addr[1] = (u8) data[2];
@@ -553,7 +572,7 @@ static void set_mac_table_info(struct ksz_mac_table *mac, u32 data[])
 	data[1] = mac->ports & ALU_V_PORT_MAP;
 	if (mac->override)
 		data[1] |= ALU_V_OVERRIDE;
-	if (!mac->ignore_use_fid && mac->use_fid)
+	if (mac->use_fid)
 		data[1] |= ALU_V_USE_FID;
 	data[2] = (u32) mac->fid << ALU_V_FID_S;
 	data[2] |= ((u32) mac->addr[0] << 8) | mac->addr[1];
@@ -841,6 +860,7 @@ static u32 sw_s_dyn_mac_table(struct ksz_sw *sw, u16 addr, u8 *src_addr,
 			((u32) src_addr[4] << 8) | src_addr[5];
 		sw->reg->w32(sw, REG_SW_ALU_INDEX_1, data);
 	}
+	ctrl |= ALU_START;
 	return ctrl;
 }  /* sw_s_dyn_mac_table */
 
@@ -862,7 +882,9 @@ static int sw_r_dyn_mac_hw(struct ksz_sw *sw, u16 addr, u8 *src_addr,
 
 	ctrl = sw_s_dyn_mac_table(sw, addr, src_addr, src_fid);
 	ctrl |= ALU_READ;
-	ctrl |= ALU_START;
+
+	/* Dynamic MAC table does not use USE_FID bit and does not clear it. */
+	sw->reg->w32(sw, REG_SW_ALU_VAL_B, 0);
 	sw->reg->w32(sw, REG_SW_ALU_CTRL__4, ctrl);
 	do {
 		ctrl = sw->reg->r32(sw, REG_SW_ALU_CTRL__4);
@@ -897,7 +919,6 @@ static void sw_r_dyn_mac_table(struct ksz_sw *sw, u16 addr, u8 *src_addr,
 	sw->ops->acquire(sw);
 	if (wait_for_dyn_mac_table(sw))
 		goto r_dyn_exit;
-	mac->ignore_use_fid = 1;
 	sw->reg->r_dyn_mac_hw(sw, addr, src_addr, src_fid, mac, entry);
 
 r_dyn_exit:
@@ -923,7 +944,6 @@ static int sw_w_dyn_mac_hw(struct ksz_sw *sw, u16 addr, u8 *src_addr,
 
 	ctrl = sw_s_dyn_mac_table(sw, addr, src_addr, src_fid);
 	ctrl |= ALU_WRITE;
-	ctrl |= ALU_START;
 	sw_w_mac_table(sw, mac);
 	sw->reg->w32(sw, REG_SW_ALU_CTRL__4, ctrl);
 	return 1;
@@ -947,7 +967,9 @@ static void sw_w_dyn_mac_table(struct ksz_sw *sw, u16 addr, u8 *src_addr,
 	sw->ops->acquire(sw);
 	if (wait_for_dyn_mac_table(sw))
 		goto w_dyn_exit;
-	mac->ignore_use_fid = 1;
+
+	/* Dynamic MAC table does not use USE_FID bit. */
+	mac->use_fid = 0;
 	sw->reg->w_dyn_mac_hw(sw, addr, src_addr, src_fid, mac);
 
 w_dyn_exit:
@@ -968,6 +990,9 @@ static int sw_start_dyn_mac_hw(struct ksz_sw *sw)
 
 	ctrl = ALU_SEARCH;
 	ctrl |= ALU_START;
+
+	/* Dynamic MAC table does not use USE_FID bit and does not clear it. */
+	sw->reg->w32(sw, REG_SW_ALU_VAL_B, 0);
 	sw->reg->w32(sw, REG_SW_ALU_CTRL__4, ctrl);
 	return 1;
 }  /* sw_start_dyn_mac_hw */
@@ -1036,7 +1061,6 @@ static int sw_g_dyn_mac_table(struct ksz_sw *sw, u16 *addr,
 	if (ctrl & ALU_VALID) {
 		ctrl >>= ALU_VALID_CNT_S;
 		ctrl &= ALU_VALID_CNT_M;
-		mac->ignore_use_fid = 1;
 		rc = !sw->reg->g_dyn_mac_hw(sw, mac);
 		if (ctrl != *addr + 1)
 			*addr = ctrl - 1;
@@ -1109,19 +1133,19 @@ static ssize_t sw_d_dyn_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 		if (len < MAX_SYSFS_BUF_SIZE)
 		len += sprintf(buf + len,
 			"%4x: %02X:%02X:%02X:%02X:%02X:%02X  "
-			"%04x  m:%u  t:%u  s:%u  d:%u  o:%u  %u:%02x  [%u]\n",
+			"%04x  m:%u  t:%u  s:%u  d:%u  o:%u  %02x  [%u]\n",
 			i, mac.addr[0], mac.addr[1], mac.addr[2],
 			mac.addr[3], mac.addr[4], mac.addr[5],
 			mac.ports, mac.mstp, mac.prio, mac.src, mac.dst,
-			mac.override, mac.use_fid, mac.fid, mac.valid);
+			mac.override, mac.fid, mac.valid);
 		else {
 		printk(KERN_INFO
 			"%4x: %02X:%02X:%02X:%02X:%02X:%02X  "
-			"%04x  m:%u  t:%u  s:%u  d:%u  o:%u  %u:%02x  [%u]\n",
+			"%04x  m:%u  t:%u  s:%u  d:%u  o:%u  %02x  [%u]\n",
 			i, mac.addr[0], mac.addr[1], mac.addr[2],
 			mac.addr[3], mac.addr[4], mac.addr[5],
 			mac.ports, mac.mstp, mac.prio, mac.src, mac.dst,
-			mac.override, mac.use_fid, mac.fid, mac.valid);
+			mac.override, mac.fid, mac.valid);
 		yield();
 		}
 		i++;
@@ -1200,7 +1224,6 @@ static void sw_r_sta_mac_table(struct ksz_sw *sw, u16 addr, int mcast,
 		goto r_sta_exit;
 	ctrl = get_mac_table_ctrl(addr, mcast);
 	ctrl |= ALU_STAT_READ;
-	mac->ignore_use_fid = 0;
 	sw->reg->r_sta_mac_hw(sw, &ctrl, 1, mac);
 
 r_sta_exit:
@@ -1258,7 +1281,6 @@ static void sw_r_m_sta_mac_table(struct ksz_sw *sw, u16 addr[], int mcast,
 		for (j = 0; j < cnt; j++) {
 			ctrl[j] = get_mac_table_ctrl(addr[i + j], mcast);
 			ctrl[j] |= ALU_STAT_READ;
-			mac[j].ignore_use_fid = 0;
 		}
 		rc = sw->reg->r_sta_mac_hw(sw, ctrl, cnt, mac);
 		if (!rc)
@@ -1326,7 +1348,6 @@ static void sw_w_sta_mac_table(struct ksz_sw *sw, u16 addr, int mcast,
 	if (wait_for_sta_mac_table(sw))
 		goto w_sta_exit;
 	ctrl = get_mac_table_ctrl(addr, mcast);
-	mac->ignore_use_fid = 0;
 	sw->reg->w_sta_mac_hw(sw, &ctrl, 1, mac);
 
 w_sta_exit:
@@ -1363,7 +1384,6 @@ static void sw_w_m_sta_mac_table(struct ksz_sw *sw, u16 addr[], int mcast,
 			cnt = num - i;
 		for (j = 0; j < cnt; j++) {
 			ctrl[j] = get_mac_table_ctrl(addr[i + j], mcast);
-			mac[j].ignore_use_fid = 0;
 		}
 		rc = sw->reg->w_sta_mac_hw(sw, ctrl, cnt, mac);
 		if (!rc)
@@ -1696,6 +1716,8 @@ static void sw_w_vlan_table(struct ksz_sw *sw, u16 addr,
 	struct ksz_vlan_table *vlan)
 {
 	u32 data[4];
+	int bit;
+	int index;
 
 	mutex_lock(&sw->vlanlock);
 	sw->ops->acquire(sw);
@@ -1704,6 +1726,23 @@ static void sw_w_vlan_table(struct ksz_sw *sw, u16 addr,
 	set_vlan_table_info(vlan, data);
 	data[3] = addr;
 	sw->reg->w_vlan_hw(sw, data, 1);
+	index = addr / VID_IN_DATA;
+	bit = addr % VID_IN_DATA;
+	if (vlan->valid) {
+		int p;
+		struct ksz_port_cfg *cfg;
+
+		for (p = 0; p < sw->mib_port_cnt; p++) {
+			cfg = &sw->info->port_cfg[p];
+			if (vlan->untag & (1 << p))
+				cfg->untagged[index] |= (1 << bit);
+			else
+				cfg->untagged[index] &= ~(1 << bit);
+		}
+		sw->info->vid[index] |= (1 << bit);
+	} else {
+		sw->info->vid[index] &= ~(1 << bit);
+	}
 
 w_vlan_exit:
 	sw->ops->release(sw);
@@ -1794,6 +1833,7 @@ static u32 sw_s_hsr_table(struct ksz_sw *sw, u16 addr, u8 *src_addr,
 		data = path_id & HSR_PATH_INDEX_M;
 		sw->reg->w32(sw, REG_HSR_ALU_INDEX_3, data);
 	}
+	ctrl |= HSR_START;
 	return ctrl;
 }  /* sw_s_hsr_table */
 
@@ -1823,7 +1863,6 @@ static int sw_r_hsr_hw(struct ksz_sw *sw, u16 addr,
 
 	ctrl = sw_s_hsr_table(sw, addr, hsr->src_mac, hsr->path_id);
 	ctrl |= HSR_READ;
-	ctrl |= HSR_START;
 	sw->reg->w32(sw, REG_HSR_ALU_CTRL__4, ctrl);
 	do {
 		ctrl = sw->reg->r32(sw, REG_HSR_ALU_CTRL__4);
@@ -1873,7 +1912,6 @@ static int sw_w_hsr_hw(struct ksz_sw *sw, u16 addr,
 
 	ctrl = sw_s_hsr_table(sw, addr, hsr->src_mac, hsr->path_id);
 	ctrl |= HSR_WRITE;
-	ctrl |= HSR_START;
 	set_hsr_table_info(hsr, data);
 	for (i = 0; i < 7; i++)
 		data[i] = cpu_to_be32(data[i]);
@@ -2125,7 +2163,7 @@ static void port_phy_w(struct ksz_sw *sw, u32 addr, u16 val)
  *
  * Return 0 if the bits are not set.
  */
-static int port_chk(struct ksz_sw *sw, int port, int offset, SW_D bits)
+static int port_chk(struct ksz_sw *sw, uint port, uint offset, SW_D bits)
 {
 	u32 addr;
 	SW_D data;
@@ -2145,8 +2183,8 @@ static int port_chk(struct ksz_sw *sw, int port, int offset, SW_D bits)
  *
  * This routine sets or resets the specified bits of the port register.
  */
-static void port_cfg(struct ksz_sw *sw, int port, int offset, SW_D bits,
-	int set)
+static void port_cfg(struct ksz_sw *sw, uint port, uint offset, SW_D bits,
+	bool set)
 {
 	u32 addr;
 	SW_D data;
@@ -2172,7 +2210,7 @@ static void port_cfg(struct ksz_sw *sw, int port, int offset, SW_D bits,
  *
  * Return 0 if the bits are not set.
  */
-static int port_chk16(struct ksz_sw *sw, int port, int offset, u16 bits)
+static int port_chk16(struct ksz_sw *sw, uint port, uint offset, u16 bits)
 {
 	u32 addr;
 	u16 data;
@@ -2192,8 +2230,8 @@ static int port_chk16(struct ksz_sw *sw, int port, int offset, u16 bits)
  *
  * This routine sets or resets the specified bits of the port register.
  */
-static void port_cfg16(struct ksz_sw *sw, int port, int offset, u16 bits,
-	int set)
+static void port_cfg16(struct ksz_sw *sw, uint port, uint offset, u16 bits,
+	bool set)
 {
 	u32 addr;
 	u16 data;
@@ -2222,7 +2260,7 @@ static void port_cfg16(struct ksz_sw *sw, int port, int offset, u16 bits,
  *
  * Return 0 if the bits are not set.
  */
-static int port_chk32(struct ksz_sw *sw, int port, int offset, u32 bits)
+static int port_chk32(struct ksz_sw *sw, uint port, uint offset, u32 bits)
 {
 	u32 addr;
 	u32 data;
@@ -2242,8 +2280,8 @@ static int port_chk32(struct ksz_sw *sw, int port, int offset, u32 bits)
  *
  * This routine sets or resets the specified bits of the port register.
  */
-static void port_cfg32(struct ksz_sw *sw, int port, int offset, u32 bits,
-	int set)
+static void port_cfg32(struct ksz_sw *sw, uint port, uint offset, u32 bits,
+	bool set)
 {
 	u32 addr;
 	u32 data;
@@ -2270,7 +2308,7 @@ static void port_cfg32(struct ksz_sw *sw, int port, int offset, u32 bits,
  *
  * Return 0 if the port is not set.
  */
-static int port_chk_shift(struct ksz_sw *sw, int port, u32 addr, int shift)
+static int port_chk_shift(struct ksz_sw *sw, uint port, u32 addr, int shift)
 {
 	SW_D data;
 	SW_D bit = 1 << port;
@@ -2290,8 +2328,8 @@ static int port_chk_shift(struct ksz_sw *sw, int port, u32 addr, int shift)
  *
  * This routine sets or resets the specified port in the register.
  */
-static void port_cfg_shift(struct ksz_sw *sw, int port, u32 addr, int shift,
-	int set)
+static void port_cfg_shift(struct ksz_sw *sw, uint port, u32 addr, int shift,
+	bool set)
 {
 	SW_D data;
 	SW_D bits = 1 << port;
@@ -2315,7 +2353,7 @@ static void port_cfg_shift(struct ksz_sw *sw, int port, u32 addr, int shift,
  *
  * This routine reads a byte from the port register.
  */
-static void port_r8(struct ksz_sw *sw, int port, int offset, u8 *data)
+static void port_r8(struct ksz_sw *sw, uint port, uint offset, u8 *data)
 {
 	u32 addr;
 
@@ -2332,7 +2370,7 @@ static void port_r8(struct ksz_sw *sw, int port, int offset, u8 *data)
  *
  * This routine writes a byte to the port register.
  */
-static void port_w8(struct ksz_sw *sw, int port, int offset, u8 data)
+static void port_w8(struct ksz_sw *sw, uint port, uint offset, u8 data)
 {
 	u32 addr;
 
@@ -2349,7 +2387,7 @@ static void port_w8(struct ksz_sw *sw, int port, int offset, u8 data)
  *
  * This routine reads a word from the port register.
  */
-static void port_r16(struct ksz_sw *sw, int port, int offset, u16 *data)
+static void port_r16(struct ksz_sw *sw, uint port, uint offset, u16 *data)
 {
 	u32 addr;
 
@@ -2366,7 +2404,7 @@ static void port_r16(struct ksz_sw *sw, int port, int offset, u16 *data)
  *
  * This routine writes a word to the port register.
  */
-static void port_w16(struct ksz_sw *sw, int port, int offset, u16 data)
+static void port_w16(struct ksz_sw *sw, uint port, uint offset, u16 data)
 {
 	u32 addr;
 
@@ -2386,7 +2424,7 @@ static void port_w16(struct ksz_sw *sw, int port, int offset, u16 data)
  *
  * This routine reads a dword from the port register.
  */
-static void port_r32(struct ksz_sw *sw, int port, int offset, u32 *data)
+static void port_r32(struct ksz_sw *sw, uint port, uint offset, u32 *data)
 {
 	u32 addr;
 
@@ -2403,7 +2441,7 @@ static void port_r32(struct ksz_sw *sw, int port, int offset, u32 *data)
  *
  * This routine writes a dword to the port register.
  */
-static void port_w32(struct ksz_sw *sw, int port, int offset, u32 data)
+static void port_w32(struct ksz_sw *sw, uint port, uint offset, u32 data)
 {
 	u32 addr;
 
@@ -2411,7 +2449,7 @@ static void port_w32(struct ksz_sw *sw, int port, int offset, u32 data)
 	sw->reg->w32(sw, addr, data);
 }  /* port_w32 */
 
-static void port_get(struct ksz_sw *sw, int port, int offset, void *buf,
+static void port_get(struct ksz_sw *sw, uint port, uint offset, void *buf,
 	size_t cnt)
 {
 	u32 addr;
@@ -2421,7 +2459,7 @@ static void port_get(struct ksz_sw *sw, int port, int offset, void *buf,
 }
 
 #if 0
-static void port_set(struct ksz_sw *sw, int port, int offset, void *buf,
+static void port_set(struct ksz_sw *sw, uint port, uint offset, void *buf,
 	size_t cnt)
 {
 	u32 addr;
@@ -2441,7 +2479,7 @@ static void port_set(struct ksz_sw *sw, int port, int offset, void *buf,
  *
  * This function reads bits from the port register.
  */
-static u8 port_r_s(struct ksz_sw *sw, int p, u32 reg, u8 mask, u8 shift)
+static u8 port_r_s(struct ksz_sw *sw, uint p, u32 reg, u8 mask, u8 shift)
 {
 	u8 data;
 
@@ -2461,7 +2499,7 @@ static u8 port_r_s(struct ksz_sw *sw, int p, u32 reg, u8 mask, u8 shift)
  *
  * This routine writes bits to the port register.
  */
-static void port_w_s(struct ksz_sw *sw, int p, u32 reg, u8 mask, u8 shift,
+static void port_w_s(struct ksz_sw *sw, uint p, u32 reg, u8 mask, u8 shift,
 	u8 val)
 {
 	u8 data;
@@ -2472,7 +2510,7 @@ static void port_w_s(struct ksz_sw *sw, int p, u32 reg, u8 mask, u8 shift,
 	port_w8(sw, p, reg, data);
 }  /* port_w_s */
 
-static u32 port_r_s_32(struct ksz_sw *sw, int p, u32 reg, u32 mask,
+static u32 port_r_s_32(struct ksz_sw *sw, uint p, u32 reg, u32 mask,
 	u32 shift)
 {
 	u32 data;
@@ -2483,7 +2521,7 @@ static u32 port_r_s_32(struct ksz_sw *sw, int p, u32 reg, u32 mask,
 	return data;
 }
 
-static void port_w_s_32(struct ksz_sw *sw, int p, u32 reg, u32 mask,
+static void port_w_s_32(struct ksz_sw *sw, uint p, u32 reg, u32 mask,
 	u32 shift, u32 val)
 {
 	u32 data;
@@ -2522,7 +2560,7 @@ static int sw_chk(struct ksz_sw *sw, u32 addr, SW_D bits)
  *
  * This function sets or resets the specified bits of the switch register.
  */
-static void sw_cfg(struct ksz_sw *sw, u32 addr, SW_D bits, int set)
+static void sw_cfg(struct ksz_sw *sw, u32 addr, SW_D bits, bool set)
 {
 	SW_D data;
 
@@ -2566,7 +2604,7 @@ static void sw_w_shift(struct ksz_sw *sw, u32 addr, u32 mask, u32 shift,
  *
  * This routine reads a byte from the port register.
  */
-static void port_out_rate_r8(struct ksz_sw *sw, int port, int offset, u8 *data)
+static void port_out_rate_r8(struct ksz_sw *sw, uint port, uint offset, u8 *data)
 {
 	u32 addr;
 
@@ -2584,7 +2622,7 @@ static void port_out_rate_r8(struct ksz_sw *sw, int port, int offset, u8 *data)
  *
  * This routine writes a byte to the port register.
  */
-static void port_out_rate_w8(struct ksz_sw *sw, int port, int offset, u8 data)
+static void port_out_rate_w8(struct ksz_sw *sw, uint port, uint offset, u8 data)
 {
 	u32 addr;
 
@@ -2598,25 +2636,25 @@ static void port_out_rate_w8(struct ksz_sw *sw, int port, int offset, u8 data)
 
 /* ACL */
 
-static inline void port_cfg_acl(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_acl(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_MRI_AUTHEN_CTRL, PORT_ACL_ENABLE, set);
 }
 
-static inline int port_chk_acl(struct ksz_sw *sw, int p)
+static inline int port_chk_acl(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_MRI_AUTHEN_CTRL, PORT_ACL_ENABLE);
 }
 
-static inline u8 port_get_authen_mode(struct ksz_sw *sw, int p)
+static inline u8 port_get_authen_mode(struct ksz_sw *sw, uint p)
 {
 	return port_r_s(sw, p,
 		REG_PORT_MRI_AUTHEN_CTRL, PORT_AUTHEN_MODE, 0);
 }
 
-static void port_set_authen_mode(struct ksz_sw *sw, int p, u8 mode)
+static void port_set_authen_mode(struct ksz_sw *sw, uint p, u8 mode)
 {
 	port_w_s(sw, p,
 		REG_PORT_MRI_AUTHEN_CTRL, PORT_AUTHEN_MODE, 0, mode);
@@ -2837,7 +2875,7 @@ static void set_acl_table_info(struct ksz_acl_table *acl, u8 data[])
  *
  * This helper function waits for ACL table to be ready for access.
  */
-static int wait_for_acl_table(struct ksz_sw *sw, int port)
+static int wait_for_acl_table(struct ksz_sw *sw, uint port)
 {
 	u8 ctrl;
 	int timeout = 100;
@@ -2862,7 +2900,7 @@ static int wait_for_acl_table(struct ksz_sw *sw, int port)
  *
  * This function reads from ACL table of the port using default access.
  */
-static int sw_r_acl_hw(struct ksz_sw *sw, int port, u16 addr, u8 data[])
+static int sw_r_acl_hw(struct ksz_sw *sw, uint port, u16 addr, u8 data[])
 {
 	u8 ctrl = (addr & PORT_ACL_INDEX_M);
 
@@ -2885,7 +2923,7 @@ static int sw_r_acl_hw(struct ksz_sw *sw, int port, u16 addr, u8 data[])
  *
  * Return 0 if the entry is valid; otherwise -1.
  */
-static int sw_r_acl_table(struct ksz_sw *sw, int port, u16 addr,
+static int sw_r_acl_table(struct ksz_sw *sw, uint port, u16 addr,
 	struct ksz_acl_table *acl)
 {
 	u8 data[20];
@@ -2915,7 +2953,7 @@ r_acl_exit:
  *
  * This function writes to ACL table of the port using default access.
  */
-static int sw_w_acl_hw(struct ksz_sw *sw, int port, u16 addr, u8 data[])
+static int sw_w_acl_hw(struct ksz_sw *sw, uint port, u16 addr, u8 data[])
 {
 	u8 ctrl = (addr & PORT_ACL_INDEX_M) | PORT_ACL_WRITE;
 
@@ -2936,7 +2974,7 @@ static int sw_w_acl_hw(struct ksz_sw *sw, int port, u16 addr, u8 data[])
  *
  * This routine writes to the action field of an entry of the ACL table.
  */
-static void sw_w_acl_action(struct ksz_sw *sw, int port, u16 addr,
+static void sw_w_acl_action(struct ksz_sw *sw, uint port, u16 addr,
 	struct ksz_acl_table *acl)
 {
 	u8 data[20];
@@ -2964,7 +3002,7 @@ w_acl_act_exit:
  *
  * This routine writes to the ruleset field of an entry of the ACL table.
  */
-static void sw_w_acl_ruleset(struct ksz_sw *sw, int port, u16 addr,
+static void sw_w_acl_ruleset(struct ksz_sw *sw, uint port, u16 addr,
 	struct ksz_acl_table *acl)
 {
 	u8 data[20];
@@ -2996,7 +3034,7 @@ w_acl_ruleset_exit:
  * This routine writes to the matching and process fields of an entry of the
  * ACL table of the port.
  */
-static void sw_w_acl_rule(struct ksz_sw *sw, int port, u16 addr,
+static void sw_w_acl_rule(struct ksz_sw *sw, uint port, u16 addr,
 	struct ksz_acl_table *acl)
 {
 	u8 data[20];
@@ -3030,7 +3068,7 @@ w_acl_rule_exit:
  *
  * This routine writes an entry of the ACL table of the port.
  */
-static void sw_w_acl_table(struct ksz_sw *sw, int port, u16 addr,
+static void sw_w_acl_table(struct ksz_sw *sw, uint port, u16 addr,
 	struct ksz_acl_table *acl)
 {
 	u8 data[20];
@@ -3226,7 +3264,7 @@ static int acl_info(struct ksz_acl_table *acl, u16 index, char *buf, int len)
  *
  * This routine dumps ACL table of the port.
  */
-static ssize_t sw_d_acl_table(struct ksz_sw *sw, int port, char *buf,
+static ssize_t sw_d_acl_table(struct ksz_sw *sw, uint port, char *buf,
 	ssize_t len)
 {
 	struct ksz_port_cfg *cfg = &sw->info->port_cfg[port];
@@ -3298,7 +3336,7 @@ static ssize_t sw_d_acl_table(struct ksz_sw *sw, int port, char *buf,
 static void sw_reset_acl(struct ksz_sw *sw)
 {
 	struct ksz_port_cfg *cfg;
-	int port;
+	uint port;
 
 	for (port = 0; port < sw->mib_port_cnt; port++) {
 		port = chk_last_port(sw, port);
@@ -3315,7 +3353,7 @@ static void sw_reset_acl_hw(struct ksz_sw *sw)
 	struct ksz_acl_table *acl;
 	int i;
 	int acl_on;
-	int port;
+	uint port;
 
 	sw_reset_acl(sw);
 	for (port = 0; port < sw->mib_port_cnt; port++) {
@@ -3342,7 +3380,7 @@ static void sw_init_acl(struct ksz_sw *sw)
 	struct ksz_port_cfg *cfg;
 	struct ksz_acl_table *acl;
 	int i;
-	int port;
+	uint port;
 
 	for (port = 0; port < sw->mib_port_cnt; port++) {
 		port = chk_last_port(sw, port);
@@ -3561,16 +3599,19 @@ static int dbg_mib;
  *
  * This function reads MIB counters of the port using default access.
  */
-static int sw_r_mib_cnt_hw(struct ksz_sw *sw, int port, u32 addr[], int num,
+static int sw_r_mib_cnt_hw(struct ksz_sw *sw, uint port, u32 addr[], int num,
 	u32 data[])
 {
 	int i;
 	u32 ctrl_addr;
+	u32 freeze = sw->info->port_cfg[port].freeze ?
+		MIB_COUNTER_FLUSH_FREEZE : 0;
 
 	for (i = 0; i < num; i++) {
 		ctrl_addr = (addr[i] & MIB_COUNTER_INDEX_M);
 		ctrl_addr <<= MIB_COUNTER_INDEX_S;
 		ctrl_addr |= MIB_COUNTER_READ;
+		ctrl_addr |= freeze;
 
 #if 1
 		/*
@@ -3589,7 +3630,6 @@ static int sw_r_mib_cnt_hw(struct ksz_sw *sw, int port, u32 addr[], int num,
 			port_get(sw, port, REG_PORT_MIB_CTRL_STAT__4, data, 8);
 
 			data[0] = be32_to_cpu(data[0]);
-			if (!(sw->overrides & BAD_SPI))
 			if (!(data[0] & MIB_COUNTER_VALID) && dbg_mib++ < 5)
 				dbg_msg(" !valid: %08x\n", data[0]);
 			data[1] = be32_to_cpu(data[1]);
@@ -3610,7 +3650,7 @@ static int sw_r_mib_cnt_hw(struct ksz_sw *sw, int port, u32 addr[], int num,
  *
  * Return non-zero when not all counters not read.
  */
-static int port_r_cnt(struct ksz_sw *sw, int port)
+static int port_r_cnt(struct ksz_sw *sw, uint port)
 {
 	struct ksz_port_mib *mib = &sw->port_mib[port];
 	u32 index[MAX_IBA_MIB_ENTRIES];
@@ -3663,6 +3703,19 @@ static int port_r_cnt(struct ksz_sw *sw, int port)
 	return 0;
 }  /* port_r_cnt */
 
+static void port_freeze_mib(struct ksz_sw *sw, uint port, bool freeze)
+{
+	u32 ctrl = freeze ? MIB_COUNTER_FLUSH_FREEZE : 0;
+
+	sw->info->port_cfg[port].freeze = !!freeze;
+	port_w32(sw, port, REG_PORT_MIB_CTRL_STAT__4, ctrl);
+}  /* port_freeze_mib */
+
+static void sw_freeze_mib(struct ksz_sw *sw, bool freeze)
+{
+	sw_cfg(sw, REG_SW_MAC_CTRL_6, SW_MIB_COUNTER_FREEZE, freeze);
+}  /* sw_freeze_mib */
+
 /**
  * port_init_cnt - initialize MIB counter values
  * @sw:		The switch instance.
@@ -3671,7 +3724,7 @@ static int port_r_cnt(struct ksz_sw *sw, int port)
  * This routine is used to initialize all counters to zero if the hardware
  * cannot do it after reset.
  */
-static inline void port_init_cnt(struct ksz_sw *sw, int port)
+static inline void port_init_cnt(struct ksz_sw *sw, uint port)
 {
 	struct ksz_port_mib *mib = &sw->port_mib[port];
 	u32 index[MAX_IBA_MIB_ENTRIES];
@@ -3706,13 +3759,13 @@ static inline void port_init_cnt(struct ksz_sw *sw, int port)
 
 /* Bandwidth */
 
-static inline void port_cfg_broad_storm(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_broad_storm(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_BCAST_STORM_CTRL, PORT_BROADCAST_STORM, set);
 }
 
-static inline int port_chk_broad_storm(struct ksz_sw *sw, int p)
+static inline int port_chk_broad_storm(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_BCAST_STORM_CTRL, PORT_BROADCAST_STORM);
@@ -3770,7 +3823,7 @@ static void sw_get_broad_storm(struct ksz_sw *sw, u8 *percent)
  *
  * This routine disables the broadcast storm limit function of the switch.
  */
-static void sw_dis_broad_storm(struct ksz_sw *sw, int port)
+static void sw_dis_broad_storm(struct ksz_sw *sw, uint port)
 {
 	port_cfg_broad_storm(sw, port, 0);
 }  /* sw_dis_broad_storm */
@@ -3782,7 +3835,7 @@ static void sw_dis_broad_storm(struct ksz_sw *sw, int port)
  *
  * This routine enables the broadcast storm limit function of the switch.
  */
-static void sw_ena_broad_storm(struct ksz_sw *sw, int port)
+static void sw_ena_broad_storm(struct ksz_sw *sw, uint port)
 {
 	sw_cfg_broad_storm(sw, sw->info->broad_per);
 	port_cfg_broad_storm(sw, port, 1);
@@ -3827,7 +3880,7 @@ static void hw_cfg_broad_storm(struct ksz_sw *sw, u8 percent)
  */
 static void sw_setup_broad_storm(struct ksz_sw *sw)
 {
-	int port;
+	uint port;
 
 	/* Enable switch broadcast storm protection at 10% percent rate. */
 	hw_cfg_broad_storm(sw, BROADCAST_STORM_PROTECTION_RATE);
@@ -3852,7 +3905,7 @@ static void sw_setup_broad_storm(struct ksz_sw *sw)
  *
  * This helper routine configures the rate limit modes of the port.
  */
-static void hw_cfg_rate_limit(struct ksz_sw *sw, int port, u8 mask, u8 shift,
+static void hw_cfg_rate_limit(struct ksz_sw *sw, uint port, u8 mask, u8 shift,
 	u8 mode)
 {
 	u8 data;
@@ -3867,12 +3920,12 @@ static void hw_cfg_rate_limit(struct ksz_sw *sw, int port, u8 mask, u8 shift,
 	sw->info->port_cfg[port].rate_limit = data;
 }  /* hw_cfg_rate_limit */
 
-static void hw_cfg_in_port_based(struct ksz_sw *sw, int port, int set)
+static void hw_cfg_in_port_based(struct ksz_sw *sw, uint port, bool set)
 {
 	hw_cfg_rate_limit(sw, port, 1, PORT_IN_PORT_BASED_S, set != 0);
 }
 
-static void hw_cfg_in_flow_ctrl(struct ksz_sw *sw, int port, int set)
+static void hw_cfg_in_flow_ctrl(struct ksz_sw *sw, uint port, bool set)
 {
 	hw_cfg_rate_limit(sw, port, 1, PORT_IN_FLOW_CTRL_S, set != 0);
 }
@@ -3885,7 +3938,7 @@ static void hw_cfg_in_flow_ctrl(struct ksz_sw *sw, int port, int set)
  *
  * This routine configures the rate limit count IFG control of the port.
  */
-static void hw_cfg_cnt_ifg(struct ksz_sw *sw, int port, int set)
+static void hw_cfg_cnt_ifg(struct ksz_sw *sw, uint port, bool set)
 {
 	hw_cfg_rate_limit(sw, port, 1, PORT_COUNT_IFG_S, set != 0);
 }  /* hw_cfg_cnt_ifg */
@@ -3898,7 +3951,7 @@ static void hw_cfg_cnt_ifg(struct ksz_sw *sw, int port, int set)
  *
  * This routine configures the rate limit count preamble control of the port.
  */
-static void hw_cfg_cnt_pre(struct ksz_sw *sw, int port, int set)
+static void hw_cfg_cnt_pre(struct ksz_sw *sw, uint port, bool set)
 {
 	hw_cfg_rate_limit(sw, port, 1, PORT_COUNT_PREAMBLE_S, set != 0);
 }  /* hw_cfg_cnt_pre */
@@ -3911,7 +3964,7 @@ static void hw_cfg_cnt_pre(struct ksz_sw *sw, int port, int set)
  *
  * This routine configures the rate limit mode of the port.
  */
-static void hw_cfg_rx_limit(struct ksz_sw *sw, int port, u8 mode)
+static void hw_cfg_rx_limit(struct ksz_sw *sw, uint port, u8 mode)
 {
 	if (mode > PORT_IN_LIMIT_MODE_M)
 		return;
@@ -3927,7 +3980,7 @@ static void hw_cfg_rx_limit(struct ksz_sw *sw, int port, u8 mode)
  *
  * This routine retrieves the rate limit of the port.
  */
-static void hw_get_rate_limit(struct ksz_sw *sw, int port)
+static void hw_get_rate_limit(struct ksz_sw *sw, uint port)
 {
 	u8 data;
 
@@ -4023,8 +4076,8 @@ static int get_packet_to_val(uint rate)
  *
  * This helper routine configures the priority rate of the port.
  */
-static void port_cfg_rate(struct ksz_sw *sw, int port, int prio, int offset,
-	uint rate, int packet)
+static void port_cfg_rate(struct ksz_sw *sw, uint port, uint prio, uint offset,
+	uint rate, bool packet)
 {
 	u8 factor;
 
@@ -4050,8 +4103,8 @@ static void port_cfg_rate(struct ksz_sw *sw, int port, int prio, int offset,
  *
  * This helper routine retrieves the priority rate of the port.
  */
-static void port_get_rate(struct ksz_sw *sw, int port, int prio, int offset,
-	uint *rate, int packet)
+static void port_get_rate(struct ksz_sw *sw, uint port, uint prio, uint offset,
+	uint *rate, bool packet)
 {
 	u8 data;
 
@@ -4077,8 +4130,8 @@ static void port_get_rate(struct ksz_sw *sw, int port, int prio, int offset,
  * This helper routine configures the priority rate of the port and retrieves
  * the actual rate number.
  */
-static void hw_cfg_prio_rate(struct ksz_sw *sw, int port, int prio, uint rate,
-	int offset, uint *result, int packet)
+static void hw_cfg_prio_rate(struct ksz_sw *sw, uint port, uint prio, uint rate,
+	uint offset, uint *result, bool packet)
 {
 	port_cfg_rate(sw, port, prio, offset, rate, packet);
 	port_get_rate(sw, port, prio, offset, result, packet);
@@ -4090,7 +4143,7 @@ static void hw_cfg_prio_rate(struct ksz_sw *sw, int port, int prio, uint rate,
  * written!  It can be turned off without writing the last priority.  Setting
  * it turns on rate limiting but the hardware seems to use the last value.
  */
-static void hw_set_rx_prio(struct ksz_sw *sw, int port)
+static void hw_set_rx_prio(struct ksz_sw *sw, uint port)
 {
 	u8 data;
 
@@ -4108,7 +4161,7 @@ static void hw_set_rx_prio(struct ksz_sw *sw, int port)
  * This routine configures the receive priority rate of the port.
  * It is called by user functions.  The hardware should be acquired first.
  */
-static void hw_cfg_rx_prio_rate(struct ksz_sw *sw, int port, int prio,
+static void hw_cfg_rx_prio_rate(struct ksz_sw *sw, uint port, uint prio,
 	uint rate)
 {
 	uint *result;
@@ -4133,7 +4186,7 @@ static void hw_cfg_rx_prio_rate(struct ksz_sw *sw, int port, int prio,
  * This routine configures the transmit priority rate of the port.
  * It is called by user functions.  The hardware should be acquired first.
  */
-static void hw_cfg_tx_prio_rate(struct ksz_sw *sw, int port, int prio,
+static void hw_cfg_tx_prio_rate(struct ksz_sw *sw, uint port, uint prio,
 	uint rate)
 {
 	uint *result;
@@ -4158,7 +4211,7 @@ static void hw_cfg_tx_prio_rate(struct ksz_sw *sw, int port, int prio,
  *
  * Return 0 if not enabled.
  */
-static int sw_chk_rx_prio_rate(struct ksz_sw *sw, int port)
+static int sw_chk_rx_prio_rate(struct ksz_sw *sw, uint port)
 {
 	u32 rate_addr;
 	u32 in_rate0;
@@ -4180,7 +4233,7 @@ static int sw_chk_rx_prio_rate(struct ksz_sw *sw, int port)
  *
  * Return 0 if not enabled.
  */
-static int sw_chk_tx_prio_rate(struct ksz_sw *sw, int port)
+static int sw_chk_tx_prio_rate(struct ksz_sw *sw, uint port)
 {
 	u32 rate_addr;
 	u32 out_rate;
@@ -4202,7 +4255,7 @@ static int sw_chk_tx_prio_rate(struct ksz_sw *sw, int port)
  *
  * This routine disables the rx priority rate function of the switch.
  */
-static void sw_dis_rx_prio_rate(struct ksz_sw *sw, int port)
+static void sw_dis_rx_prio_rate(struct ksz_sw *sw, uint port)
 {
 	u32 rate_addr;
 
@@ -4218,7 +4271,7 @@ static void sw_dis_rx_prio_rate(struct ksz_sw *sw, int port)
  *
  * This routine disables the tx priority rate function of the switch.
  */
-static void sw_dis_tx_prio_rate(struct ksz_sw *sw, int port)
+static void sw_dis_tx_prio_rate(struct ksz_sw *sw, uint port)
 {
 	u32 rate_addr;
 
@@ -4233,7 +4286,7 @@ static void sw_dis_tx_prio_rate(struct ksz_sw *sw, int port)
  *
  * This routine enables the rx priority rate function of the switch.
  */
-static void sw_ena_rx_prio_rate(struct ksz_sw *sw, int port)
+static void sw_ena_rx_prio_rate(struct ksz_sw *sw, uint port)
 {
 	int prio;
 	u32 *rate;
@@ -4260,7 +4313,7 @@ static void sw_ena_rx_prio_rate(struct ksz_sw *sw, int port)
  *
  * This routine enables the tx priority rate function of the switch.
  */
-static void sw_ena_tx_prio_rate(struct ksz_sw *sw, int port)
+static void sw_ena_tx_prio_rate(struct ksz_sw *sw, uint port)
 {
 	int prio;
 	u32 *rate;
@@ -4274,7 +4327,7 @@ static void sw_ena_tx_prio_rate(struct ksz_sw *sw, int port)
 		hw_cfg_tx_prio_rate(sw, port, prio, *rate);
 }  /* sw_ena_tx_prio_rate */
 
-static void hw_cfg_rate_packet_based(struct ksz_sw *sw, int port, int set)
+static void hw_cfg_rate_packet_based(struct ksz_sw *sw, uint port, bool set)
 {
 	int prio;
 	u32 *rx_rate;
@@ -4322,9 +4375,9 @@ static void hw_cfg_rate_packet_based(struct ksz_sw *sw, int port, int set)
  */
 static void sw_init_prio_rate(struct ksz_sw *sw)
 {
-	int offset;
-	int port;
-	int prio;
+	uint offset;
+	uint port;
+	uint prio;
 	struct ksz_port_cfg *cfg;
 
 	for (port = 0; port < sw->mib_port_cnt; port++) {
@@ -4352,26 +4405,26 @@ static void sw_init_prio_rate(struct ksz_sw *sw)
 
 /* Communication */
 
-static inline void port_cfg_back_pressure(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_back_pressure(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_MAC_CTRL_1, PORT_BACK_PRESSURE, set);
 }
 
-static inline void port_cfg_force_flow_ctrl(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_force_flow_ctrl(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_CTRL_0,
 		PORT_FORCE_TX_FLOW_CTRL | PORT_FORCE_RX_FLOW_CTRL, set);
 }
 
-static inline void port_cfg_mac_loopback(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_mac_loopback(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_CTRL_0, PORT_MAC_LOOPBACK, set);
 }
 
-static void port_cfg_phy_loopback(struct ksz_sw *sw, int p, int set)
+static void port_cfg_phy_loopback(struct ksz_sw *sw, uint p, bool set)
 {
 	u16 data;
 	struct ksz_port_cfg *cfg = &sw->info->port_cfg[p];
@@ -4390,50 +4443,50 @@ static void port_cfg_phy_loopback(struct ksz_sw *sw, int p, int set)
 	port_w16(sw, p, REG_PORT_PHY_CTRL, data);
 }
 
-static inline void port_cfg_remote_loopback(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_remote_loopback(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg16(sw, p,
 		REG_PORT_PHY_REMOTE_LB_LED, PORT_REMOTE_LOOPBACK, set);
 }
 
-static inline void port_cfg_tail_tag(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_tail_tag(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_CTRL_0, PORT_TAIL_TAG_ENABLE, set);
 }
 
-static inline int port_chk_back_pressure(struct ksz_sw *sw, int p)
+static inline int port_chk_back_pressure(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_MAC_CTRL_1, PORT_BACK_PRESSURE);
 }
 
-static inline int port_chk_force_flow_ctrl(struct ksz_sw *sw, int p)
+static inline int port_chk_force_flow_ctrl(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_CTRL_0,
 		PORT_FORCE_TX_FLOW_CTRL | PORT_FORCE_RX_FLOW_CTRL);
 }
 
-static inline int port_chk_mac_loopback(struct ksz_sw *sw, int p)
+static inline int port_chk_mac_loopback(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_CTRL_0, PORT_MAC_LOOPBACK);
 }
 
-static inline int port_chk_phy_loopback(struct ksz_sw *sw, int p)
+static inline int port_chk_phy_loopback(struct ksz_sw *sw, uint p)
 {
 	return port_chk16(sw, p,
 		REG_PORT_PHY_CTRL, PORT_PHY_LOOPBACK);
 }
 
-static inline int port_chk_remote_loopback(struct ksz_sw *sw, int p)
+static inline int port_chk_remote_loopback(struct ksz_sw *sw, uint p)
 {
 	return port_chk16(sw, p,
 		REG_PORT_PHY_REMOTE_LB_LED, PORT_REMOTE_LOOPBACK);
 }
 
-static inline int port_chk_tail_tag(struct ksz_sw *sw, int p)
+static inline int port_chk_tail_tag(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_CTRL_0, PORT_TAIL_TAG_ENABLE);
@@ -4443,7 +4496,7 @@ static inline int port_chk_tail_tag(struct ksz_sw *sw, int p)
 
 /* Spanning Tree */
 
-static inline void port_cfg_mstp(struct ksz_sw *sw, int p, u8 mstp)
+static inline void port_cfg_mstp(struct ksz_sw *sw, uint p, u8 mstp)
 {
 	if (sw->info->port_cfg[p].mstp != mstp) {
 		port_w(sw, p, REG_PORT_LUE_MSTP_INDEX, mstp);
@@ -4451,13 +4504,13 @@ static inline void port_cfg_mstp(struct ksz_sw *sw, int p, u8 mstp)
 	}
 }
 
-static inline void port_cfg_dis_learn(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_dis_learn(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_STP_CTRL, PORT_LEARN_DISABLE, set);
 }
 
-static inline void port_cfg_rx(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_rx(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_STP_CTRL, PORT_RX_ENABLE, set);
@@ -4467,7 +4520,7 @@ static inline void port_cfg_rx(struct ksz_sw *sw, int p, int set)
 		sw->rx_ports[sw->info->port_cfg[p].mstp] &= ~(1 << p);
 }
 
-static inline void port_cfg_tx(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_tx(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_STP_CTRL, PORT_TX_ENABLE, set);
@@ -4477,7 +4530,7 @@ static inline void port_cfg_tx(struct ksz_sw *sw, int p, int set)
 		sw->tx_ports[sw->info->port_cfg[p].mstp] &= ~(1 << p);
 }
 
-static inline u8 port_chk_mstp(struct ksz_sw *sw, int p)
+static inline u8 port_chk_mstp(struct ksz_sw *sw, uint p)
 {
 	SW_D mstp;
 
@@ -4485,25 +4538,25 @@ static inline u8 port_chk_mstp(struct ksz_sw *sw, int p)
 	return mstp;
 }
 
-static inline int port_chk_dis_learn(struct ksz_sw *sw, int p)
+static inline int port_chk_dis_learn(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_STP_CTRL, PORT_LEARN_DISABLE);
 }
 
-static inline int port_chk_rx(struct ksz_sw *sw, int p)
+static inline int port_chk_rx(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_STP_CTRL, PORT_RX_ENABLE);
 }
 
-static inline int port_chk_tx(struct ksz_sw *sw, int p)
+static inline int port_chk_tx(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_STP_CTRL, PORT_TX_ENABLE);
 }
 
-static void port_cfg_rx_special(struct ksz_sw *sw, int p, int set)
+static void port_cfg_rx_special(struct ksz_sw *sw, uint p, bool set)
 {
 	int hsr = false;
 
@@ -4544,7 +4597,7 @@ static void port_cfg_rx_special(struct ksz_sw *sw, int p, int set)
 #endif
 }  /* port_cfg_rx_special */
 
-static void port_cfg_power(struct ksz_sw *sw, int p, int set)
+static void port_cfg_power(struct ksz_sw *sw, uint p, bool set)
 {
 	u16 ctrl;
 	u8 intr;
@@ -4563,10 +4616,12 @@ static void port_cfg_power(struct ksz_sw *sw, int p, int set)
 		if (ctrl != cfg->phy_adv);
 			port_w16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION,
 				cfg->phy_adv);
-		port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
-		if (ctrl != cfg->phy_adv_g);
-			port_w16(sw, p, REG_PORT_PHY_1000_CTRL,
-				cfg->phy_adv_g);
+		if (sw->features & GIGABIT_SUPPORT) {
+			port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
+			if (ctrl != cfg->phy_adv_g);
+				port_w16(sw, p, REG_PORT_PHY_1000_CTRL,
+					cfg->phy_adv_g);
+		}
 		port_r32(sw, p, REG_PORT_PHY_INT_ENABLE & ~3, &data);
 		data &= 0xffff00ff;
 		data |= cfg->phy_intr << 8;
@@ -4580,8 +4635,10 @@ static void port_cfg_power(struct ksz_sw *sw, int p, int set)
 		cfg->phy_intr = intr;
 		port_r16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION, &ctrl);
 		cfg->phy_adv = ctrl;
-		port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
-		cfg->phy_adv_g = ctrl;
+		if (sw->features & GIGABIT_SUPPORT) {
+			port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
+			cfg->phy_adv_g = ctrl;
+		}
 #if 0
 		port_r16(sw, p, REG_PORT_PHY_DIGITAL_DEBUG_1, &ctrl);
 		ctrl |= PORT_REG_CLK_SPEED_25_MHZ;
@@ -4594,7 +4651,7 @@ static void port_cfg_power(struct ksz_sw *sw, int p, int set)
 	}
 }  /* port_cfg_power */
 
-static int port_chk_power(struct ksz_sw *sw, int p)
+static int port_chk_power(struct ksz_sw *sw, uint p)
 {
 	u16 ctrl;
 
@@ -4602,12 +4659,12 @@ static int port_chk_power(struct ksz_sw *sw, int p)
 	return !(ctrl & PORT_POWER_DOWN);
 }  /* port_chk_power */
 
-static inline void sw_cfg_fast_aging(struct ksz_sw *sw, int set)
+static inline void sw_cfg_fast_aging(struct ksz_sw *sw, bool set)
 {
 	sw_cfg(sw, REG_SW_LUE_CTRL_1, SW_FAST_AGING, set);
 }
 
-static void sw_flush_dyn_mac_table(struct ksz_sw *sw, int port)
+static void sw_flush_dyn_mac_table(struct ksz_sw *sw, uint port)
 {
 	int cnt;
 	int first;
@@ -4643,7 +4700,7 @@ static void sw_flush_dyn_mac_table(struct ksz_sw *sw, int port)
 
 /* VLAN */
 
-static inline void port_cfg_drop_non_vlan(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_drop_non_vlan(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_MRI_MAC_CTRL, PORT_DROP_NON_VLAN, set);
@@ -4656,19 +4713,19 @@ static inline void port_cfg_drop_non_vlan(struct ksz_sw *sw, int p, int set)
  * @set:	The flag to disable or enable.
  *
  */
-static inline void port_cfg_drop_tag(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_drop_tag(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_MRI_MAC_CTRL, PORT_DROP_TAG, set);
 }
 
-static inline int port_chk_drop_non_vlan(struct ksz_sw *sw, int p)
+static inline int port_chk_drop_non_vlan(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_MRI_MAC_CTRL, PORT_DROP_NON_VLAN);
 }
 
-static inline int port_chk_drop_tag(struct ksz_sw *sw, int p)
+static inline int port_chk_drop_tag(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_MRI_MAC_CTRL, PORT_DROP_TAG);
@@ -4684,7 +4741,7 @@ static inline int port_chk_drop_tag(struct ksz_sw *sw, int p)
  * If enabled, the device will discard packets whose VLAN id does not match
  * ingress port-based default VLAN id.
  */
-static inline void port_cfg_dis_non_vid(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_dis_non_vid(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_LUE_CTRL, PORT_DISCARD_NON_VID, set);
@@ -4701,19 +4758,19 @@ static inline void port_cfg_dis_non_vid(struct ksz_sw *sw, int p, int set)
  * VLAN table receive ports does not include the ingress port that received
  * this packet.
  */
-static inline void port_cfg_in_filter(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_in_filter(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_LUE_CTRL, PORT_INGRESS_FILTER, set);
 }  /* port_cfg_in_filter */
 
-static inline int port_chk_dis_non_vid(struct ksz_sw *sw, int p)
+static inline int port_chk_dis_non_vid(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_LUE_CTRL, PORT_DISCARD_NON_VID);
 }
 
-static inline int port_chk_in_filter(struct ksz_sw *sw, int p)
+static inline int port_chk_in_filter(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_LUE_CTRL, PORT_INGRESS_FILTER);
@@ -4723,42 +4780,42 @@ static inline int port_chk_in_filter(struct ksz_sw *sw, int p)
 
 /* Mirroring */
 
-static inline void port_cfg_mirror_sniffer(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_mirror_sniffer(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_MIRROR_CTRL, PORT_MIRROR_SNIFFER, set);
 }
 
-static inline void port_cfg_mirror_rx(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_mirror_rx(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_MIRROR_CTRL, PORT_MIRROR_RX, set);
 }
 
-static inline void port_cfg_mirror_tx(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_mirror_tx(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_MIRROR_CTRL, PORT_MIRROR_TX, set);
 }
 
-static inline void sw_cfg_mirror_rx_tx(struct ksz_sw *sw, int set)
+static inline void sw_cfg_mirror_rx_tx(struct ksz_sw *sw, bool set)
 {
 	sw_cfg(sw, S_MIRROR_CTRL, SW_MIRROR_RX_TX, set);
 }
 
-static inline int port_chk_mirror_sniffer(struct ksz_sw *sw, int p)
+static inline int port_chk_mirror_sniffer(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_MIRROR_CTRL, PORT_MIRROR_SNIFFER);
 }
 
-static inline int port_chk_mirror_rx(struct ksz_sw *sw, int p)
+static inline int port_chk_mirror_rx(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_MIRROR_CTRL, PORT_MIRROR_RX);
 }
 
-static inline int port_chk_mirror_tx(struct ksz_sw *sw, int p)
+static inline int port_chk_mirror_tx(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_MIRROR_CTRL, PORT_MIRROR_TX);
@@ -4771,7 +4828,7 @@ static inline int sw_chk_mirror_rx_tx(struct ksz_sw *sw)
 
 static void sw_setup_mirror(struct ksz_sw *sw)
 {
-	int port;
+	uint port;
 
 	/*
 	 * The mirror sniffer port requires it to be in the port membership
@@ -4798,109 +4855,109 @@ static void sw_setup_mirror(struct ksz_sw *sw)
 
 /* Priority */
 
-static inline void port_cfg_diffserv(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_diffserv(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_PRIO_CTRL, PORT_DIFFSERV_PRIO_ENABLE, set);
 }
 
-static inline void port_cfg_802_1p(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_802_1p(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_PRIO_CTRL, PORT_802_1P_PRIO_ENABLE, set);
 }
 
-static inline void port_cfg_vlan_prio(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_vlan_prio(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_PRIO_CTRL, PORT_VLAN_PRIO_ENABLE, set);
 }
 
-static inline void port_cfg_mac_prio(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_mac_prio(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_PRIO_CTRL, PORT_MAC_PRIO_ENABLE, set);
 }
 
-static inline void port_cfg_acl_prio(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_acl_prio(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_PRIO_CTRL, PORT_ACL_PRIO_ENABLE, set);
 }
 
-static inline void port_cfg_highest_prio(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_highest_prio(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_PRIO_CTRL, PORT_HIGHEST_PRIO, set);
 }
 
-static inline void port_cfg_or_prio(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_or_prio(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		P_PRIO_CTRL, PORT_OR_PRIO, set);
 }
 
-static inline void port_cfg_replace_prio(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_replace_prio(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_MRI_MAC_CTRL, PORT_USER_PRIO_CEILING, set);
 }
 
-static inline void port_set_prio_queue(struct ksz_sw *sw, int p, int queue)
+static inline void port_set_prio_queue(struct ksz_sw *sw, uint p, uint queue)
 {
 	port_w_s(sw, p,
 		REG_PORT_CTRL_0, PORT_QUEUE_SPLIT_ENABLE, 0, queue);
 }
 
-static inline int port_chk_diffserv(struct ksz_sw *sw, int p)
+static inline int port_chk_diffserv(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_PRIO_CTRL, PORT_DIFFSERV_PRIO_ENABLE);
 }
 
-static inline int port_chk_802_1p(struct ksz_sw *sw, int p)
+static inline int port_chk_802_1p(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_PRIO_CTRL, PORT_802_1P_PRIO_ENABLE);
 }
 
-static inline int port_chk_vlan_prio(struct ksz_sw *sw, int p)
+static inline int port_chk_vlan_prio(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_PRIO_CTRL, PORT_VLAN_PRIO_ENABLE);
 }
 
-static inline int port_chk_mac_prio(struct ksz_sw *sw, int p)
+static inline int port_chk_mac_prio(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_PRIO_CTRL, PORT_MAC_PRIO_ENABLE);
 }
 
-static inline int port_chk_acl_prio(struct ksz_sw *sw, int p)
+static inline int port_chk_acl_prio(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_PRIO_CTRL, PORT_ACL_PRIO_ENABLE);
 }
 
-static inline int port_chk_highest_prio(struct ksz_sw *sw, int p)
+static inline int port_chk_highest_prio(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_PRIO_CTRL, PORT_HIGHEST_PRIO);
 }
 
-static inline int port_chk_or_prio(struct ksz_sw *sw, int p)
+static inline int port_chk_or_prio(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		P_PRIO_CTRL, PORT_OR_PRIO);
 }
 
-static inline int port_chk_replace_prio(struct ksz_sw *sw, int p)
+static inline int port_chk_replace_prio(struct ksz_sw *sw, uint p)
 {
 	return port_chk(sw, p,
 		REG_PORT_MRI_MAC_CTRL, PORT_USER_PRIO_CEILING);
 }
 
-static inline int port_get_prio_queue(struct ksz_sw *sw, int p)
+static inline int port_get_prio_queue(struct ksz_sw *sw, uint p)
 {
 	return port_r_s(sw, p,
 		REG_PORT_CTRL_0, PORT_QUEUE_SPLIT_ENABLE, 0);
@@ -4910,7 +4967,7 @@ static inline int port_get_prio_queue(struct ksz_sw *sw, int p)
 
 /* Policing */
 
-static void port_cfg_index(struct ksz_sw *sw, int port, int p, int q)
+static void port_cfg_index(struct ksz_sw *sw, uint port, uint p, uint q)
 {
 	u32 data;
 
@@ -4919,50 +4976,50 @@ static void port_cfg_index(struct ksz_sw *sw, int port, int p, int q)
 	port_w32(sw, port, REG_PORT_MRI_INDEX__4, data);
 }
 
-static inline void port_cfg_police(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_police(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_ENABLE, set);
 }
 
-static inline void port_cfg_color_aware(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_color_aware(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_COLOR_NOT_AWARE, !set);
 }
 
-static inline void port_cfg_drop_srp(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_drop_srp(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_DROP_SRP, set);
 }
 
-static inline void port_cfg_color_mark(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_color_mark(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, COLOR_MARK_ENABLE, set);
 }
 
-static inline void port_cfg_color_remap(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_color_remap(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, COLOR_REMAP_ENABLE, set);
 }
 
-static inline void port_cfg_port_based_policing(struct ksz_sw *sw, int p,
-	int set)
+static inline void port_cfg_port_based_policing(struct ksz_sw *sw, uint p,
+	bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, PORT_BASED_POLICING, set);
 }
 
-static inline void port_cfg_police_drop_all(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_police_drop_all(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_DROP_ALL, set);
 }
 
-static inline void port_set_police_packet_type(struct ksz_sw *sw, int p,
+static inline void port_set_police_packet_type(struct ksz_sw *sw, uint p,
 	u32 type)
 {
 	port_w_s_32(sw, p,
@@ -4970,280 +5027,280 @@ static inline void port_set_police_packet_type(struct ksz_sw *sw, int p,
 			POLICE_PACKET_TYPE_S, type);
 }
 
-static inline void port_set_non_dscp_color(struct ksz_sw *sw, int p, u32 color)
+static inline void port_set_non_dscp_color(struct ksz_sw *sw, uint p, u32 color)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, SW_COLOR_M,
 			NON_DSCP_COLOR_S, color);
 }
 
-static inline int port_chk_police(struct ksz_sw *sw, int p)
+static inline int port_chk_police(struct ksz_sw *sw, uint p)
 {
 	return port_chk32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_ENABLE);
 }
 
-static inline int port_chk_color_aware(struct ksz_sw *sw, int p)
+static inline int port_chk_color_aware(struct ksz_sw *sw, uint p)
 {
 	return !port_chk32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_COLOR_NOT_AWARE);
 }
 
-static inline int port_chk_drop_srp(struct ksz_sw *sw, int p)
+static inline int port_chk_drop_srp(struct ksz_sw *sw, uint p)
 {
 	return port_chk32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_DROP_SRP);
 }
 
-static inline int port_chk_color_mark(struct ksz_sw *sw, int p)
+static inline int port_chk_color_mark(struct ksz_sw *sw, uint p)
 {
 	return port_chk32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, COLOR_MARK_ENABLE);
 }
 
-static inline int port_chk_color_remap(struct ksz_sw *sw, int p)
+static inline int port_chk_color_remap(struct ksz_sw *sw, uint p)
 {
 	return port_chk32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, COLOR_REMAP_ENABLE);
 }
 
-static inline int port_chk_port_based_policing(struct ksz_sw *sw, int p)
+static inline int port_chk_port_based_policing(struct ksz_sw *sw, uint p)
 {
 	return port_chk32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, PORT_BASED_POLICING);
 }
 
-static inline int port_chk_police_drop_all(struct ksz_sw *sw, int p)
+static inline int port_chk_police_drop_all(struct ksz_sw *sw, uint p)
 {
 	return port_chk32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_DROP_ALL);
 }
 
-static inline u32 port_get_police_packet_type(struct ksz_sw *sw, int p)
+static inline u32 port_get_police_packet_type(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, POLICE_PACKET_TYPE_M,
 			POLICE_PACKET_TYPE_S);
 }
 
-static inline u32 port_get_non_dscp_color(struct ksz_sw *sw, int p)
+static inline u32 port_get_non_dscp_color(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_MRI_POLICE_CTRL__4, SW_COLOR_M,
 			NON_DSCP_COLOR_S);
 }
 
-static inline u16 port_get_cir(struct ksz_sw *sw, int p)
+static inline u16 port_get_cir(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_POLICE_RATE__4, 0xffff, POLICE_CIR_S);
 }
 
-static inline u16 port_get_pir(struct ksz_sw *sw, int p)
+static inline u16 port_get_pir(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_POLICE_RATE__4, 0xffff, POLICE_PIR_S);
 }
 
-static inline void port_set_cir(struct ksz_sw *sw, int p, u16 rate)
+static inline void port_set_cir(struct ksz_sw *sw, uint p, u16 rate)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_POLICE_RATE__4, 0xffff, POLICE_CIR_S, rate);
 }
 
-static inline void port_set_pir(struct ksz_sw *sw, int p, u16 rate)
+static inline void port_set_pir(struct ksz_sw *sw, uint p, u16 rate)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_POLICE_RATE__4, 0xffff, POLICE_PIR_S, rate);
 }
 
-static inline u16 port_get_cbs(struct ksz_sw *sw, int p)
+static inline u16 port_get_cbs(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_POLICE_BURST_SIZE__4, POLICE_BURST_SIZE_M,
 			POLICE_CBS_S);
 }
 
-static inline u16 port_get_pbs(struct ksz_sw *sw, int p)
+static inline u16 port_get_pbs(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_POLICE_BURST_SIZE__4, POLICE_BURST_SIZE_M,
 			POLICE_PBS_S);
 }
 
-static inline void port_set_cbs(struct ksz_sw *sw, int p, u16 size)
+static inline void port_set_cbs(struct ksz_sw *sw, uint p, u16 size)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_POLICE_BURST_SIZE__4, POLICE_BURST_SIZE_M,
 			POLICE_CBS_S, size);
 }
 
-static inline void port_set_pbs(struct ksz_sw *sw, int p, u16 size)
+static inline void port_set_pbs(struct ksz_sw *sw, uint p, u16 size)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_POLICE_BURST_SIZE__4, POLICE_BURST_SIZE_M,
 			POLICE_PBS_S, size);
 }
 
-static inline u16 port_get_wred_max(struct ksz_sw *sw, int p)
+static inline u16 port_get_wred_max(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_PM_CTRL_0__4, WRED_PM_CTRL_M,
 			WRED_PM_MAX_THRESHOLD_S);
 }
 
-static inline u16 port_get_wred_min(struct ksz_sw *sw, int p)
+static inline u16 port_get_wred_min(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_PM_CTRL_0__4, WRED_PM_CTRL_M,
 			WRED_PM_MIN_THRESHOLD_S);
 }
 
-static inline u16 port_get_wred_multiplier(struct ksz_sw *sw, int p)
+static inline u16 port_get_wred_multiplier(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_PM_CTRL_1__4, WRED_PM_CTRL_M,
 			WRED_PM_MULTIPLIER_S);
 }
 
-static inline u16 port_get_wred_avg_size(struct ksz_sw *sw, int p)
+static inline u16 port_get_wred_avg_size(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_PM_CTRL_1__4, WRED_PM_CTRL_M,
 			WRED_PM_AVG_QUEUE_SIZE_S);
 }
 
-static inline void port_set_wred_max(struct ksz_sw *sw, int p, u16 threshold)
+static inline void port_set_wred_max(struct ksz_sw *sw, uint p, u16 threshold)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_WRED_PM_CTRL_0__4, WRED_PM_CTRL_M,
 			WRED_PM_MAX_THRESHOLD_S, threshold);
 }
 
-static inline void port_set_wred_min(struct ksz_sw *sw, int p, u16 threshold)
+static inline void port_set_wred_min(struct ksz_sw *sw, uint p, u16 threshold)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_WRED_PM_CTRL_0__4, WRED_PM_CTRL_M,
 			WRED_PM_MIN_THRESHOLD_S, threshold);
 }
 
-static inline void port_set_wred_multiplier(struct ksz_sw *sw, int p, u16 val)
+static inline void port_set_wred_multiplier(struct ksz_sw *sw, uint p, u16 val)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_WRED_PM_CTRL_1__4, WRED_PM_CTRL_M,
 			WRED_PM_MULTIPLIER_S, val);
 }
 
-static inline u16 port_get_wred_q_max(struct ksz_sw *sw, int p)
+static inline u16 port_get_wred_q_max(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_QUEUE_CTRL_0__4, WRED_PM_CTRL_M,
 			WRED_PM_MAX_THRESHOLD_S);
 }
 
-static inline u16 port_get_wred_q_min(struct ksz_sw *sw, int p)
+static inline u16 port_get_wred_q_min(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_QUEUE_CTRL_0__4, WRED_PM_CTRL_M,
 			WRED_PM_MIN_THRESHOLD_S);
 }
 
-static inline u16 port_get_wred_q_multiplier(struct ksz_sw *sw, int p)
+static inline u16 port_get_wred_q_multiplier(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_QUEUE_CTRL_1__4, WRED_PM_CTRL_M,
 			WRED_PM_MULTIPLIER_S);
 }
 
-static inline u16 port_get_wred_q_avg_size(struct ksz_sw *sw, int p)
+static inline u16 port_get_wred_q_avg_size(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_QUEUE_CTRL_1__4, WRED_PM_CTRL_M,
 			WRED_PM_AVG_QUEUE_SIZE_S);
 }
 
-static inline void port_set_wred_q_max(struct ksz_sw *sw, int p, u16 threshold)
+static inline void port_set_wred_q_max(struct ksz_sw *sw, uint p, u16 threshold)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_WRED_QUEUE_CTRL_0__4, WRED_PM_CTRL_M,
 			WRED_PM_MAX_THRESHOLD_S, threshold);
 }
 
-static inline void port_set_wred_q_min(struct ksz_sw *sw, int p, u16 threshold)
+static inline void port_set_wred_q_min(struct ksz_sw *sw, uint p, u16 threshold)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_WRED_QUEUE_CTRL_0__4, WRED_PM_CTRL_M,
 			WRED_PM_MIN_THRESHOLD_S, threshold);
 }
 
-static inline void port_set_wred_q_multiplier(struct ksz_sw *sw, int p, u16 val)
+static inline void port_set_wred_q_multiplier(struct ksz_sw *sw, uint p, u16 val)
 {
 	port_w_s_32(sw, p,
 		REG_PORT_WRED_QUEUE_CTRL_1__4, WRED_PM_CTRL_M,
 			WRED_PM_MULTIPLIER_S, val);
 }
 
-static inline void port_cfg_wred_random_drop(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_wred_random_drop(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_RANDOM_DROP_ENABLE, set);
 }
 
-static inline void port_cfg_wred_drop_gyr(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_wred_drop_gyr(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_DROP_GYR_DISABLE, !set);
 }
 
-static inline void port_cfg_wred_drop_yr(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_wred_drop_yr(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_DROP_YR_DISABLE, !set);
 }
 
-static inline void port_cfg_wred_drop_r(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_wred_drop_r(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_DROP_R_DISABLE, !set);
 }
 
-static inline void port_cfg_wred_drop_all(struct ksz_sw *sw, int p, int set)
+static inline void port_cfg_wred_drop_all(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_DROP_ALL, set);
 }
 
-static inline int port_chk_wred_random_drop(struct ksz_sw *sw, int p)
+static inline int port_chk_wred_random_drop(struct ksz_sw *sw, uint p)
 {
 	return port_chk32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_RANDOM_DROP_ENABLE);
 }
 
-static inline int port_chk_wred_drop_gyr(struct ksz_sw *sw, int p)
+static inline int port_chk_wred_drop_gyr(struct ksz_sw *sw, uint p)
 {
 	return !port_chk32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_DROP_GYR_DISABLE);
 }
 
-static inline int port_chk_wred_drop_yr(struct ksz_sw *sw, int p)
+static inline int port_chk_wred_drop_yr(struct ksz_sw *sw, uint p)
 {
 	return !port_chk32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_DROP_YR_DISABLE);
 }
 
-static inline int port_chk_wred_drop_r(struct ksz_sw *sw, int p)
+static inline int port_chk_wred_drop_r(struct ksz_sw *sw, uint p)
 {
 	return !port_chk32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_DROP_R_DISABLE);
 }
 
-static inline int port_chk_wred_drop_all(struct ksz_sw *sw, int p)
+static inline int port_chk_wred_drop_all(struct ksz_sw *sw, uint p)
 {
 	return port_chk32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_DROP_ALL);
 }
 
-static u32 port_get_wred_pmon(struct ksz_sw *sw, int p)
+static u32 port_get_wred_pmon(struct ksz_sw *sw, uint p)
 {
 	return port_r_s_32(sw, p,
 		REG_PORT_WRED_QUEUE_PMON__4, WRED_PMON_M, 0);
@@ -5254,14 +5311,14 @@ static u32 port_get_wred_pmon(struct ksz_sw *sw, int p)
 /* Rate Control */
 
 #ifdef MTI_PREEMPT_ENABLE
-static inline void port_cfg_preempt(struct ksz_sw *sw, int p, int q, int set)
+static inline void port_cfg_preempt(struct ksz_sw *sw, uint p, uint q, bool set)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
 	port_cfg(sw, p,
 		REG_PORT_MTI_QUEUE_CTRL_0, MTI_PREEMPT_ENABLE, set);
 }
 
-static inline int port_chk_preempt(struct ksz_sw *sw, int p, int q)
+static inline int port_chk_preempt(struct ksz_sw *sw, uint p, uint q)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
 	return port_chk(sw, p,
@@ -5269,7 +5326,7 @@ static inline int port_chk_preempt(struct ksz_sw *sw, int p, int q)
 }
 #endif
 
-static inline u8 port_get_schedule_mode(struct ksz_sw *sw, int p, int q)
+static inline u8 port_get_schedule_mode(struct ksz_sw *sw, uint p, uint q)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
 	return port_r_s(sw, p,
@@ -5277,7 +5334,7 @@ static inline u8 port_get_schedule_mode(struct ksz_sw *sw, int p, int q)
 			MTI_SCHEDULE_MODE_S);
 }
 
-static inline u8 port_get_shaping(struct ksz_sw *sw, int p, int q)
+static inline u8 port_get_shaping(struct ksz_sw *sw, uint p, uint q)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
 	return port_r_s(sw, p,
@@ -5285,7 +5342,7 @@ static inline u8 port_get_shaping(struct ksz_sw *sw, int p, int q)
 			MTI_SHAPING_S);
 }
 
-static inline u8 port_get_tx_ratio(struct ksz_sw *sw, int p, int q)
+static inline u8 port_get_tx_ratio(struct ksz_sw *sw, uint p, uint q)
 {
 	u8 data;
 
@@ -5303,7 +5360,7 @@ static inline u8 port_get_tx_ratio(struct ksz_sw *sw, int p, int q)
  *
  * This routine configures the priority queue rate control of the port.
  */
-static inline void port_set_schedule_mode(struct ksz_sw *sw, int p, int q,
+static inline void port_set_schedule_mode(struct ksz_sw *sw, uint p, uint q,
 	u8 mode)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
@@ -5312,7 +5369,7 @@ static inline void port_set_schedule_mode(struct ksz_sw *sw, int p, int q,
 			MTI_SCHEDULE_MODE_S, mode);
 }  /* port_set_schedule_mode */
 
-static inline void port_set_shaping(struct ksz_sw *sw, int p, int q,
+static inline void port_set_shaping(struct ksz_sw *sw, uint p, uint q,
 	u8 shaping)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
@@ -5330,13 +5387,13 @@ static inline void port_set_shaping(struct ksz_sw *sw, int p, int q,
  *
  * This routine configures the priority queue rate ratio of the port.
  */
-static inline void port_set_tx_ratio(struct ksz_sw *sw, int p, int q, u8 ratio)
+static inline void port_set_tx_ratio(struct ksz_sw *sw, uint p, uint q, u8 ratio)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
 	port_w(sw, p, REG_PORT_MTI_QUEUE_CTRL_1, ratio & MTI_TX_RATIO_M);
 }  /* port_set_tx_ratio */
 
-static u16 port_get_hi_water_mark(struct ksz_sw *sw, int p, int q)
+static u16 port_get_hi_water_mark(struct ksz_sw *sw, uint p, uint q)
 {
 	u16 data;
 
@@ -5345,7 +5402,7 @@ static u16 port_get_hi_water_mark(struct ksz_sw *sw, int p, int q)
 	return data;
 }  /* port_get_hi_water_mark */
 
-static u16 port_get_lo_water_mark(struct ksz_sw *sw, int p, int q)
+static u16 port_get_lo_water_mark(struct ksz_sw *sw, uint p, uint q)
 {
 	u16 data;
 
@@ -5354,7 +5411,7 @@ static u16 port_get_lo_water_mark(struct ksz_sw *sw, int p, int q)
 	return data;
 }  /* port_get_lo_water_mark */
 
-static u16 port_get_increment(struct ksz_sw *sw, int p, int q)
+static u16 port_get_increment(struct ksz_sw *sw, uint p, uint q)
 {
 	u16 data;
 
@@ -5363,7 +5420,7 @@ static u16 port_get_increment(struct ksz_sw *sw, int p, int q)
 	return data;
 }  /* port_get_increment */
 
-static u8 port_get_srp(struct ksz_sw *sw, int p)
+static u8 port_get_srp(struct ksz_sw *sw, uint p)
 {
 	u8 data;
 
@@ -5371,56 +5428,52 @@ static u8 port_get_srp(struct ksz_sw *sw, int p)
 	return data & PORT_SRP_ENABLE;
 }  /* port_get_srp */
 
-static void port_set_hi_water_mark(struct ksz_sw *sw, int p, int q, u16 val)
+static void port_set_hi_water_mark(struct ksz_sw *sw, uint p, uint q, u16 val)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
 	port_w16(sw, p, REG_PORT_MTI_QUEUE_CTRL_2__2, val);
 }  /* port_set_hi_water_mark */
 
-static void port_set_lo_water_mark(struct ksz_sw *sw, int p, int q, u16 val)
+static void port_set_lo_water_mark(struct ksz_sw *sw, uint p, uint q, u16 val)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
 	port_w16(sw, p, REG_PORT_MTI_QUEUE_CTRL_3__2, val);
 }  /* port_set_lo_water_mark */
 
-static void port_set_increment(struct ksz_sw *sw, int p, int q, u16 val)
+static void port_set_increment(struct ksz_sw *sw, uint p, uint q, u16 val)
 {
 	port_w32(sw, p, REG_PORT_MTI_QUEUE_INDEX__4, q);
 	port_w16(sw, p, REG_PORT_MTI_QUEUE_CTRL_4__2, val);
 }  /* port_set_increment */
 
-static void port_set_srp(struct ksz_sw *sw, int p, u8 srp)
+static void port_set_srp(struct ksz_sw *sw, uint p, u8 srp)
 {
 	port_w(sw, p, REG_PORT_CTRL_1, srp & PORT_SRP_ENABLE);
 }  /* port_set_srp */
-
-#ifdef CONFIG_KSZ_MRP
-#include "ksz_mrp.c"
-#endif
 
 /* -------------------------------------------------------------------------- */
 
 /* Queue Management */
 
-static inline u8 port_get_qm_drop(struct ksz_sw *sw, int p)
+static inline u8 port_get_qm_drop(struct ksz_sw *sw, uint p)
 {
 	return (u8) port_r_s_32(sw, p, REG_PORT_QM_CTRL__4,
 		PORT_QM_DROP_PRIO_M, 0);
 }
 
-static u8 port_get_qm_burst_size(struct ksz_sw *sw, int p)
+static u8 port_get_qm_burst_size(struct ksz_sw *sw, uint p)
 {
 	return (u8) port_r_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		3, PORT_QM_BURST_SIZE_S);
 }
 
-static u16 port_get_qm_resv_space(struct ksz_sw *sw, int p)
+static u16 port_get_qm_resv_space(struct ksz_sw *sw, uint p)
 {
 	return (u16) port_r_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PORT_QM_MIN_RESV_SPACE_M, 0);
 }
 
-static u16 port_get_qm_hi_water_mark(struct ksz_sw *sw, int p, int q)
+static u16 port_get_qm_hi_water_mark(struct ksz_sw *sw, uint p, uint q)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PRIO_QUEUES_M, PORT_QM_QUEUE_INDEX_S, q);
@@ -5428,7 +5481,7 @@ static u16 port_get_qm_hi_water_mark(struct ksz_sw *sw, int p, int q)
 		PORT_QM_WATER_MARK_M, PORT_QM_HI_WATER_MARK_S);
 }
 
-static u16 port_get_qm_lo_water_mark(struct ksz_sw *sw, int p, int q)
+static u16 port_get_qm_lo_water_mark(struct ksz_sw *sw, uint p, uint q)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PRIO_QUEUES_M, PORT_QM_QUEUE_INDEX_S, q);
@@ -5436,7 +5489,7 @@ static u16 port_get_qm_lo_water_mark(struct ksz_sw *sw, int p, int q)
 		PORT_QM_WATER_MARK_M, PORT_QM_LO_WATER_MARK_S);
 }
 
-static u16 port_get_qm_tx_used(struct ksz_sw *sw, int p, int q)
+static u16 port_get_qm_tx_used(struct ksz_sw *sw, uint p, uint q)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PRIO_QUEUES_M, PORT_QM_QUEUE_INDEX_S, q);
@@ -5444,7 +5497,7 @@ static u16 port_get_qm_tx_used(struct ksz_sw *sw, int p, int q)
 		PORT_QM_TX_CNT_M, PORT_QM_TX_CNT_USED_S);
 }
 
-static u16 port_get_qm_tx_avail(struct ksz_sw *sw, int p, int q)
+static u16 port_get_qm_tx_avail(struct ksz_sw *sw, uint p, uint q)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PRIO_QUEUES_M, PORT_QM_QUEUE_INDEX_S, q);
@@ -5452,7 +5505,7 @@ static u16 port_get_qm_tx_avail(struct ksz_sw *sw, int p, int q)
 		PORT_QM_TX_CNT_M, PORT_QM_TX_CNT_AVAIL_S);
 }
 
-static u16 port_get_qm_tx_calculated(struct ksz_sw *sw, int p, int q)
+static u16 port_get_qm_tx_calculated(struct ksz_sw *sw, uint p, uint q)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PRIO_QUEUES_M, PORT_QM_QUEUE_INDEX_S, q);
@@ -5460,25 +5513,25 @@ static u16 port_get_qm_tx_calculated(struct ksz_sw *sw, int p, int q)
 		PORT_QM_TX_CNT_M, PORT_QM_TX_CNT_CALCULATED_S);
 }
 
-static inline void port_set_qm_drop(struct ksz_sw *sw, int p, u8 drop)
+static inline void port_set_qm_drop(struct ksz_sw *sw, uint p, u8 drop)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_CTRL__4,
 		PORT_QM_DROP_PRIO_M, 0, drop);
 }
 
-static inline void port_set_qm_burst_size(struct ksz_sw *sw, int p, u8 burst)
+static inline void port_set_qm_burst_size(struct ksz_sw *sw, uint p, u8 burst)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		3, PORT_QM_BURST_SIZE_S, burst);
 }
 
-static inline void port_set_qm_resv_space(struct ksz_sw *sw, int p, u16 space)
+static inline void port_set_qm_resv_space(struct ksz_sw *sw, uint p, u16 space)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PORT_QM_MIN_RESV_SPACE_M, 0, space);
 }
 
-static void port_set_qm_hi_water_mark(struct ksz_sw *sw, int p, int q, u16 val)
+static void port_set_qm_hi_water_mark(struct ksz_sw *sw, uint p, uint q, u16 val)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PRIO_QUEUES_M, PORT_QM_QUEUE_INDEX_S, q);
@@ -5486,7 +5539,7 @@ static void port_set_qm_hi_water_mark(struct ksz_sw *sw, int p, int q, u16 val)
 		PORT_QM_WATER_MARK_M, PORT_QM_HI_WATER_MARK_S, val);
 }
 
-static void port_set_qm_lo_water_mark(struct ksz_sw *sw, int p, int q, u16 val)
+static void port_set_qm_lo_water_mark(struct ksz_sw *sw, uint p, uint q, u16 val)
 {
 	port_w_s_32(sw, p, REG_PORT_QM_QUEUE_INDEX__4,
 		PRIO_QUEUES_M, PORT_QM_QUEUE_INDEX_S, q);
@@ -5517,7 +5570,7 @@ static void sw_set_tos_prio(struct ksz_sw *sw, u8 tos, SW_D prio)
  *
  * This routine disables the DiffServ priority function of the switch.
  */
-static void sw_dis_diffserv(struct ksz_sw *sw, int port)
+static void sw_dis_diffserv(struct ksz_sw *sw, uint port)
 {
 	port_cfg_diffserv(sw, port, 0);
 }  /* sw_dis_diffserv */
@@ -5529,7 +5582,7 @@ static void sw_dis_diffserv(struct ksz_sw *sw, int port)
  *
  * This routine enables the DiffServ priority function of the switch.
  */
-static void sw_ena_diffserv(struct ksz_sw *sw, int port)
+static void sw_ena_diffserv(struct ksz_sw *sw, uint port)
 {
 	port_cfg_diffserv(sw, port, 1);
 }  /* sw_ena_diffserv */
@@ -5542,7 +5595,7 @@ static void sw_ena_diffserv(struct ksz_sw *sw, int port)
  * @prio:	Priority to be assigned.
  *
  * This routine configures the TOS priority in the hardware.
- * DiffServ Value 0 ~ 63 is mapped to Priority Queue Number 0 ~ 3.
+ * DiffServ Value 0 ~ 63 is mapped to Priority Queue Number 0 ~ 7.
  * It is called by user functions.  The hardware should be acquired first.
  */
 static void hw_cfg_tos_prio(struct ksz_sw *sw, u8 tos, SW_D prio)
@@ -5597,7 +5650,7 @@ static void sw_set_802_1p_prio(struct ksz_sw *sw, u8 tag, SW_D prio)
  *
  * This routine disables the 802.1p priority function of the switch.
  */
-static void sw_dis_802_1p(struct ksz_sw *sw, int port)
+static void sw_dis_802_1p(struct ksz_sw *sw, uint port)
 {
 	port_cfg_802_1p(sw, port, 0);
 }  /* sw_dis_802_1p */
@@ -5609,7 +5662,7 @@ static void sw_dis_802_1p(struct ksz_sw *sw, int port)
  *
  * This routine enables the 802.1p priority function of the switch.
  */
-static void sw_ena_802_1p(struct ksz_sw *sw, int port)
+static void sw_ena_802_1p(struct ksz_sw *sw, uint port)
 {
 	port_cfg_802_1p(sw, port, 1);
 }  /* sw_ena_802_1p */
@@ -5621,7 +5674,7 @@ static void sw_ena_802_1p(struct ksz_sw *sw, int port)
  * @prio:	Priority to be assigned.
  *
  * This routine configures the 802.1p priority in the hardware.
- * 802.1p Tag priority value 0 ~ 7 is mapped to Priority Queue Number 0 ~ 3.
+ * 802.1p Tag priority value 0 ~ 7 is mapped to Priority Queue Number 0 ~ 7.
  * It is called by user functions.  The hardware should be acquired first.
  */
 static void hw_cfg_802_1p_prio(struct ksz_sw *sw, u8 tag, SW_D prio)
@@ -5664,7 +5717,7 @@ static void hw_cfg_802_1p_prio(struct ksz_sw *sw, u8 tag, SW_D prio)
  * This routine enables the VID to be replaced with port default VID if it is
  * empty.
  */
-static void sw_cfg_replace_null_vid(struct ksz_sw *sw, int p, int set)
+static void sw_cfg_replace_null_vid(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg32(sw, p, REG_PORT_MTI_QUEUE_CTRL_0__4, MTI_PVID_REPLACE, set);
 }  /* sw_cfg_replace_null_vid */
@@ -5680,7 +5733,7 @@ static void sw_cfg_replace_null_vid(struct ksz_sw *sw, int p, int set)
  * tag's priority value if the ingress packet's 802.1p priority has a higher
  * priority than port's default tag's priority.
  */
-static void sw_cfg_replace_prio(struct ksz_sw *sw, int port, int set)
+static void sw_cfg_replace_prio(struct ksz_sw *sw, uint port, bool set)
 {
 	port_cfg_replace_prio(sw, port, set);
 }  /* sw_cfg_replace_prio */
@@ -5695,7 +5748,7 @@ static void sw_cfg_replace_prio(struct ksz_sw *sw, int port, int set)
  *
  * This routine configures the port based priority of the switch.
  */
-static void sw_cfg_port_based(struct ksz_sw *sw, int port, u8 prio)
+static void sw_cfg_port_based(struct ksz_sw *sw, uint port, u8 prio)
 {
 	SW_D data;
 
@@ -5721,7 +5774,7 @@ static void sw_cfg_port_based(struct ksz_sw *sw, int port, u8 prio)
  * This routine enables the transmit multiple queues selection of the switch
  * port.  The port transmit queue is split into two or four priority queues.
  */
-static void sw_set_multi_queue(struct ksz_sw *sw, int port, int queue)
+static void sw_set_multi_queue(struct ksz_sw *sw, uint port, uint queue)
 {
 	port_set_prio_queue(sw, port, queue);
 
@@ -5739,7 +5792,7 @@ static void sw_set_multi_queue(struct ksz_sw *sw, int port, int queue)
  */
 static void sw_init_prio(struct ksz_sw *sw)
 {
-	int port;
+	uint port;
 	int tos;
 	SW_D data;
 	struct ksz_port_cfg *port_cfg;
@@ -5768,12 +5821,12 @@ static void sw_init_prio(struct ksz_sw *sw)
 	}
 }  /* sw_init_prio */
 
-static void port_set_color_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
+static void port_set_color_map(struct ksz_sw *sw, uint port, u8 tos, u32 prio)
 {
 	port_w32(sw, port, REG_PORT_POLICE_COLOR_3__4 - tos * 4, prio);
 }  /* port_set_color_map */
 
-static void port_set_tc_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
+static void port_set_tc_map(struct ksz_sw *sw, uint port, u8 tos, u32 prio)
 {
 	port_w32(sw, port, REG_PORT_MRI_TC_MAP__4 + tos * 4, prio);
 }  /* port_set_color_map */
@@ -5781,15 +5834,12 @@ static void port_set_tc_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
 /**
  * port_cfg_color_map - configure port police color map
  * @sw:		The switch instance.
- * @tos:	ToS value from 6-bit (bit7 ~ bit2) of ToS field, ranging from 0
- *		to 63.
+ * @tos:	ToS value.
  * @prio:	Priority to be assigned.
  *
- * This routine configures the TOS priority in the hardware.
- * DiffServ Value 0 ~ 63 is mapped to Priority Queue Number 0 ~ 3.
- * It is called by user functions.  The hardware should be acquired first.
+ * This routine configures the color map in the hardware.
  */
-static void port_cfg_color_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
+static void port_cfg_color_map(struct ksz_sw *sw, uint port, u8 tos, u32 prio)
 {
 	int shift;
 	u32 data = prio;
@@ -5823,15 +5873,12 @@ static void port_cfg_color_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
 /**
  * port_cfg_tc_map - configure port traffic class map
  * @sw:		The switch instance.
- * @tos:	ToS value from 6-bit (bit7 ~ bit2) of ToS field, ranging from 0
- *		to 63.
+ * @tc:		Traffic class.
  * @prio:	Priority to be assigned.
  *
- * This routine configures the TOS priority in the hardware.
- * DiffServ Value 0 ~ 63 is mapped to Priority Queue Number 0 ~ 3.
- * It is called by user functions.  The hardware should be acquired first.
+ * This routine configures the traffic class mapping in the hardware.
  */
-static void port_cfg_tc_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
+static void port_cfg_tc_map(struct ksz_sw *sw, uint port, u8 tc, u32 prio)
 {
 	int shift;
 	u32 data = prio;
@@ -5839,7 +5886,7 @@ static void port_cfg_tc_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
 	u32 regmask = PORT_TC_MAP_M;
 	struct ksz_port_cfg *port_cfg = &sw->info->port_cfg[port];
 
-	if (tos >= PRIO_802_1P_ENTRIES)
+	if (tc >= PRIO_802_1P_ENTRIES)
 		return;
 
 	if (prio >= 0x10000)
@@ -5856,19 +5903,19 @@ static void port_cfg_tc_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
 		regmask = 0x3333;
 	else if (prio >= 0x10)
 		regmask = 0x33;
-	shift = (tos & (8 - 1)) * PORT_TC_MAP_S;
+	shift = (tc & (8 - 1)) * PORT_TC_MAP_S;
 	prio = prio << shift;
 	if (prio >> shift != data)
 		return;
 	mask <<= shift;
 	regmask <<= shift;
 	prio &= regmask;
-	tos /= 8;
+	tc /= 8;
 
-	port_cfg->tc_map[tos] &= ~mask;
-	port_cfg->tc_map[tos] |= prio;
+	port_cfg->tc_map[tc] &= ~mask;
+	port_cfg->tc_map[tc] |= prio;
 
-	port_set_tc_map(sw, port, tos, port_cfg->tc_map[tos]);
+	port_set_tc_map(sw, port, tc, port_cfg->tc_map[tc]);
 }  /* port_cfg_tc_map */
 
 /**
@@ -5879,8 +5926,8 @@ static void port_cfg_tc_map(struct ksz_sw *sw, int port, u8 tos, u32 prio)
  */
 static void sw_setup_prio(struct ksz_sw *sw)
 {
-	int port;
-	int q;
+	uint port;
+	uint q;
 	struct ksz_port_cfg *cfg;
 
 	/* All QoS functions disabled. */
@@ -5914,7 +5961,7 @@ static void sw_setup_prio(struct ksz_sw *sw)
  *
  * This routine configures the default VID of the port.
  */
-static void port_cfg_def_vid(struct ksz_sw *sw, int port, u16 vid)
+static void port_cfg_def_vid(struct ksz_sw *sw, uint port, u16 vid)
 {
 	port_w16(sw, port, REG_PORT_DEFAULT_VID, vid);
 }  /* port_cfg_def_vid */
@@ -5927,7 +5974,7 @@ static void port_cfg_def_vid(struct ksz_sw *sw, int port, u16 vid)
  *
  * This routine retrieves the default VID of the port.
  */
-static void port_get_def_vid(struct ksz_sw *sw, int port, u16 *vid)
+static void port_get_def_vid(struct ksz_sw *sw, uint port, u16 *vid)
 {
 	port_r16(sw, port, REG_PORT_DEFAULT_VID, vid);
 }  /* port_get_def_vid */
@@ -5940,7 +5987,7 @@ static void port_get_def_vid(struct ksz_sw *sw, int port, u16 *vid)
  *
  * This routine configures the default VID of the port.
  */
-static void sw_cfg_def_vid(struct ksz_sw *sw, int port, u16 vid)
+static void sw_cfg_def_vid(struct ksz_sw *sw, uint port, u16 vid)
 {
 	sw->info->port_cfg[port].vid = vid;
 	port_cfg_def_vid(sw, port, vid);
@@ -5954,7 +6001,7 @@ static void sw_cfg_def_vid(struct ksz_sw *sw, int port, u16 vid)
  *
  * This routine configures the port-based VLAN membership of the port.
  */
-static void sw_cfg_port_base_vlan(struct ksz_sw *sw, int port, u16 member)
+static void sw_cfg_port_base_vlan(struct ksz_sw *sw, uint port, u16 member)
 {
 /*
  * THa  2014/10/08
@@ -6037,7 +6084,7 @@ static void sw_ena_vlan(struct ksz_sw *sw)
  */
 static void sw_init_vlan(struct ksz_sw *sw)
 {
-	int port;
+	uint port;
 	u32 data;
 	struct ksz_sw_info *info = sw->info;
 
@@ -6082,13 +6129,21 @@ static inline void sw_get_addr(struct ksz_sw *sw, u8 *mac_addr)
  */
 static void sw_set_addr(struct ksz_sw *sw, u8 *mac_addr)
 {
+	int i;
+	int n;
 	int p;
 	struct ksz_port_info *info;
 
-	for (p = 0; p < sw->mib_port_cnt; p++) {
-		info = &sw->port_info[p];
+	for (i = 0, p = 0; i < sw->mib_port_cnt; i++) {
+		info = &sw->port_info[i];
+		if (i == sw->HOST_PORT) {
+			n = 0;
+		} else {
+			++p;
+			n = p;
+		}
 #if 1
-		inc_mac_addr(info->mac_addr, mac_addr, p + 1);
+		inc_mac_addr(info->mac_addr, mac_addr, n);
 #else
 		inc_mac_addr(info->mac_addr, mac_addr, 0);
 #endif
@@ -6145,11 +6200,13 @@ static void sw_setup_reserved_multicast(struct ksz_sw *sw)
 		addr[i] = get_mcast_reserved_addr(i);
 
 	sw_r_m_sta_mac_table(sw, addr, 1, 8, table);
-	if (table[0].ports != sw->HOST_MASK || (sw->features & MRP_SUPPORT)) {
+	if (table[6].ports != sw->HOST_MASK || (sw->features & MRP_SUPPORT)) {
 		for (i = 0; i < 8; i++)
 			ctrl[i] = get_mac_table_ctrl(addr[i], true);
+		table[0].override = true;
 		table[0].ports = sw->HOST_MASK;
 		table[1].ports = 0;
+		table[2].override = true;
 		table[2].ports = sw->HOST_MASK;
 		table[3].ports = sw->PORT_MASK;
 		if (sw->features & MRP_SUPPORT) {
@@ -6157,7 +6214,9 @@ static void sw_setup_reserved_multicast(struct ksz_sw *sw)
 			table[4].ports = sw->PORT_MASK;
 			table[5].ports = sw->PORT_MASK;
 #else
+			table[4].override = true;
 			table[4].ports = sw->HOST_MASK;
+			table[5].override = true;
 			table[5].ports = sw->HOST_MASK;
 #endif
 		} else {
@@ -6167,6 +6226,7 @@ static void sw_setup_reserved_multicast(struct ksz_sw *sw)
 #ifdef MRP_PASSTHRU
 		table[6].ports = sw->PORT_MASK;
 #else
+		table[6].override = true;
 		table[6].ports = sw->HOST_MASK;
 #endif
 		table[7].ports = sw->PORT_MASK & ~sw->HOST_MASK;
@@ -6273,6 +6333,10 @@ static void sw_set_xmii(struct ksz_sw *sw, int mode, u8 *data)
 	*data |= xmii;
 }  /* sw_set_xmii */
 
+#ifdef CONFIG_KSZ_MRP
+#include "ksz_mrp.c"
+#endif
+
 #define STP_ENTRY			(MULTI_MAC_TABLE_ENTRIES - 2)
 #define DEV_0_ADDR_ENTRY		0
 #define DEV_1_ADDR_ENTRY		1
@@ -6311,6 +6375,24 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 #if defined(USE_MII_PHY) || defined(USE_RGMII_PHY)
 		phydev->dev_flags |= 2;
 #endif
+		if (sw->net_ops->get_priv_port) {
+			struct ksz_port *sw_port =
+				sw->net_ops->get_priv_port(sw->netdev[0]);
+
+			if (sw_port->flow_ctrl == PHY_NO_FLOW_CTRL) {
+				if (sw->features & IS_9893) {
+					port_cfg_force_flow_ctrl(sw,
+						sw->HOST_PORT, 0);
+				} else {
+					port_r(sw, sw->HOST_PORT,
+						REG_PORT_XMII_CTRL_0, &data);
+					data &= ~(PORT_MII_TX_FLOW_CTRL |
+						  PORT_MII_RX_FLOW_CTRL);
+					port_w(sw, sw->HOST_PORT,
+						REG_PORT_XMII_CTRL_0, data);
+				}
+			}
+		}
 		if ((sw->features & NO_GLOBAL_RESET) ||
 		    (phydev->dev_flags & 1)) {
 			port_r(sw, sw->HOST_PORT, REG_PORT_XMII_CTRL_0, &data);
@@ -6472,12 +6554,15 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
  *
  * This routine configures the spanning tree state of the port.
  */
-static void port_set_stp_state(struct ksz_sw *sw, int port, int state)
+static void port_set_stp_state(struct ksz_sw *sw, uint port, int state)
 {
 	SW_D data;
 	struct ksz_port_cfg *port_cfg;
 	int member = -1;
 
+#if 0
+dbg_msg("%s %d %d\n", __func__, port, state);
+#endif
 	port_cfg = &sw->info->port_cfg[port];
 	port_r(sw, port, P_STP_CTRL, &data);
 	switch (state) {
@@ -6496,7 +6581,7 @@ static void port_set_stp_state(struct ksz_sw *sw, int port, int state)
 		data |= PORT_RX_ENABLE;
 		data |= PORT_LEARN_DISABLE;
 		if (port != sw->HOST_PORT &&
-		    STP_STATE_DISABLED == port_cfg->stp_state)
+		    STP_STATE_DISABLED == port_cfg->stp_state[port_cfg->mstp])
 			member = sw->HOST_MASK | port_cfg->vid_member;
 		break;
 	case STP_STATE_LEARNING:
@@ -6514,8 +6599,8 @@ static void port_set_stp_state(struct ksz_sw *sw, int port, int state)
 		 */
 		if (sw->features & STP_SUPPORT)
 			break;
-		if ((sw->features & (SW_VLAN_DEV | USE_FEWER_PORTS)) &&
-		    port != sw->HOST_PORT)
+		if (((sw->features & (SW_VLAN_DEV | USE_FEWER_PORTS)) ||
+		    sw->dev_offset) && port != sw->HOST_PORT)
 			/* Set port-base vlan membership with host port. */
 			member = sw->HOST_MASK | port_cfg->vid_member;
 		break;
@@ -6527,7 +6612,7 @@ static void port_set_stp_state(struct ksz_sw *sw, int port, int state)
 		data &= ~(PORT_TX_ENABLE | PORT_RX_ENABLE);
 		data |= PORT_LEARN_DISABLE;
 		if (port != sw->HOST_PORT &&
-		    STP_STATE_DISABLED == port_cfg->stp_state)
+		    STP_STATE_DISABLED == port_cfg->stp_state[port_cfg->mstp])
 			member = sw->HOST_MASK | port_cfg->vid_member;
 		break;
 	case STP_STATE_SIMPLE:
@@ -6554,10 +6639,10 @@ static void port_set_stp_state(struct ksz_sw *sw, int port, int state)
 		sw_cfg_port_base_vlan(sw, port, (u8) member);
 }  /* port_set_stp_state */
 
-static void port_open(struct ksz_sw *sw, int p, int open)
+static void port_open(struct ksz_sw *sw, uint p, bool open)
 {
 	int acl_on;
-	int q;
+	uint q;
 	u8 acl_rule;
 	u8 map_mode;
 	u8 member;
@@ -6608,7 +6693,7 @@ static void sw_setup_acl(struct ksz_sw *sw)
 {
 	struct ksz_acl_table *acl;
 	int acl_on;
-	int port;
+	uint port;
 	u8 first_rule;
 	u8 acl_rule;
 
@@ -6695,6 +6780,7 @@ static void sw_clr_sta_mac_table(struct ksz_sw *sw)
 	sw_cfg(sw, S_FLUSH_TABLE_CTRL, SW_FLUSH_STP_TABLE, 1);
 }  /* sw_clr_sta_mac_table */
 
+#ifdef CONFIG_KSZ_STP
 /**
  * sw_setup_stp - setup switch spanning tree support
  * @sw:		The switch instance.
@@ -6727,6 +6813,27 @@ static void sw_setup_stp(struct ksz_sw *sw)
 	sw_w_sta_mac_table(sw, alu->index, alu->type, entry);
 	sw->ops->acquire(sw);
 }  /* sw_setup_stp */
+#endif
+
+static void sw_set_mcast_table(struct ksz_sw *sw, int i, const u8 *addr)
+{
+	struct ksz_mac_table *entry;
+	struct ksz_alu_table *alu;
+
+	entry = &sw->info->mac_table[i];
+	alu = &sw->info->alu_table[i];
+	memcpy(entry->addr, addr, ETH_ALEN);
+	entry->fid = 0;
+	entry->ports = sw->PORT_MASK;
+	entry->valid = 1;
+	alu = &sw->info->alu_table[i];
+	alu->forward = FWD_MAIN_DEV | FWD_MCAST | FWD_KNOWN;
+	alu->owner = 1;
+	alu->valid = 1;
+	alu->index = 0;
+	alu->type = 2;
+	sw_w_dyn_mac_table(sw, 0, entry->addr, entry->fid, entry);
+}  /* sw_set_mcast_table */
 
 #ifdef CONFIG_1588_PTP
 static void sw_setup_ptp(struct ksz_sw *sw)
@@ -6835,15 +6942,48 @@ static void sw_setup_ptp(struct ksz_sw *sw)
 }
 #endif
 
+static const u8 ipv6_neigh_mcast[] = {
+	0x33, 0x33, 0xFF,
+};
+
+static const u8 known_mcast_addr[][ETH_ALEN] = {
+	/* IGMP V2 */
+	{ 0x01, 0x00, 0x5E, 0x00, 0x00, 0x01 },
+	{ 0x33, 0x33, 0x00, 0x00, 0x00, 0x01 },
+	{ 0x01, 0x00, 0x5E, 0x00, 0x00, 0x02 },
+
+	/* ICMPv6 */
+	{ 0x33, 0x33, 0x00, 0x00, 0x00, 0x02 },
+
+	/* IGMP V3 */
+	{ 0x01, 0x00, 0x5E, 0x00, 0x00, 0x16 },
+	{ 0x33, 0x33, 0x00, 0x00, 0x00, 0x16 },
+
+	{ 0x01, 0x00, 0x5E, 0x00, 0x00, 0xFB },
+	{ 0x33, 0x33, 0x00, 0x00, 0x00, 0xFB },
+
+	/* Link-Local Multicast Name Resolution */
+	{ 0x01, 0x00, 0x5E, 0x00, 0x00, 0xFC },
+	{ 0x33, 0x33, 0x00, 0x01, 0x00, 0x03 },
+
+	/* Simple Service Discovery Protocol */
+	{ 0x01, 0x00, 0x5E, 0x7F, 0xFF, 0xFA },
+	{ 0x33, 0x33, 0x00, 0x00, 0x00, 0x0C },
+
+	{ 0x33, 0x33, 0x00, 0x01, 0x00, 0x02 },
+};
+
 static void sw_setup_multi(struct ksz_sw *sw)
 {
 	struct ksz_mac_table *entry;
 	struct ksz_alu_table *alu;
 	int i;
+	int n;
 	u8 forward;
 	u8 addr[ETH_ALEN];
 	struct ksz_sw_info *info = sw->info;
 
+	sw->ops->release(sw);
 	i = info->multi_sys;
 	forward = FWD_HOST;
 
@@ -6857,8 +6997,9 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry = &info->mac_table[--i];
 	memset(entry->addr, 0xFF, ETH_ALEN);
 	entry->ports = sw->PORT_MASK;
+	entry->fid = 0;
 	alu = &info->alu_table[i];
-	alu->forward = FWD_MAIN_DEV | FWD_MCAST;
+	alu->forward = FWD_MAIN_DEV | FWD_MCAST | FWD_KNOWN;
 	alu->owner = sw->PORT_MASK;
 	alu->valid = 1;
 	alu->index = 0;
@@ -6871,6 +7012,19 @@ static void sw_setup_multi(struct ksz_sw *sw)
 #endif
 
 	i = STP_ENTRY;
+
+#if 1
+	entry = &info->mac_table[--i];
+	memcpy(entry->addr, addr, ETH_ALEN);
+	entry->addr[5] = 0x01;
+	entry->ports = sw->HOST_MASK;
+	alu = &info->alu_table[i];
+	alu->forward = forward;
+	alu->owner = 1;
+	alu->valid = 1;
+	alu->index = 0;
+	alu->type = 1;
+#endif
 
 	entry = &info->mac_table[--i];
 	memcpy(entry->addr, addr, ETH_ALEN);
@@ -7055,97 +7209,25 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	alu->type = 1;
 
 	forward = FWD_MAIN_DEV;
-	forward |= FWD_MCAST;
-
-	/* Used for V2 IGMP messages. */
-	entry = &info->mac_table[--i];
-	entry->addr[0] = 0x01;
-	entry->addr[1] = 0x00;
-	entry->addr[2] = 0x5E;
-	entry->addr[3] = 0x00;
-	entry->addr[4] = 0x00;
-	entry->addr[5] = 0x01;
-	entry->ports = sw->PORT_MASK;
-	alu = &info->alu_table[i];
-	alu->forward = forward;
-	alu->owner = 1;
-	alu->valid = 1;
-	alu->index = 0;
-	alu->type = 2;
-	entry = &info->mac_table[--i];
-	entry->addr[0] = 0x33;
-	entry->addr[1] = 0x33;
-	entry->addr[2] = 0x00;
-	entry->addr[3] = 0x00;
-	entry->addr[4] = 0x00;
-	entry->addr[5] = 0x01;
-	entry->ports = sw->PORT_MASK;
-	alu = &info->alu_table[i];
-	alu->forward = forward;
-	alu->owner = 1;
-	alu->valid = 1;
-	alu->index = 0;
-	alu->type = 2;
+	forward |= FWD_MCAST | FWD_KNOWN;
 
 	entry = &info->mac_table[--i];
-	entry->addr[0] = 0x01;
-	entry->addr[1] = 0x00;
-	entry->addr[2] = 0x5E;
-	entry->addr[3] = 0x00;
-	entry->addr[4] = 0x00;
-	entry->addr[5] = 0x02;
+	memcpy(entry->addr, addr, ETH_ALEN);
+	entry->addr[5] = 0x10;
 	entry->ports = sw->PORT_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
 	alu->owner = 1;
 	alu->valid = 1;
 	alu->index = 0;
-	alu->type = 2;
-	entry = &info->mac_table[--i];
-	entry->addr[0] = 0x33;
-	entry->addr[1] = 0x33;
-	entry->addr[2] = 0x00;
-	entry->addr[3] = 0x00;
-	entry->addr[4] = 0x00;
-	entry->addr[5] = 0x02;
-	entry->ports = sw->PORT_MASK;
-	alu = &info->alu_table[i];
-	alu->forward = forward;
-	alu->owner = 1;
-	alu->valid = 1;
-	alu->index = 0;
-	alu->type = 2;
+	alu->type = 1;
 
-	/* Used for V3 IGMP messages. */
-	entry = &info->mac_table[--i];
-	entry->addr[0] = 0x01;
-	entry->addr[1] = 0x00;
-	entry->addr[2] = 0x5E;
-	entry->addr[3] = 0x00;
-	entry->addr[4] = 0x00;
-	entry->addr[5] = 0x16;
-	entry->ports = sw->PORT_MASK;
-	alu = &info->alu_table[i];
-	alu->forward = forward;
-	alu->owner = 1;
-	alu->valid = 1;
-	alu->index = 0;
-	alu->type = 2;
-	entry = &info->mac_table[--i];
-	entry->addr[0] = 0x33;
-	entry->addr[1] = 0x33;
-	entry->addr[2] = 0x00;
-	entry->addr[3] = 0x00;
-	entry->addr[4] = 0x00;
-	entry->addr[5] = 0x16;
-	entry->ports = sw->PORT_MASK;
-	alu = &info->alu_table[i];
-	alu->forward = forward;
-	alu->owner = 1;
-	alu->valid = 1;
-	alu->index = 0;
-	alu->type = 2;
+	for (n = 0; n < 13; n++) {
+		--i;
+		sw_set_mcast_table(sw, i, known_mcast_addr[n]);
+	}
 
+	sw->ops->acquire(sw);
 	info->multi_sys = i;
 }  /* sw_setup_multi */
 
@@ -7153,7 +7235,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 static void bridge_change(struct ksz_sw *sw)
 {
 	int i;
-	int port;
+	uint port;
 	u8 m;
 	u8 member;
 	struct ksz_sw_info *info = sw->info;
@@ -7185,7 +7267,7 @@ static int sw_match_multi(struct ksz_sw *sw, struct ksz_port *priv, u8 *addr)
 	struct ksz_alu_table *alu;
 	int i;
 	int owner;
-	int port = 0;
+	uint port = 0;
 	struct ksz_sw_info *info = sw->info;
 
 	if (priv->port_cnt != sw->port_cnt)
@@ -7217,7 +7299,7 @@ static void sw_set_multi(struct ksz_sw *sw, struct net_device *dev,
 	int i;
 	int found;
 	int owner;
-	int port = 0;
+	uint port = 0;
 	struct ksz_sw_info *info = sw->info;
 
 	if (priv->port_cnt != sw->port_cnt)
@@ -7289,7 +7371,7 @@ static void sw_reset_multi(struct ksz_sw *sw, struct ksz_port *priv)
 	struct ksz_alu_table *alu;
 	int i;
 	int owner;
-	int port = 0;
+	uint port = 0;
 	struct ksz_sw_info *info = sw->info;
 
 	if (priv->port_cnt != sw->port_cnt)
@@ -7458,7 +7540,7 @@ static u8 sw_determine_flow_ctrl(struct ksz_sw *sw, struct ksz_port *port,
 }  /* sw_determine_flow_ctrl */
 
 #if 0
-static void port_reset_phy(struct ksz_sw *sw, int p)
+static void port_reset_phy(struct ksz_sw *sw, uint p)
 {
 	u32 ctrl;
 	u32 data;
@@ -7481,7 +7563,7 @@ dbg_msg("%s %08x %08x\n", __func__, data, ctrl);
 }  /* port_reset_phy */
 #endif
 
-static void port_sgmii_r(struct ksz_sw *sw, int port, u16 devid, u16 reg,
+static void port_sgmii_r(struct ksz_sw *sw, uint port, u16 devid, u16 reg,
 	u16 *buf, u16 len)
 {
 	u32 data;
@@ -7499,7 +7581,7 @@ static void port_sgmii_r(struct ksz_sw *sw, int port, u16 devid, u16 reg,
 	}
 }  /* port_sgmii_r */
 
-static void port_sgmii_w(struct ksz_sw *sw, int port, u16 devid, u16 reg,
+static void port_sgmii_w(struct ksz_sw *sw, uint port, u16 devid, u16 reg,
 	u16 *buf, u16 len)
 {
 	u32 data;
@@ -7517,7 +7599,7 @@ static void port_sgmii_w(struct ksz_sw *sw, int port, u16 devid, u16 reg,
 	}
 }  /* port_sgmii_w */
 
-static u16 port_sgmii_phy_r(struct ksz_sw *sw, int port, u16 reg)
+static u16 port_sgmii_phy_r(struct ksz_sw *sw, uint port, u16 reg)
 {
 	u16 buf;
 
@@ -7537,7 +7619,7 @@ static u16 port_sgmii_phy_r(struct ksz_sw *sw, int port, u16 reg)
 	return buf;
 }  /* port_sgmii_phy_r */
 
-static void port_sgmii_phy_w(struct ksz_sw *sw, int port, u16 reg, u16 val)
+static void port_sgmii_phy_w(struct ksz_sw *sw, uint port, u16 reg, u16 val)
 {
 	u16 buf;
 
@@ -7557,7 +7639,7 @@ static void port_sgmii_phy_w(struct ksz_sw *sw, int port, u16 reg, u16 val)
 	} while (buf & SR_MII_PHY_START_BUSY);
 }  /* port_sgmii_phy_w */
 
-static int port_sgmii_detect(struct ksz_sw *sw, int p)
+static int port_sgmii_detect(struct ksz_sw *sw, uint p)
 {
 	u16 buf[6];
 	int ret = 0;
@@ -7584,7 +7666,7 @@ buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 	return ret;
 }  /* port_sgmii_detect */
 
-static void port_sgmii_setup(struct ksz_sw *sw, int p, int master,
+static void port_sgmii_setup(struct ksz_sw *sw, uint p, bool master,
 	int speed, int duplex)
 {
 	u16 cfg;
@@ -7634,7 +7716,7 @@ dbg_msg("ADV: %04x\n", adv);
 	port_sgmii_w(sw, p, SR_MII, MMD_SR_MII_AUTO_NEGOTIATION, &adv, 1);
 }  /* port_sgmii_setup */
 
-static int port_get_sgmii_speed(struct ksz_port *port, int p)
+static int port_get_sgmii_speed(struct ksz_port *port, uint p)
 {
 	u16 data;
 	u16 speed;
@@ -7714,7 +7796,8 @@ buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 			state->link_down = 1;
 
 			/* For 802.1X Authentication. */
-			if (sw->on_ports & (1 << p))
+			if ((sw->overrides & USE_802_1X_AUTH) &&
+			    (sw->on_ports & (1 << p)))
 				port_open(sw, p, false);
 		}
 		info->state = media_disconnected;
@@ -7723,7 +7806,7 @@ buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 	return change;
 }  /* port_get_sgmii_speed */
 
-static void port_set_sgmii_speed(struct ksz_port *port, int p)
+static void port_set_sgmii_speed(struct ksz_port *port, uint p)
 {
 	u16 ctrl;
 	u16 cfg;
@@ -7786,11 +7869,6 @@ static int port_get_link_speed(struct ksz_port *port)
 	int i;
 	int p;
 	int change = 0;
-	int use_iba = 0;
-
-#ifdef CONFIG_KSZ_IBA
-	use_iba = sw->info->iba.use_iba;
-#endif
 
 	for (i = 0, p = port->first_port; i < port->port_cnt; i++, p++) {
 		info = &sw->port_info[p];
@@ -7819,7 +7897,7 @@ static int port_get_link_speed(struct ksz_port *port)
 			int update = port_get_sgmii_speed(port, p);
 
 			if (update)
-				change |= (1 << i);
+				change |= (1 << p);
 
 			/* Remember the first linked port. */
 			if (!linked && p != sw->HOST_PORT &&
@@ -7828,7 +7906,8 @@ static int port_get_link_speed(struct ksz_port *port)
 			goto get_cont3;
 		}
 
-		if ((sw->overrides & BAD_SPI) && !use_iba) {
+#ifdef NO_PHY_READ
+		if (sw) {
 			link = PORT_LINK_STATUS;
 			dbg_link = link;
 			status = PORT_STAT_SPEED_100MBIT |
@@ -7837,7 +7916,12 @@ static int port_get_link_speed(struct ksz_port *port)
 			remote = 0x10001000;
 			goto get_cont1;
 		}
-		port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &data);
+#endif
+
+		if (sw->features & GIGABIT_SUPPORT)
+			port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &data);
+		else
+			data = 0;
 		local = data;
 		local <<= 16;
 		port_r16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION, &data);
@@ -7863,7 +7947,10 @@ static int port_get_link_speed(struct ksz_port *port)
 		     PORT_STAT_SPEED_100MBIT |
 		     PORT_STAT_SPEED_10MBIT))))
 			link |= PORT_LINK_STATUS;
+
+#ifdef NO_PHY_READ
 get_cont1:
+#endif
 		/*
 		 * The partner capability register is updated but the
 		 * auto-negotiation is not completed yet.
@@ -7910,8 +7997,6 @@ dbg_msg(" link? %d=%04x\n", p, dbg_link);
 			if (media_connected != info->state) {
 				SW_D flow_ctrl;
 
-				if ((sw->overrides & BAD_SPI) && !use_iba)
-					goto get_cont2;
 				port_r(sw, p, REG_PORT_STATUS_0, &flow_ctrl);
 #ifdef DBG_LINK
 				printk(KERN_INFO "flow_ctrl: "SW_SIZE_STR"\n",
@@ -7927,21 +8012,21 @@ dbg_msg(" link? %d=%04x\n", p, dbg_link);
 				if (sw->info)
 					port_cfg_back_pressure(sw, p,
 						(1 == info->duplex));
-get_cont2:
-				change |= 1 << i;
+				change |= 1 << p;
 			} else if (link != info->link)
-				change |= 1 << i;
+				change |= 1 << p;
 			info->state = media_connected;
 			state->tx_rate = info->tx_rate;
 		} else {
 			if (media_disconnected != info->state) {
-				change |= 1 << i;
+				change |= 1 << p;
 
 				/* Indicate the link just goes down. */
 				state->link_down = 1;
 
 				/* For 802.1X Authentication. */
-				if (sw->on_ports & (1 << p))
+				if ((sw->overrides & USE_802_1X_AUTH) &&
+				    (sw->on_ports & (1 << p)))
 					port_open(sw, p, false);
 			}
 			info->state = media_disconnected;
@@ -7952,32 +8037,6 @@ get_cont2:
 		info->link = link;
 
 get_cont3:
-#ifdef CONFIG_1588_PTP
-		if (sw->features & PTP_HW) {
-			struct ptp_info *ptp = &sw->ptp_hw;
-
-			if (media_disconnected == info->state)
-				ptp->linked[p] = 0;
-			else {
-				ptp->linked[p] = info->tx_rate / TX_RATE_UNIT;
-				ptp->linked[p] |= 0x80000000;
-			}
-		}
-#endif
-#ifdef CONFIG_KSZ_MSRP
-		if (sw->features & MRP_SUPPORT) {
-			u32 speed;
-			struct mrp_info *mrp = &sw->mrp;
-
-			if (media_disconnected == info->state)
-				speed = 0;
-			else
-				speed = info->tx_rate / TX_RATE_UNIT;
-			p = sw_get_net_port(sw, 0, mrp->ports, p) - 1;
-			if (p <= mrp->ports)
-				mrp_set_speed(mrp, p, speed);
-		}
-#endif
 		if (media_disconnected == info->state)
 			sw->live_ports &= ~(1 << p);
 		else
@@ -7988,20 +8047,14 @@ get_cont3:
 	if (linked && media_disconnected == port->linked->state)
 		port->linked = linked;
 
-#ifdef CONFIG_1588_PTP
-	if ((sw->features & PTP_HW) && change) {
-		struct ptp_info *ptp = &sw->ptp_hw;
-
-		if (ptp->started)
-			schedule_work(&ptp->set_latency);
-	}
-#endif
 #ifdef DBG_LINK
 	if (change)
 		dbp_link(port, sw, change);
 #endif
-	if (change)
+	if (change) {
+		sw->link_ports |= change;
 		schedule_work(&port->link_update);
+	}
 	return change;
 }  /* port_get_link_speed */
 
@@ -8023,13 +8076,7 @@ static void port_set_link_speed(struct ksz_port *port)
 	u32 cfg;
 	int i;
 	int p;
-	int use_iba = 0;
 
-#ifdef CONFIG_KSZ_IBA
-	use_iba = sw->info->iba.use_iba;
-#endif
-	if ((sw->overrides & BAD_SPI) && !use_iba)
-		return;
 	for (i = 0, p = port->first_port; i < port->port_cnt; i++, p++) {
 		info = &sw->port_info[p];
 
@@ -8050,7 +8097,10 @@ static void port_set_link_speed(struct ksz_port *port)
 			continue;
 		}
 
-		port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
+		if (sw->features & GIGABIT_SUPPORT)
+			port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
+		else
+			ctrl = 0;
 		port_r16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION, &local);
 		if (!(local & PORT_AUTO_NEG_SYM_PAUSE) &&
 		    (PHY_FLOW_CTRL == port->flow_ctrl ||
@@ -8087,7 +8137,8 @@ static void port_set_link_speed(struct ksz_port *port)
 
 		local = port_advertised_flow_ctrl(port, local);
 
-		ctrl |= PORT_AUTO_NEG_1000BT_FD | PORT_AUTO_NEG_1000BT;
+		if (sw->features & GIGABIT_SUPPORT)
+			ctrl |= PORT_AUTO_NEG_1000BT_FD | PORT_AUTO_NEG_1000BT;
 		local |= PORT_AUTO_NEG_100BTX_FD | PORT_AUTO_NEG_100BTX |
 			PORT_AUTO_NEG_10BT_FD | PORT_AUTO_NEG_10BT;
 
@@ -8121,7 +8172,8 @@ static void port_set_link_speed(struct ksz_port *port)
 		adv <<= 16;
 		adv |= local;
 		if (adv != cfg) {
-			port_w16(sw, p, REG_PORT_PHY_1000_CTRL, ctrl);
+			if (sw->features & GIGABIT_SUPPORT)
+				port_w16(sw, p, REG_PORT_PHY_1000_CTRL, ctrl);
 			port_w16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION, local);
 			port_r16(sw, p, P_NEG_RESTART_CTRL, &data);
 			data |= PORT_AUTO_NEG_ENABLE;
@@ -8148,13 +8200,7 @@ static void port_force_link_speed(struct ksz_port *port)
 	u16 data;
 	int i;
 	int p;
-	int use_iba = 0;
 
-#ifdef CONFIG_KSZ_IBA
-	use_iba = sw->info->iba.use_iba;
-#endif
-	if ((sw->overrides & BAD_SPI) && !use_iba)
-		return;
 	for (i = 0, p = port->first_port; i < port->port_cnt; i++, p++) {
 		info = &sw->port_info[p];
 
@@ -8190,7 +8236,7 @@ static void port_force_link_speed(struct ksz_port *port)
 	}
 }  /* port_force_link_speed */
 
-static void port_mmd_read(struct ksz_sw *sw, int port, u16 devid, u16 reg,
+static void port_mmd_read(struct ksz_sw *sw, uint port, u16 devid, u16 reg,
 	u16 *buf, u16 len)
 {
 	port_w16(sw, port, REG_PORT_PHY_MMD_SETUP,
@@ -8209,7 +8255,7 @@ static void port_mmd_read(struct ksz_sw *sw, int port, u16 devid, u16 reg,
 	}
 }  /* port_mmd_read */
 
-static void port_mmd_write(struct ksz_sw *sw, int port, u16 devid, u16 reg,
+static void port_mmd_write(struct ksz_sw *sw, uint port, u16 devid, u16 reg,
 	u16 *buf, u16 len)
 {
 	port_w16(sw, port, REG_PORT_PHY_MMD_SETUP,
@@ -8228,10 +8274,11 @@ static void port_mmd_write(struct ksz_sw *sw, int port, u16 devid, u16 reg,
 	}
 }  /* port_mmd_write */
 
-static void port_chk_sqi(struct ksz_sw *sw, int port)
+static void port_chk_sqi(struct ksz_sw *sw, uint port)
 {
 	u16 sqi[4];
 	int val;
+	int val2;
 	int i;
 	int n;
 	int cnt = 10;
@@ -8245,14 +8292,16 @@ static void port_chk_sqi(struct ksz_sw *sw, int port)
 	for (n = 0; n < cnt; n++) {
 		port_mmd_read(sw, port, MMD_DEVICE_ID_DSP, MMD_DSP_SQI_CHAN_A,
 			sqi, num);
+		val2 = 0;
 		for (i = 0; i < num; i++) {
 			if (sqi[i] & DSP_SQI_ERR_DETECTED)
 dbg_msg(" ?? %s %d %04x\n", __func__, i, sqi[i]);
 			if (sqi[i] & DSP_SQI_ERR_DETECTED)
 				break;
-			val += sqi[i] & DSP_SQI_AVG_ERR;
+			val2 += sqi[i] & DSP_SQI_AVG_ERR;
 		}
-		val /= num;
+		val2 /= num;
+		val += val2;
 	}
 	val /= cnt;
 	val >>= 8;
@@ -8269,6 +8318,7 @@ struct ksz_phy_settings {
 };
 
 static struct ksz_phy_settings ksz9893_phy_settings[] = {
+#if 0
 	{ MMD_DEVICE_ID_AFED, 0x3a, 0x5744 },
 	{ MMD_DEVICE_ID_AFED, 0x04, 0x00c0 },
 	{ MMD_DEVICE_ID_AFED, 0x06, 0x2000 },
@@ -8285,9 +8335,12 @@ static struct ksz_phy_settings ksz9893_phy_settings[] = {
 	{ MMD_DEVICE_ID_DSP, 0xcc, 0x6010 },
 
 	{ MMD_DEVICE_ID_COMMON, 0x46, 0x10f8 },
+#else
+	{ MMD_DEVICE_ID_DSP, 0xa0, 0x3fff },
+#endif
 };
 
-static void port_setup_eee(struct ksz_sw *sw, int port)
+static void port_setup_eee(struct ksz_sw *sw, uint port)
 {
 	u16 val[0x20];
 
@@ -8440,13 +8493,15 @@ dbg_msg("\n");
 	}
 }  /* port_setup_eee */
 
-static void port_setup_9893(struct ksz_sw *sw, int port)
+static void port_setup_9893(struct ksz_sw *sw, uint port)
 {
 	u16 val[1];
 	int i;
 	struct ksz_phy_settings *set;
 
+#if 0
 	port_w16(sw, port, REG_PORT_PHY_CTRL, 0x2100);
+#endif
 
 	for (i = 0; i < sizeof(ksz9893_phy_settings) /
 	     sizeof(struct ksz_phy_settings); i++) {
@@ -8455,6 +8510,7 @@ static void port_setup_9893(struct ksz_sw *sw, int port)
 		port_mmd_write(sw, port, set->mmd, set->reg, val, 1);
 	}
 
+#if 0
 	if (port == sw->HOST_PORT)
 		port_w16(sw, port, REG_PORT_PHY_CTRL, 0x1140);
 	else {
@@ -8462,6 +8518,7 @@ static void port_setup_9893(struct ksz_sw *sw, int port)
 		port_w16(sw, port, REG_PORT_PHY_CTRL, 0x0140);
 		sw->info->port_cfg[port].setup_time = 4000;
 	}
+#endif
 }  /* port_setup_9893 */
 
 /**
@@ -8472,7 +8529,7 @@ static void port_setup_9893(struct ksz_sw *sw, int port)
  */
 static void sw_enable(struct ksz_sw *sw)
 {
-	int port;
+	uint port;
 	int state = STP_STATE_FORWARDING;
 
 	if (sw->features & (DSA_SUPPORT))
@@ -8489,7 +8546,7 @@ static void sw_enable(struct ksz_sw *sw)
 		}
 		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
 	}
-	if (sw->dev_count > 1 ||
+	if ((sw->dev_count > 1 && !sw->dev_offset) ||
 	    (sw->features & (STP_SUPPORT | DSA_SUPPORT))) {
 		u16 member;
 
@@ -8535,7 +8592,7 @@ static void sw_enable(struct ksz_sw *sw)
 		else
 			port_set_stp_state(sw, port, state);
 	}
-	if (sw->dev_count > 1 && sw->eth_cnt < 2)
+	if (sw->dev_count > 1 && !sw->dev_offset && sw->eth_cnt < 2)
 		port_set_stp_state(sw, sw->HOST_PORT, STP_STATE_SIMPLE);
 	else
 		port_set_stp_state(sw, sw->HOST_PORT, state);
@@ -8596,7 +8653,7 @@ static void sw_init(struct ksz_sw *sw)
  */
 static void sw_setup(struct ksz_sw *sw)
 {
-	int port;
+	uint port;
 
 	/* Starting from stopped state will flush the ACL table. */
 	sw_cfg(sw, REG_SW_OPERATION, SW_START, 1);
@@ -8617,6 +8674,12 @@ static void sw_setup(struct ksz_sw *sw)
 	if (!(sw->features & NEW_CAP))
 #endif
 		sw_cfg(sw, REG_SW_MAC_CTRL_1, SW_LEGAL_PACKET_DISABLE, 1);
+	if (sw->features & IS_9893) {
+		sw_cfg(sw, REG_SW_MAC_CTRL_0, SW_CHECK_LENGTH, 0);
+		sw->reg->w16(sw, REG_AVB_STRATEGY__2,
+			SW_SHAPING_CREDIT_ACCT |
+			SW_POLICING_CREDIT_ACCT);
+	}
 
 	for (port = 0; port < sw->mib_port_cnt; port++) {
 		port = chk_last_port(sw, port);
@@ -8624,8 +8687,6 @@ static void sw_setup(struct ksz_sw *sw)
 		port_cfg_back_pressure(sw, port, 1);
 		if (port < sw->phy_port_cnt)
 			port_cfg_force_flow_ctrl(sw, port, 0);
-		else
-			port_cfg_force_flow_ctrl(sw, port, 1);
 #ifndef CONFIG_KSZ_DLR
 		if (!(sw->features & ACL_CORRUPT_BUG))
 #endif
@@ -8799,8 +8860,8 @@ static void sw_reset(struct ksz_sw *sw)
 	sw->overrides &= ~VLAN_SET;
 	sw_reset_setup(sw);
 	if (sw->features & NEW_CAP) {
-		int p;
-		int q;
+		uint p;
+		uint q;
 		u8 byte_before;
 		u8 byte_after;
 
@@ -9053,7 +9114,8 @@ static void sw_set_ops(struct work_struct *work)
 		schedule_delayed_work(&sw->set_ops, 1);
 		return;
 	}
-	if (sw->HOST_PORT < sw->phy_port_cnt && !netif_carrier_ok(iba->dev)) {
+	if (sw->HOST_PORT < sw->phy_port_cnt &&
+	    sw->port_info[sw->HOST_PORT].state != media_connected) {
 		schedule_delayed_work(&sw->set_ops, 1);
 		return;
 	}
@@ -9115,7 +9177,7 @@ printk(KERN_INFO "Using IBA\n");
  * actual interrupt is triggered by plugging in or out the cable.
  */
 	if (!(sw->features & NEW_CAP)) {
-		int port;
+		uint port;
 		u8 val = LINK_DOWN_INT | LINK_UP_INT;
 
 		sw->ops->acquire(sw);
@@ -9231,7 +9293,7 @@ enum {
  *
  * This routine is used to get the LinkMD status.
  */
-static void sw_get_link_md(struct ksz_sw *sw, int port)
+static void sw_get_link_md(struct ksz_sw *sw, uint port)
 {
 	u16 ctrl;
 	u16 data;
@@ -9371,7 +9433,7 @@ static void get_sw_mib_counters(struct ksz_sw *sw, int first, int cnt,
 {
 	int i;
 	int mib;
-	int port;
+	uint port;
 	struct ksz_port_mib *port_mib;
 
 	memset(counter, 0, sizeof(u64) * TOTAL_SWITCH_COUNTER_NUM);
@@ -9903,7 +9965,7 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 		break;
 	case PROC_GET_PORTS:
 	{
-		int ports = sw->mib_port_cnt;
+		uint ports = sw->mib_port_cnt;
 
 #if 0
 		if (sw->eth_cnt > 1)
@@ -9971,6 +10033,8 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 			SW_VLAN_DEV);
 		len += sprintf(buf + len, "\t%08x = MRP support\n",
 			MRP_SUPPORT);
+		len += sprintf(buf + len, "\t%08x = Gigabit support\n",
+			GIGABIT_SUPPORT);
 		len += sprintf(buf + len, "\t%08x = IBA support\n",
 			IBA_SUPPORT);
 		len += sprintf(buf + len, "\t%08x = new capabilities\n",
@@ -10008,6 +10072,8 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 			FAST_AGING);
 		len += sprintf(buf + len, "\t%08x = have >2 ports\n",
 			HAVE_MORE_THAN_2_PORTS);
+		len += sprintf(buf + len, "\t%08x = unknown mcast blocked\n",
+			UNK_MCAST_BLOCK);
 #ifdef CONFIG_KSZ_IBA
 		len += sprintf(buf + len, "\t%08x = IBA test\n",
 			IBA_TEST);
@@ -10255,6 +10321,8 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 	case PROC_SET_SW_SPEED:
 		if (!port)
 			break;
+		if (!(sw->features & GIGABIT_SUPPORT) && num == 1000)
+			break;
 		if (0 == num || 10 == num || 100 == num || 1000 == num)
 			port->speed = (u16) num;
 		break;
@@ -10277,6 +10345,10 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 			port->flow_ctrl = (u8) num;
 		break;
 	case PROC_SET_SW_MIB:
+		if (num >= 1 && num <= 2) {
+			sw_freeze_mib(sw, num - 1);
+			break;
+		}
 		for (count = 0; count < sw->mib_port_cnt; count++) {
 			struct ksz_port_mib *mib;
 
@@ -10318,7 +10390,7 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 			struct ksz_acl_table *acl;
 			int acl_on;
 			int acl_rule;
-			int port;
+			uint port;
 
 			for (port = 0; port < sw->mib_port_cnt; port++) {
 				if (port == sw->HOST_PORT)
@@ -10492,6 +10564,14 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 	case PROC_SET_FORWARD_UNKNOWN_MULTICAST:
 		sw_cfg(sw, REG_SW_LUE_UNK_MCAST_CTRL__4,
 			SW_UNK_MCAST_ENABLE >> 24, num);
+		if (num) {
+			val = sw->reg->r32(sw, REG_SW_LUE_UNK_MCAST_CTRL__4);
+			val &= ~SW_UNK_MCAST_ENABLE;
+			if (val == sw->HOST_MASK)
+				sw->overrides |= UNK_MCAST_BLOCK;
+		} else {
+			sw->overrides &= ~UNK_MCAST_BLOCK;
+		}
 		break;
 	case PROC_SET_UNKNOWN_MULTICAST_PORTS:
 		num &= ~SW_UNK_MCAST_ENABLE;
@@ -10559,7 +10639,7 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 	return processed;
 }  /* sysfs_sw_write */
 
-static ssize_t sysfs_port_read(struct ksz_sw *sw, int proc_num, int port,
+static ssize_t sysfs_port_read(struct ksz_sw *sw, int proc_num, uint port,
 	ssize_t len, char *buf)
 {
 	struct ksz_port_cfg *port_cfg;
@@ -10592,6 +10672,29 @@ static ssize_t sysfs_port_read(struct ksz_sw *sw, int proc_num, int port,
 		else
 			len += sprintf(buf + len, "unlinked\n");
 		break;
+	case PROC_SET_MAC_OPERATIONAL:
+		chk = !!(sw->dev_ports & (1 << port));
+		type = SHOW_HELP_ON_OFF;
+		break;
+	case PROC_SET_VLAN_RESTRICTED:
+		chk = port_cfg->restricted;
+		if (sw->verbose)
+			strcpy(note, " (0 = normal, 1 = restricted)");
+		type = SHOW_HELP_SPECIAL;
+		break;
+	case PROC_SET_VLAN_UNTAGGED:
+	{
+		int index;
+		int bit;
+
+		index = sw->vlan_index / VID_IN_DATA;
+		bit = sw->vlan_index % VID_IN_DATA;
+		chk = !!(port_cfg->untagged[index] & (1 << bit));
+		if (sw->verbose)
+			strcpy(note, " (0 = tagged, 1 = untagged)");
+		type = SHOW_HELP_SPECIAL;
+		break;
+	}
 	case PROC_SET_PORT_MIB:
 		len += display_sw_mib_counters(sw, port, 1, buf + len);
 		break;
@@ -10778,7 +10881,7 @@ static ssize_t sysfs_port_read(struct ksz_sw *sw, int proc_num, int port,
 	return sysfs_show(len, buf, type, chk, note, sw->verbose);
 }  /* sysfs_port_read */
 
-static ssize_t sysfs_port_read_hw(struct ksz_sw *sw, int proc_num, int port,
+static ssize_t sysfs_port_read_hw(struct ksz_sw *sw, int proc_num, uint port,
 	ssize_t len, char *buf)
 {
 	u16 val;
@@ -11265,7 +11368,7 @@ static ssize_t sysfs_port_read_hw(struct ksz_sw *sw, int proc_num, int port,
 	return sysfs_show(len, buf, type, chk, note, sw->verbose);
 }  /* sysfs_port_read_hw */
 
-static int sysfs_port_write(struct ksz_sw *sw, int proc_num, int port,
+static int sysfs_port_write(struct ksz_sw *sw, int proc_num, uint port,
 	int num, const char *buf)
 {
 	int count;
@@ -11290,6 +11393,8 @@ static int sysfs_port_write(struct ksz_sw *sw, int proc_num, int port,
 		    (PROC_SET_PORT_SPEED == proc_num &&
 		    num != 0 && num != 10 && num != 100 && num != 1000))
 			break;
+		if (!(sw->features & GIGABIT_SUPPORT) && num == 1000)
+			break;
 
 		phy_port.sw = sw;
 		phy_port.port_cnt = 1;
@@ -11304,10 +11409,75 @@ static int sysfs_port_write(struct ksz_sw *sw, int proc_num, int port,
 		port_set_link_speed(&phy_port);
 		break;
 	}
+	case PROC_SET_MAC_OPERATIONAL:
+#if 0
+		if (sw->overrides & USE_802_1X_AUTH)
+			break;
+#endif
+		count = sw->dev_ports & (1 << port);
+		if (count && !num) {
+			sw->dev_ports &= ~(1 << port);
+			num = 1;
+		} else if (!count && num) {
+			if (sw->dev_count > 1)
+				break;
+			sw->dev_ports |= (1 << port);
+			num = 2;
+		} else
+			num = 0;
+
+#ifdef CONFIG_KSZ_MRP
+		if (sw->features & MRP_SUPPORT) {
+			struct mrp_info *mrp = &sw->mrp;
+
+			if (2 == num) {
+				mrp->rx_ports |= (1 << port);
+				mrp->tx_ports |= (1 << port);
+			} else if (1 == num) {
+				mrp->rx_ports &= ~(1 << port);
+				mrp->tx_ports &= ~(1 << port);
+			}
+		}
+#endif
+		break;
+	case PROC_SET_VLAN_RESTRICTED:
+		cfg->restricted = !!num;
+		break;
+	case PROC_SET_VLAN_UNTAGGED:
+	{
+		int bit;
+		int index;
+
+		index = sw->vlan_index / VID_IN_DATA;
+		bit = sw->vlan_index % VID_IN_DATA;
+		count = !!(cfg->untagged[index] & (1 << bit));
+		if (count != !!num) {
+			struct ksz_vlan_table vlan;
+
+			if (num)
+				cfg->untagged[index] |= (1 << bit);
+			else
+				cfg->untagged[index] &= ~(1 << bit);
+			sw->ops->release(sw);
+			if (!sw_r_vlan_table(sw, sw->vlan_index, &vlan)) {
+				if (num)
+					vlan.untag |= (1 << port);
+				else
+					vlan.untag &= ~(1 << port);
+				sw_w_vlan_table(sw, sw->vlan_index, &vlan);
+			}
+			sw->ops->acquire(sw);
+		}
+		break;
+	}
 	case PROC_SET_PORT_MIB:
 	{
 		struct ksz_port_mib *mib = &sw->port_mib[port];
 
+		if (num >= 1 && num <= 2) {
+			port_freeze_mib(sw, port, num - 1);
+			break;
+		}
 		memset((void *) mib->counter, 0, sizeof(u64) *
 			TOTAL_SWITCH_COUNTER_NUM);
 		mib->rate[0].last = mib->rate[1].last = 0;
@@ -11546,9 +11716,13 @@ static int sysfs_port_write(struct ksz_sw *sw, int proc_num, int port,
 		port_w_s(sw, port, REG_PORT_PME_STATUS, 7, 0, (u8) num);
 		break;
 	case PROC_SET_AUTHEN_MODE:
+		if (num > PORT_AUTHEN_TRAP)
+			break;
+		if (num == PORT_AUTHEN_NORMAL)
+			num = PORT_AUTHEN_PASS;
 		port_set_authen_mode(sw, port, num);
 		if (sw->overrides & USE_802_1X_AUTH)
-			port_open(sw, port, 0 == num);
+			port_open(sw, port, PORT_AUTHEN_PASS == num);
 		break;
 	case PROC_SET_ACL:
 		port_cfg_acl(sw, port, num);
@@ -11780,14 +11954,23 @@ static ssize_t sysfs_mac_read(struct ksz_sw *sw, int proc_num, ssize_t len,
 		}
 		len += sprintf(buf + len,
 			"%3x.%u: %02X:%02X:%02X:%02X:%02X:%02X  "
-			"%04x  m:%u  p:%u  s:%u  d:%u  o:%u  %u:%02x  [%u]\n",
+			"%04x  m:%u  ",
 			sw->alu_index, sw->alu_type,
 			entry->addr[0], entry->addr[1], entry->addr[2],
 			entry->addr[3], entry->addr[4], entry->addr[5],
-			entry->ports, entry->mstp, entry->prio,
-			entry->src, entry->dst, entry->override,
-			entry->use_fid, entry->fid,
-			entry->dirty ? 2 : entry->valid);
+			entry->ports, entry->mstp);
+		if (2 == sw->alu_type)
+			len += sprintf(buf + len,
+				"t:%u  s:%u  d:%u  o:%u  %02x  [%u]\n",
+				entry->prio, entry->src, entry->dst,
+				entry->override, entry->fid,
+				entry->dirty ? 2 : entry->valid);
+		else
+			len += sprintf(buf + len,
+				"p:%u  s:%u  d:%u  o:%u  %u:%02x  [%u]\n",
+				entry->prio, entry->src, entry->dst,
+				entry->override, entry->use_fid, entry->fid,
+				entry->dirty ? 2 : entry->valid);
 		break;
 	}
 	return len;
@@ -11985,6 +12168,13 @@ static int sysfs_vlan_write(struct ksz_sw *sw, int proc_num, int num)
 			entry->valid = 1;
 		else
 			entry->valid = 0;
+#ifdef CONFIG_KSZ_MRP
+		if (sw->features & MRP_SUPPORT) {
+			struct mrp_info *mrp = &sw->mrp;
+
+			mrp->ops->setup_vlan(mrp, sw->vlan_index, entry);
+		}
+#endif
 		sw_w_vlan_table(sw, sw->vlan_index, entry);
 		sw->vlan_dirty = 0;
 		sw->overrides |= VLAN_SET;
@@ -12179,7 +12369,7 @@ static int sysfs_hsr_write(struct ksz_sw *sw, int proc_num, int num,
 }  /* sysfs_hsr_write */
 #endif
 
-static ssize_t sysfs_acl_read(struct ksz_sw *sw, int proc_num, int port,
+static ssize_t sysfs_acl_read(struct ksz_sw *sw, int proc_num, uint port,
 	ssize_t len, char *buf)
 {
 	struct ksz_port_cfg *cfg;
@@ -12407,7 +12597,7 @@ static ssize_t sysfs_acl_read(struct ksz_sw *sw, int proc_num, int port,
 	return sysfs_show(len, buf, type, chk, note, sw->verbose);
 }  /* sysfs_acl_read */
 
-static int sysfs_acl_write(struct ksz_sw *sw, int proc_num, int port, int num,
+static int sysfs_acl_write(struct ksz_sw *sw, int proc_num, uint port, int num,
 	const char *buf)
 {
 	struct ksz_port_cfg *cfg;
@@ -12747,7 +12937,7 @@ static struct bin_attribute kszsw_registers_attr = {
 };
 #endif
 
-static void sw_cfg_mac(struct ksz_sw *sw, u8 index, u8 *dest, u32 ports,
+static void sw_cfg_mac(struct ksz_sw *sw, u8 index, const u8 *dest, u32 ports,
 	int override, int use_fid, u16 fid)
 {
 	struct ksz_mac_table mac;
@@ -12773,9 +12963,11 @@ static void sw_cfg_vlan(struct ksz_sw *sw, u8 index, u16 vid, u16 fid,
 
 	if (0xffff == ports)
 		ports = sw->PORT_MASK;
-	memset(&vlan, 0, sizeof(struct ksz_vlan_table));
-	vlan.vid = vid;
-	vlan.fid = fid;
+	if (sw_r_vlan_table(sw, vid, &vlan)) {
+		memset(&vlan, 0, sizeof(struct ksz_vlan_table));
+		vlan.vid = vid;
+		vlan.fid = fid;
+	}
 	vlan.ports = ports & sw->PORT_MASK;
 	vlan.valid = ports != 0;
 	sw_w_vlan_table(sw, vlan.vid, &vlan);
@@ -12801,6 +12993,7 @@ static void sw_free_vlan(struct ksz_sw *sw, u8 index)
 
 static u16 sw_alloc_fid(struct ksz_sw *sw, u16 vid)
 {
+#if 0
 	int x;
 	int y;
 	u16 fid;
@@ -12823,10 +13016,14 @@ static u16 sw_alloc_fid(struct ksz_sw *sw, u16 vid)
 	sw->info->fid[x] |= (1 << y);
 	++sw->info->fid_cnt;
 	return fid;
+#else
+	return sw->info->vid2fid[vid];
+#endif
 }  /* sw_alloc_fid */
 
 static void sw_free_fid(struct ksz_sw *sw, u16 fid)
 {
+#if 0
 	int x;
 	int y;
 
@@ -12836,7 +13033,92 @@ static void sw_free_fid(struct ksz_sw *sw, u16 fid)
 		sw->info->fid[x] &= ~(1 << y);
 		--sw->info->fid_cnt;
 	}
+#endif
 }  /* sw_free_fid */
+
+static const u8 *sw_get_br_id(struct ksz_sw *sw)
+{
+	u8 id[8];
+	const u8* ret = id;
+
+	memcpy(&id[2], sw->info->mac_addr, ETH_ALEN);
+	id[0] = 0x80;
+	id[1] = 0x00;
+
+#ifdef CONFIG_KSZ_STP
+	ret = stp_br_id(&sw->info->rstp);
+#endif
+	return ret;
+}  /* sw_get_br_id */
+
+static void sw_from_backup(struct ksz_sw *sw, uint p)
+{
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp->ops->from_backup(mrp, p);
+	}
+#endif
+}  /* sw_from_backup */
+
+static void sw_to_backup(struct ksz_sw *sw, uint p)
+{
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp->ops->to_backup(mrp, p);
+	}
+#endif
+}  /* sw_to_backup */
+
+static void sw_from_designated(struct ksz_sw *sw, uint p, bool alt)
+{
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp->ops->from_designated(mrp, p, alt);
+	}
+#endif
+}  /* sw_from_designated */
+
+static void sw_to_designated(struct ksz_sw *sw, uint p)
+{
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp->ops->to_designated(mrp, p);
+	}
+#endif
+}  /* sw_to_designated */
+
+static void sw_tc_detected(struct ksz_sw *sw, uint p)
+{
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp->ops->tc_detected(mrp, p);
+	}
+#endif
+}  /* sw_tc_detected */
+
+static int sw_get_tcDetected(struct ksz_sw *sw, uint p)
+{
+	int ret = false;
+
+#ifdef CONFIG_KSZ_STP
+	if (sw->features & STP_SUPPORT) {
+		struct ksz_stp_info *info = &sw->info->rstp;
+
+		ret = info->ops->get_tcDetected(info, p);
+	}
+#endif
+	return ret;
+}  /* sw_get_tcDetected */
 
 #define FAMILY_ID_85			0x85
 #define FAMILY_ID_95			0x95
@@ -12907,12 +13189,12 @@ static int sw_get_id(struct ksz_sw *sw, u8 *id1, u8 *id2, char *name)
 	return id;
 }  /* sw_get_id */
 
-static void sw_cfg_tail_tag(struct ksz_sw *sw, int enable)
+static void sw_cfg_tail_tag(struct ksz_sw *sw, bool enable)
 {
 	port_cfg_tail_tag(sw, sw->HOST_PORT, enable);
 }
 
-static void sw_cfg_each_port(struct ksz_sw *sw, int p, int cpu)
+static void sw_cfg_each_port(struct ksz_sw *sw, uint p, bool cpu)
 {
 	if (cpu)
 		p = sw->HOST_PORT;
@@ -12924,7 +13206,7 @@ static void sw_cfg_each_port(struct ksz_sw *sw, int p, int cpu)
 	port_set_stp_state(sw, p, STP_STATE_SIMPLE);
 }
 
-static int sw_port_to_phy_addr(struct ksz_sw *sw, int p)
+static int sw_port_to_phy_addr(struct ksz_sw *sw, uint p)
 {
 	if (p >= sw->HOST_PORT)
 		p++;
@@ -12933,11 +13215,11 @@ static int sw_port_to_phy_addr(struct ksz_sw *sw, int p)
 	return -1;
 }
 
-static void sw_set_port_addr(struct ksz_sw *sw, int p, u8 *addr)
+static void sw_set_port_addr(struct ksz_sw *sw, uint p, u8 *addr)
 {
 }
 
-static void sw_cfg_src_filter(struct ksz_sw *sw, int set)
+static void sw_cfg_src_filter(struct ksz_sw *sw, bool set)
 {
 	int p;
 
@@ -12954,10 +13236,17 @@ static void sw_cfg_src_filter(struct ksz_sw *sw, int set)
 	}
 }  /* sw_cfg_src_filter */
 
-static void sw_fwd_unk_mcast(struct ksz_sw *sw)
+static void sw_fwd_unk_mcast(struct ksz_sw *sw, bool set)
 {
-	sw->reg->w32(sw, REG_SW_LUE_UNK_MCAST_CTRL__4,
-		sw->HOST_MASK | SW_UNK_MCAST_ENABLE);
+	if (set) {
+		sw->reg->w32(sw, REG_SW_LUE_UNK_MCAST_CTRL__4,
+			sw->HOST_MASK | SW_UNK_MCAST_ENABLE);
+		sw->overrides |= UNK_MCAST_BLOCK;
+	} else {
+		sw_cfg(sw, REG_SW_LUE_UNK_MCAST_CTRL__4,
+			SW_UNK_MCAST_ENABLE >> 24, false);
+		sw->overrides &= ~UNK_MCAST_BLOCK;
+	}
 }  /* sw_fwd_unk_mcast */
 
 static void sw_fwd_unk_ucast(struct ksz_sw *sw)
@@ -12993,6 +13282,8 @@ static int sw_need_dest(struct ksz_sw *sw, u8 *addr)
 				break;
 			}
 		}
+		if (i < 0 && (sw->overrides & UNK_MCAST_BLOCK))
+			need = 1;
 	} else if (!memcmp(addr, sw->info->mac_addr, ETH_ALEN))
 		need = 1;
 	return need;
@@ -13021,7 +13312,8 @@ static void sw_forward(struct ksz_sw *sw, u8 *addr, u8 *self, u16 proto,
 				forward = alu->forward;
 				if (!(forward & FWD_VLAN_DEV)) {
 					if (proto == 0x888E)
-						forward = FWD_VLAN_DEV;
+						forward = FWD_STP_DEV |
+							  FWD_VLAN_DEV;
 				}
 				break;
 			}
@@ -13039,6 +13331,37 @@ static void sw_forward(struct ksz_sw *sw, u8 *addr, u8 *self, u16 proto,
 	sw->info->forward = forward;
 }  /* sw_forward */
 
+static void sw_tx_fwd(struct work_struct *work)
+{
+	int rc;
+	bool last;
+	struct sk_buff *skb;
+	struct ksz_sw *sw = container_of(work, struct ksz_sw, tx_fwd);
+	const struct net_device_ops *ops = sw->main_dev->netdev_ops;
+
+	last = skb_queue_empty(&sw->txq);
+	while (!last) {
+		skb = skb_dequeue(&sw->txq);
+		last = skb_queue_empty(&sw->txq);
+		if (!skb)
+			continue;
+		do {
+			rc = ops->ndo_start_xmit(skb, skb->dev);
+			if (NETDEV_TX_BUSY == rc) {
+				rc = wait_event_interruptible_timeout(sw->queue,
+					!netif_queue_stopped(sw->main_dev),
+					50 * HZ / 1000);
+
+				rc = NETDEV_TX_BUSY;
+			}
+		} while (NETDEV_TX_BUSY == rc);
+	}
+}  /* sw_tx_fwd */
+
+#if 1
+static u8 last_addr[6];
+#endif
+
 static struct net_device *sw_rx_dev(struct ksz_sw *sw, u8 *data, u32 *len,
 	int *tag, int *port)
 {
@@ -13049,6 +13372,7 @@ static struct net_device *sw_rx_dev(struct ksz_sw *sw, u8 *data, u32 *len,
 	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *) data;
 	int index = -1;
 	int vid = 0;
+	u16 prio = 0;
 #ifdef CONFIG_KSZ_DSA
 	u32 org_len = *len;
 #endif
@@ -13059,6 +13383,8 @@ static struct net_device *sw_rx_dev(struct ksz_sw *sw, u8 *data, u32 *len,
 		u16 vlan_tci = ntohs(vlan->h_vlan_TCI);
 
 		vid = vlan_tci & VLAN_VID_MASK;
+		prio = vlan_tci & VLAN_PRIO_MASK;
+		prio >>= VLAN_PRIO_SHIFT;
 		proto_loc = &vlan->h_vlan_encapsulated_proto;
 		proto = htons(*proto_loc);
 #if 0
@@ -13092,22 +13418,6 @@ dbg_msg(" 2 vid: %x\n", vlan_tci);
 	    0xff == vlan->h_dest[0]) {
 		return NULL;
 	}
-#endif
-#ifdef CONFIG_KSZ_MRP
-	do {
-		if (sw->running && (sw->features & MRP_SUPPORT) &&
-		    (sw->overrides & MCAST_FILTER)) {
-#ifdef CONFIG_KSZ_IBA
-			if (proto == IBA_TAG_TYPE)
-				break;
-#endif
-#ifdef CONFIG_KSZ_DLR
-			if (proto == DLR_TAG_TYPE)
-				break;
-#endif
-			mrp_chk_mcast(&sw->mrp, vlan->h_dest, vid, proto);
-		}
-	} while (0);
 #endif
 	if (eth->h_proto == htons(0x9100)) {
 		u16 vlan_tci = ntohs(vlan->h_vlan_TCI);
@@ -13143,10 +13453,7 @@ dbg_msg(" 2 vid: %x\n", vlan_tci);
 			if (sw->features & PTP_HW) {
 				struct ptp_info *ptp = &sw->ptp_hw;
 
-				if (1 == ptp->op_mode)
-					sw->info->forward = FWD_VLAN_DEV;
-				else
-					sw->info->forward = FWD_MAIN_DEV;
+				sw->info->forward = ptp->forward;
 			} else
 #endif
 			if (sw->features & SW_VLAN_DEV)
@@ -13203,6 +13510,51 @@ dbg_msg(" 2 vid: %x\n", vlan_tci);
 			*tag = 0;
 	}
 	sw_forward(sw, data, dev->dev_addr, proto, *tag);
+	if ((sw->overrides & UNK_MCAST_BLOCK) &&
+	    (sw->info->forward & (FWD_MCAST | FWD_KNOWN)) == FWD_MCAST) {
+		struct sk_buff *skb;
+		u16 ports = sw->PORT_MASK & ~(1 << *port) & ~sw->HOST_MASK;
+
+		ports &= sw->live_ports;
+		if (!ports)
+			return dev;
+		if (memcmp(data, ipv6_neigh_mcast, 3)) {
+			if (memcmp(data, last_addr, 6)) {
+dbg_msg("%02x:%02x:%02x:%02x:%02x:%02x  %d=%d %x\n",
+data[0], data[1], data[2], data[3], data[4], data[5], *port, *len, ports);
+				memcpy(last_addr, data, 6);
+			}
+		}
+#ifdef CONFIG_KSZ_MRP
+		/* Do not forward IPv6 packets as the test tool confuses them
+		 * for AVB traffic.
+		 */
+		else if ((sw->features & MRP_SUPPORT) && fqtss_hack)
+			return dev;
+		if (memcmp(data, ipv6_neigh_mcast, 3) &&
+		    (sw->features & MRP_SUPPORT)) {
+			int rc;
+
+			rc = mrp_chk_mcast(&sw->mrp, vlan->h_dest, vid, prio,
+					   proto, *port);
+			if (rc != 1)
+				return dev;
+		}
+#endif
+		skb = alloc_skb(*len + 8, GFP_ATOMIC);
+		if (!skb)
+			return dev;
+		skb->dev = sw->main_dev;
+		skb_reset_network_header(skb);
+		skb_reset_transport_header(skb);
+		memcpy(skb->data, data, *len);
+		skb_put(skb, *len);
+		sw->net_ops->add_tail_tag(sw, skb, ports);
+		skb->protocol = htons(ETH_P_TRAILER);
+
+		skb_queue_tail(&sw->txq, skb);
+		schedule_work(&sw->tx_fwd);
+	}
 	return dev;
 }  /* sw_rx_dev */
 
@@ -13231,6 +13583,9 @@ static int sw_match_pkt(struct ksz_sw *sw, struct net_device **dev,
 {
 	int s_promiscuous;
 
+	/* This function will return the child device if matched, and the
+	 * parent device if it is matched.
+	 */
 	if (sw->dev_count <= 1)
 		return true;
 	s_promiscuous = get_promiscuous(*priv);
@@ -13254,18 +13609,20 @@ static int sw_match_pkt(struct ksz_sw *sw, struct net_device **dev,
 }  /* sw_match_pkt */
 
 static struct net_device *sw_parent_rx(struct ksz_sw *sw,
-	struct net_device *dev, struct sk_buff *skb, int forward,
+	struct net_device *dev, struct sk_buff *skb, int *forward,
 	struct net_device **parent_dev, struct sk_buff **parent_skb)
 {
 	if (sw->dev_offset && dev != sw->netdev[0]) {
 		*parent_dev = sw->netdev[0];
-		if (!forward)
-			forward = FWD_MAIN_DEV;
-		if ((forward & (FWD_MAIN_DEV | FWD_STP_DEV)) ==
+		if (!*forward)
+			*forward = FWD_MAIN_DEV;
+		if ((*forward & (FWD_MAIN_DEV | FWD_STP_DEV)) ==
 		    (FWD_MAIN_DEV | FWD_STP_DEV))
 			*parent_skb = skb_clone(skb, GFP_ATOMIC);
-		else if (!(forward & FWD_STP_DEV))
+		else if (!(*forward & FWD_STP_DEV))
 			dev = *parent_dev;
+		else
+			*forward &= ~FWD_VLAN_DEV;
 	}
 	return dev;
 }  /* sw_parent_rx */
@@ -13290,6 +13647,12 @@ BUG();
 	if (tag > sw->HOST_PORT)
 		--tag;
 	tag += VLAN_PORT_START;
+
+	/* Only forward to one network device. */
+	if (!(forward & FWD_MAIN_DEV)) {
+		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
+		return true;
+	}
 	vlan_skb = skb_clone(skb, GFP_ATOMIC);
 	if (!vlan_skb)
 		return false;
@@ -13324,7 +13687,7 @@ static int sw_drop_icmp(struct sk_buff *skb, int extra_skb)
 	return drop;
 }  /* sw_drop_icmp */
 
-static int sw_drv_rx(struct ksz_sw *sw, struct sk_buff *skb, int port)
+static int sw_drv_rx(struct ksz_sw *sw, struct sk_buff *skb, uint port)
 {
 	int ret = 1;
 
@@ -13436,7 +13799,7 @@ dbg_msg("mtu: %d\n", mtu);
 	return mtu;
 }  /* sw_get_mtu */
 
-static int sw_get_tx_len(struct ksz_sw *sw, struct sk_buff *skb, int port,
+static int sw_get_tx_len(struct ksz_sw *sw, struct sk_buff *skb, uint port,
 	int *header)
 {
 	int len = skb->len;
@@ -13464,7 +13827,7 @@ static int sw_get_tx_len(struct ksz_sw *sw, struct sk_buff *skb, int port,
 	return len;
 }  /* sw_get_tx_len */
 
-static void sw_add_tail_tag(struct ksz_sw *sw, struct sk_buff *skb, int ports)
+static void sw_add_tail_tag(struct ksz_sw *sw, struct sk_buff *skb, uint ports)
 {
 	struct ksz_sw_tx_tag tx_tag;
 	u8 *trailer;
@@ -13503,14 +13866,14 @@ static int sw_get_tail_tag(u8 *trailer, int *port)
 	return len;
 }  /* sw_get_tail_tag */
 
-static int sw_get_phys_port(struct ksz_sw *sw, int port)
+static int sw_get_phys_port(struct ksz_sw *sw, uint port)
 {
 	if (port >= sw->HOST_PORT)
 		port++;
 	return port;
 }  /* sw_get_phy_port */
 
-static int sw_get_virt_port(struct ksz_sw *sw, int port)
+static int sw_get_virt_port(struct ksz_sw *sw, uint port)
 {
 	if (port >= sw->HOST_PORT)
 		port--;
@@ -13561,7 +13924,7 @@ static int add_frag(void *from, char *to, int offset, int len, int odd,
 	return 0;
 }
 
-static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, int port,
+static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 	struct sk_buff *skb)
 {
 #ifdef CONFIG_KSZ_IBA
@@ -13608,7 +13971,7 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, int port,
 }  /* sw_ins_vlan */
 
 #ifdef CONFIG_KSZ_HSR
-static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, int port,
+static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint port,
 	struct sk_buff *skb, u16 *ports)
 {
 	int i = sw->info->port_cfg[port].index;
@@ -13658,7 +14021,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	int (*update_msg)(u8 *data, u32 port, u32 overrides))
 {
 	int len;
-	int port;
+	uint port;
 	struct sk_buff *org_skb;
 	struct ksz_sw_tx_tag tx_tag;
 	u8 *tag;
@@ -13672,10 +14035,8 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (!update_dst)
 		return sw_ins_vlan(sw, priv->first_port, skb);
 
-#ifdef CONFIG_KSZ_DSA
 	if (skb->protocol == htons(ETH_P_TRAILER))
 		return skb;
-#endif
 #ifdef CONFIG_KSZ_STP
 	if (skb->protocol == htons(STP_TAG_TYPE))
 		return skb;
@@ -13797,25 +14158,45 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		ptp_set_tx_info(ptp, skb->data, &tx_tag);
 #endif
 	if (sw->TAIL_TAG_LOOKUP == tx_tag.ports) {
-		int dest;
-
 		/* Use VLAN for port forwarding if not specified directly. */
 		skb = sw_ins_vlan(sw, priv->first_port, skb);
 		if (len != skb->len)
 			len = skb->len;
+	}
+	do {
+		int dest;
+		struct vlan_ethhdr *vlan = (struct vlan_ethhdr *)skb->data;
 
-		/*
-		 * The MAC table was programmed to forward only to host.
+		/* The MAC table was programmed to forward only to host.
 		 * Need destination ports to send out.
+		 * The port may be blocked.  Need override to send out.
 		 */
 		dest = sw_need_dest(sw, skb->data);
-		if (dest) {
+		if (dest > 1 && sw->TAIL_TAG_LOOKUP == tx_tag.ports) {
 			tx_tag.ports = sw->live_ports & sw->tx_ports[0];
 			tx_tag.ports &= ~sw->HOST_MASK;
-			if (tx_tag.ports && 2 == dest)
-				tx_tag.ports |= sw->TAIL_TAG_OVERRIDE;
 		}
-	}
+
+		/* Honor the VLAN priority to put in different queue. */
+		if (vlan->h_vlan_proto == htons(ETH_P_8021Q)) {
+			u16 prio;
+			u16 vlan_tci = ntohs(vlan->h_vlan_TCI);
+			struct ksz_port_cfg *cfg =
+				&sw->info->port_cfg[sw->HOST_PORT];
+			u32 queue = cfg->tc_map[0];
+
+			prio = vlan_tci & VLAN_PRIO_MASK;
+			prio >>= VLAN_PRIO_SHIFT;
+			queue >>= prio * PORT_TC_MAP_S;
+			queue &= PORT_TC_MAP_M;
+			if (sw->features & IS_9893)
+				tx_tag.ports |= (queue << 3);
+			else
+				tx_tag.ports |= (queue << 7);
+		}
+		if (tx_tag.ports && 2 == dest)
+			tx_tag.ports |= sw->TAIL_TAG_OVERRIDE;
+	} while (0);
 
 #ifdef CONFIG_KSZ_HSR
 	skb = sw_ins_hsr(sw, priv->first_port, skb, &tx_tag.ports);
@@ -14013,7 +14394,7 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 		struct ksz_vlan_table entry;
 		int i;
 		int p;
-		int q;
+		uint q;
 
 		memset(&entry, 0, sizeof(struct ksz_vlan_table));
 		for (p = 0; p < sw->eth_cnt; p++) {
@@ -14071,7 +14452,8 @@ dbg_msg(" ! tail tag not set\n");
 
 		if (stp->br.bridgeEnabled)
 			stp_start(stp);
-	}
+	} else
+		stp_set_addr(&sw->info->rstp, sw->info->mac_addr);
 #endif
 
 #ifdef CONFIG_1588_PTP
@@ -14102,6 +14484,14 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 
 		if (stp->br.bridgeEnabled)
 			stp_stop(stp, hw_access);
+	}
+#endif
+
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		struct mrp_info *mrp = &sw->mrp;
+
+		mrp_stop(mrp);
 	}
 #endif
 
@@ -14187,6 +14577,10 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 	int i;
 	int p;
 	struct ksz_port_info *info;
+#ifdef CONFIG_KSZ_MRP
+	struct mrp_info *mrp = &sw->mrp;
+	u16 mrp_ports = 0;
+#endif
 
 	for (i = 0, p = port->first_port; i < port->port_cnt; i++, p++) {
 		info = &sw->port_info[p];
@@ -14200,13 +14594,39 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 		info->link = 0xFF;
 		info->state = media_unknown;
 		info->report = true;
+		if (port->port_cnt == 1) {
+			if (sw->net_ops->get_priv_port) {
+				struct ksz_port *sw_port =
+					sw->net_ops->get_priv_port(
+						sw->netdev[0]);
+
+				port->speed = sw_port->speed;
+				port->duplex = sw_port->duplex;
+				port->flow_ctrl = sw_port->flow_ctrl;
+			}
+			if (info->own_speed != port->speed ||
+			    info->own_duplex != port->duplex) {
+				if (info->own_speed)
+					port->speed = info->own_speed;
+				if (info->own_duplex)
+					port->duplex = info->own_duplex;
+			}
+		}
 	}
 
 	sw->ops->acquire(sw);
+#ifdef CONFIG_KSZ_MRP
+	if (sw->features & MRP_SUPPORT) {
+		mrp_ports = mrp->tx_ports;
+	}
+#endif
 
 	/* Need to open the port in multiple device interfaces mode. */
 	if (sw->dev_count > 1 && (!sw->dev_offset || dev != sw->netdev[0])) {
 		*state = STP_STATE_SIMPLE;
+		if (sw->dev_offset && !(sw->features & STP_SUPPORT)) {
+			*state = STP_STATE_FORWARDING;
+		}
 		if (sw->features & SW_VLAN_DEV) {
 			i = sw->info->port_cfg[port->first_port].index;
 			if (!(sw->eth_maps[i].proto & HSR_HW))
@@ -14216,8 +14636,16 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 		     i++, p++) {
 			if (p == sw->HOST_PORT)
 				continue;
+			sw->dev_ports |= (1 << p);
+#ifdef CONFIG_KSZ_STP
+			if (sw->features & STP_SUPPORT) {
+				stp_enable_port(&sw->info->rstp, p, state);
+			}
+#endif
 			port_set_stp_state(sw, p, *state);
 		}
+	} else if (!sw->dev_count) {
+		sw->dev_ports = sw->PORT_MASK;
 	}
 
 	sw->phy_intr = sw->PORT_MASK;
@@ -14263,6 +14691,9 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 	struct ksz_port *port)
 {
 	int i;
+#ifdef CONFIG_KSZ_MRP
+	struct mrp_info *mrp = &sw->mrp;
+#endif
 
 #ifdef CONFIG_KSZ_IBA
 	if (2 <= sw->info->iba.use_iba && dev == sw->main_dev)
@@ -14278,9 +14709,30 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 		     i++, p++) {
 			if (p == sw->HOST_PORT)
 				continue;
+#ifdef CONFIG_KSZ_STP
+			if (sw->features & STP_SUPPORT)
+				stp_disable_port(&sw->info->rstp, p);
+#endif
+#ifdef CONFIG_KSZ_MRP
+			if (sw->features & MRP_SUPPORT) {
+				mrp_close_port(mrp, p);
+			}
+#endif
+			sw->dev_ports &= ~(1 << p);
 			port_set_stp_state(sw, p, STP_STATE_DISABLED);
 		}
 		sw->ops->release(sw);
+	} else if (!sw->dev_count) {
+#ifdef CONFIG_KSZ_MRP
+		int p;
+
+		if (sw->features & MRP_SUPPORT) {
+			for (p = 0; p < sw->mib_port_cnt; p++) {
+				mrp_close_port(mrp, p);
+			}
+		}
+#endif
+		sw->dev_ports = 0;
 	}
 	for (i = 0; i < sw->eth_cnt; i++) {
 		if (dev != sw->netdev[i])
@@ -14307,6 +14759,10 @@ static void sw_open(struct ksz_sw *sw)
 	sw_setup_reserved_multicast(sw);
 #ifdef CONFIG_KSZ_MRP
 	if (sw->features & MRP_SUPPORT) {
+		struct ksz_port_info *info = &sw->port_info[sw->HOST_PORT];
+		u32 speed = info->tx_rate / TX_RATE_UNIT;
+
+		mrp_set_speed(&sw->mrp, 0, speed, true);
 		mrp_open(&sw->mrp);
 		schedule_delayed_work(&sw->set_mrp, 100);
 	}
@@ -14356,7 +14812,7 @@ static void sw_delayed_set_addr(struct work_struct *work)
 }  /* sw_delayed_set_addr */
 
 static u8 sw_set_mac_addr(struct ksz_sw *sw, struct net_device *dev,
-	u8 promiscuous, int port)
+	u8 promiscuous, uint port)
 {
 	int n;
 #ifdef CONFIG_KSZ_IBA
@@ -14381,6 +14837,20 @@ static u8 sw_set_mac_addr(struct ksz_sw *sw, struct net_device *dev,
 			if (i == dev_count) {
 				sw->features &= ~DIFF_MAC_ADDR;
 				--promiscuous;
+			} else if (sw->dev_offset) {
+				int i;
+				int p;
+
+				for (i = 0, p = 0; i < sw->mib_port_cnt; i++) {
+					if (i == sw->HOST_PORT) {
+						n = 0;
+					} else {
+						++p;
+						n = p;
+					}
+					inc_mac_addr(sw->netdev[n]->dev_addr,
+						dev->dev_addr, n);
+				}
 			}
 		} else {
 			if (dev == sw->netdev[0] && i < dev_count) {
@@ -14403,6 +14873,13 @@ static u8 sw_set_mac_addr(struct ksz_sw *sw, struct net_device *dev,
 	for (n = 0; n < sw->eth_cnt; n++) {
 		if (sw->netdev[n] != dev)
 			continue;
+#ifdef CONFIG_KSZ_STP
+		if (sw->features & STP_SUPPORT) {
+			struct ksz_stp_info *stp = &sw->info->rstp;
+
+			stp->ops->change_addr(stp, dev->dev_addr);
+		}
+#endif
 #ifdef CONFIG_KSZ_DLR
 		if (sw->eth_maps[n].proto & DLR_HW) {
 			dlr_change_addr(&sw->info->dlr, dev->dev_addr);
@@ -15213,15 +15690,15 @@ static void sw_setup_zone(struct ksz_sw *sw)
 	int f;
 	int limit;
 	int m;
-	int p;
-	int q;
+	uint p;
+	uint q;
 	int w;
 	int *v;
 	char **s;
 	uint features;
 	uint used = 0;
 	int last_vlan = 0;
-	int ports = sw->PORT_MASK;
+	uint ports = sw->PORT_MASK;
 
 #ifdef DEBUG
 	sw->verbose = 1;
@@ -15421,6 +15898,7 @@ setup_next:
 #endif
 	if (sw->features & (DLR_HW | HSR_HW)) {
 		sw->features &= ~AVB_SUPPORT;
+		sw->features &= ~STP_SUPPORT;
 		sw->overrides &= ~USE_802_1X_AUTH;
 	}
 	return;
@@ -15434,13 +15912,8 @@ static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
 	phy_offset = 0;
 	sw->dev_offset = 0;
 	sw->phy_offset = 0;
-	if (sw->stp) {
-		sw->features |= STP_SUPPORT;
-	}
 	dbg_msg("%s %d %d %d\n", __func__,
 		sw->stp, sw->multi_dev, sw->fast_aging);
-	if (sw->fast_aging)
-		sw->overrides |= FAST_AGING;
 #ifdef CONFIG_KSZ_IBA
 	if (iba)
 		sw->features |= IBA_SUPPORT;
@@ -15507,8 +15980,8 @@ static void sw_leave_dev(struct ksz_sw *sw)
 }  /* sw_leave_dev */
 
 static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
-	char *dev_name, struct ksz_port *port, int i, int port_cnt,
-	int mib_port_cnt)
+	char *dev_name, struct ksz_port *port, int i, uint port_cnt,
+	uint mib_port_cnt)
 {
 	int cnt;
 	int p;
@@ -15532,9 +16005,11 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		 * First device associated with switch has been
 		 * created.
 		 */
-		if (i)
+		if (i) {
 			snprintf(dev->name, IFNAMSIZ, "%s.10%%d", dev_name);
-		else {
+			memcpy(dev->dev_addr, sw->port_info[p].mac_addr,
+				ETH_ALEN);
+		} else {
 			port_cnt = sw->mib_port_cnt - 1;
 			mib_port_cnt = sw->mib_port_cnt - 1;
 			if (0 < sw->HOST_PORT &&
@@ -15542,6 +16017,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 				port_cnt++;
 				mib_port_cnt++;
 			}
+			sw->ops->acquire(sw);
+			sw_set_addr(sw, dev->dev_addr);
+			sw->ops->release(sw);
 		}
 	}
 
@@ -15557,18 +16035,19 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	port->flow_ctrl = PHY_FLOW_CTRL;
 
 	/* S1 chips do not work well with asymmetric PAUSE. */
-	if (sw->features & NEW_CAP)
+	if ((sw->features & NEW_CAP) && (sw->features & GIGABIT_SUPPORT))
 		port->flow_ctrl = PHY_RX_ONLY;
 
 #ifdef CONFIG_KSZ_STP
-	if (sw->features & STP_SUPPORT)
+	if (!i && (sw->features & STP_SUPPORT))
 		prep_stp_mcast(dev);
 #endif
 
 #ifdef CONFIG_KSZ_DLR
 	/* Cannot flow control because of beacon timeout. */
 	if (sw->eth_cnt && (sw->eth_maps[i].proto & DLR_HW)) {
-		if (sw->features & NEW_CAP)
+		if ((sw->features & NEW_CAP) &&
+		    (sw->features & GIGABIT_SUPPORT))
 			port->flow_ctrl = PHY_TX_ONLY;
 		prep_dlr_mcast(dev);
 	}
@@ -15587,7 +16066,7 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	}
 #endif
 #ifdef CONFIG_KSZ_MRP
-	if (sw->features & MRP_SUPPORT)
+	if (!i && (sw->features & MRP_SUPPORT))
 		setup_mrp(&sw->mrp, dev);
 #endif
 	if (sw->features & AVB_SUPPORT)
@@ -15689,7 +16168,7 @@ static void sw_netdev_oper(struct ksz_sw *sw, struct net_device *dev,
 	int (*netdev_chk)(struct net_device *dev),
 	void (*netdev_oper)(struct net_device *dev))
 {
-	int port;
+	uint port;
 	int dev_count = 1;
 
 	dev_count = sw->dev_count + sw->dev_offset;
@@ -15825,11 +16304,11 @@ static struct ksz_sw_ops sw_ops = {
 	.sysfs_stp_port_write	= sysfs_stp_port_write,
 #endif
 
-#ifdef CONFIG_KSZ_MSRP
-	.sysfs_msrp_read	= sysfs_msrp_read,
-	.sysfs_msrp_write	= sysfs_msrp_write,
-	.sysfs_msrp_port_read	= sysfs_msrp_port_read,
-	.sysfs_msrp_port_write	= sysfs_msrp_port_write,
+#ifdef CONFIG_KSZ_MRP
+	.sysfs_mrp_read		= sysfs_mrp_read,
+	.sysfs_mrp_write	= sysfs_mrp_write,
+	.sysfs_mrp_port_read	= sysfs_mrp_port_read,
+	.sysfs_mrp_port_write	= sysfs_mrp_port_write,
 #endif
 
 #ifdef CONFIG_KSZ_HSR
@@ -15849,6 +16328,14 @@ static struct ksz_sw_ops sw_ops = {
 	.alloc_fid		= sw_alloc_fid,
 	.free_fid		= sw_free_fid,
 
+	.get_br_id		= sw_get_br_id,
+	.from_backup		= sw_from_backup,
+	.to_backup		= sw_to_backup,
+	.from_designated	= sw_from_designated,
+	.to_designated		= sw_to_designated,
+	.tc_detected		= sw_tc_detected,
+	.get_tcDetected		= sw_get_tcDetected,
+
 	.get_id			= sw_get_id,
 	.cfg_tail_tag		= sw_cfg_tail_tag,
 	.cfg_each_port		= sw_cfg_each_port,
@@ -15861,6 +16348,8 @@ static struct ksz_sw_ops sw_ops = {
 	.fwd_unk_ucast		= sw_fwd_unk_ucast,
 	.fwd_unk_vid		= sw_fwd_unk_vid,
 
+	.port_freeze_mib	= port_freeze_mib,
+	.freeze_mib		= sw_freeze_mib,
 };
 
 static int sw_proc_intr(struct ksz_sw *sw)
@@ -15869,7 +16358,7 @@ static int sw_proc_intr(struct ksz_sw *sw)
 	u32 status;
 	u16 port_intr_mask;
 	u8 port_status;
-	int port;
+	uint port;
 #ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp = &sw->ptp_hw;
 #endif
@@ -16036,6 +16525,8 @@ static void link_update_work(struct work_struct *work)
 	struct ksz_port_info *info;
 	int i;
 	int link;
+	u32 speed;
+	bool duplex;
 
 #ifdef CONFIG_KSZ_DLR
 	if (sw->features & DLR_HW) {
@@ -16161,6 +16652,46 @@ static void link_update_work(struct work_struct *work)
 			hsr->ops->check_announce(hsr);
 	}
 #endif
+
+	for (i = 0; i < sw->mib_port_cnt; i++) {
+		if (!(sw->link_ports & (1 << i)))
+			continue;
+		info = &sw->port_info[i];
+		speed = (media_connected == info->state) ?
+			info->tx_rate / TX_RATE_UNIT : 0;
+		duplex = (info->duplex == 2);
+#ifdef CONFIG_1588_PTP
+		if (sw->features & PTP_HW) {
+			struct ptp_info *ptp = &sw->ptp_hw;
+
+			ptp->linked[i] = speed;
+			if (speed)
+				ptp->linked[i] |= 0x80000000;
+		}
+#endif
+#ifdef CONFIG_KSZ_MSRP
+		if (sw->features & MRP_SUPPORT) {
+			int n;
+			struct mrp_info *mrp = &sw->mrp;
+
+			n = sw_get_net_port(sw, 0, mrp->ports, i);
+			if (n <= mrp->ports)
+				mrp_set_speed(mrp, n, speed, duplex);
+		}
+#endif
+	}
+	if (sw->link_ports) {
+
+#ifdef CONFIG_1588_PTP
+		if (sw->features & PTP_HW) {
+			struct ptp_info *ptp = &sw->ptp_hw;
+
+			if (ptp->started)
+				set_latency(&ptp->set_latency);
+		}
+#endif
+	}
+	sw->link_ports = 0;
 }  /* link_update_work */
 
 static void sw_dis_intr(struct ksz_sw *sw)
@@ -16342,7 +16873,7 @@ static int sw_init_phy_priv(struct sw_priv *ks, struct phy_device *phydev,
 
 	phydata = kzalloc(sizeof(struct phy_priv), GFP_KERNEL);
 	if (!phydata)
-		return -ENOMEM;	
+		return -ENOMEM;
 	port = &ks->ports[i];
 	phydata->port = port;
 	port->sw = &ks->sw;
@@ -16368,18 +16899,21 @@ static void sw_init_phydev(struct ksz_sw *sw, struct phy_device *phydev)
 }  /* sw_init_phydev */
 
 #ifndef CONFIG_KSZ_NO_MDIO_BUS
-#define KSZ9897_SW_ID		0x9897
-#define PHY_ID_KSZ_SW		((KSZ9897_ID_HI << 16) | KSZ9897_SW_ID)
+#define KSZ989X_SW_ID		0x9897
+#define KSZ889X_SW_ID		0x8897
+#define PHY_ID_KSZ989X_SW	((KSZ9897_ID_HI << 16) | KSZ989X_SW_ID)
+#define PHY_ID_KSZ889X_SW	((KSZ9897_ID_HI << 16) | KSZ889X_SW_ID)
 
 static int kszphy_config_init(struct phy_device *phydev)
 {
 	return 0;
 }
 
-static struct phy_driver kszsw_phy_driver = {
-	.phy_id		= PHY_ID_KSZ_SW,
+static struct phy_driver kszsw_phy_driver[] = {
+{
+	.phy_id		= PHY_ID_KSZ989X_SW,
 	.phy_id_mask	= 0x00ffffff,
-	.name		= "Microchip KSZ9897 Switch",
+	.name		= "Microchip KSZ989X Switch",
 	.features	= (PHY_GBIT_FEATURES |
 				SUPPORTED_Pause | SUPPORTED_Asym_Pause),
 	.flags		= PHY_HAS_MAGICANEG | PHY_HAS_INTERRUPT,
@@ -16387,6 +16921,17 @@ static struct phy_driver kszsw_phy_driver = {
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
 	.driver		= { .owner = THIS_MODULE, },
+}, {
+	.phy_id		= PHY_ID_KSZ889X_SW,
+	.phy_id_mask	= 0x00ffffff,
+	.name		= "Microchip KSZ889X Switch",
+	.features	= (PHY_BASIC_FEATURES | SUPPORTED_Pause),
+	.flags		= PHY_HAS_MAGICANEG | PHY_HAS_INTERRUPT,
+	.config_init	= kszphy_config_init,
+	.config_aneg	= genphy_config_aneg,
+	.read_status	= genphy_read_status,
+	.driver		= { .owner = THIS_MODULE, },
+}
 };
 
 /**
@@ -16419,8 +16964,12 @@ static void sw_r_phy(struct ksz_sw *sw, u16 phy_id, u16 phy, u16 reg, u16 *val)
 	ret = data;
 
 	/* Use unique switch id to differentiate from regular PHY. */
-	if (3 == reg)
-		ret = KSZ9897_SW_ID;
+	if (3 == reg) {
+		if (sw->features & GIGABIT_SUPPORT)
+			ret = KSZ989X_SW_ID;
+		else
+			ret = KSZ889X_SW_ID;
+	}
 	if (id > sw->phy_port_cnt) {
 		switch (reg) {
 		case 0:
@@ -16636,7 +17185,8 @@ static int ksz_mii_init(struct sw_priv *ks)
 	}
 
 	if (!driver_installed) {
-		err = phy_driver_register(&kszsw_phy_driver);
+		err = phy_drivers_register(kszsw_phy_driver,
+			ARRAY_SIZE(kszsw_phy_driver));
 		if (err)
 			goto mii_init_free_mii_bus;
 		driver_installed = true;
@@ -16685,7 +17235,8 @@ mii_init_free_mii_bus:
 		if (bus->phy_map[i])
 			kfree(bus->phy_map[i]->priv);
 	if (driver_installed) {
-		phy_driver_unregister(&kszsw_phy_driver);
+		phy_drivers_unregister(kszsw_phy_driver,
+			ARRAY_SIZE(kszsw_phy_driver));
 		driver_installed = false;
 	}
 	mdiobus_free(bus);
@@ -16712,7 +17263,8 @@ static void ksz_mii_exit(struct sw_priv *ks)
 		}
 	mdiobus_unregister(bus);
 	if (driver_installed) {
-		phy_driver_unregister(&kszsw_phy_driver);
+		phy_drivers_unregister(kszsw_phy_driver,
+			ARRAY_SIZE(kszsw_phy_driver));
 		driver_installed = false;
 	}
 	mdiobus_free(bus);
@@ -16883,8 +17435,11 @@ static void link_read_work(struct work_struct *work)
 	for (i = sw->dev_offset; i < sw->dev_count + sw->dev_offset; i++) {
 		struct phy_priv *phydata;
 		struct net_device *dev = sw->netdev[i];
+		int j = i + s;
 
-		phydev = sw->phy[i + s];
+		if (j > sw->HOST_PORT)
+			j++;
+		phydev = sw->phy[j];
 		if (sw->features & SW_VLAN_DEV)
 			phydev = sw->phy[sw->eth_maps[i].port + 1];
 		phydata = phydev->priv;
@@ -17070,10 +17625,10 @@ static int ksz_probe_next(struct sw_priv *ks)
 	u32 id2;
 	int cnt;
 	int i;
-	int mib_port_count;
-	int phy_port_count;
-	int pi;
-	int port_count;
+	uint mib_port_count;
+	uint phy_port_count;
+	uint pi;
+	uint port_count;
 	int reset = true;
 	int ret = -ENODEV;
 	int cfg = 0;
@@ -17130,6 +17685,26 @@ dbg_msg("%02x %02x\n", id1, id2);
 #endif
 	if ((FAMILY_ID_85 & 0xf0) == (id1 & 0xf0))
 		sw->features |= QW_HW;
+	if ((CHIP_ID_67 & 0x0f) == (id2 & 0x0f)) {
+		port_count = 7;
+		mib_port_count = 7;
+		phy_port_count = 5;
+		sw->TAIL_TAG_LOOKUP = (1 << (7 + 3));
+		sw->TAIL_TAG_OVERRIDE = (1 << (7 + 2));
+	} else if ((CHIP_ID_66 & 0x0f) == (id2 & 0x0f)) {
+		port_count = 6;
+		mib_port_count = 6;
+		phy_port_count = 5;
+		sw->TAIL_TAG_LOOKUP = (1 << (7 + 3));
+		sw->TAIL_TAG_OVERRIDE = (1 << (7 + 2));
+	} else if ((CHIP_ID_63 & 0x0f) == (id2 & 0x0f)) {
+		port_count = 3;
+		mib_port_count = 3;
+		phy_port_count = 2;
+		sw->TAIL_TAG_LOOKUP = (1 << (3 + 3));
+		sw->TAIL_TAG_OVERRIDE = (1 << (3 + 2));
+		sw->features |= IS_9893;
+	}
 	sw->features |= NO_GLOBAL_RESET;
 	sw->features |= PHY_INTR_BUG;
 
@@ -17166,6 +17741,11 @@ dbg_msg("%02x %02x\n", id1, id2);
 				sw->features |= HSR_HW;
 #endif
 			}
+		} else {
+			if (id & SW_QW_ABLE)
+				sw->features |= QW_HW;
+			else
+				sw->features |= GIGABIT_SUPPORT;
 		}
 		if (id & SW_AVB_ABLE) {
 			sw->features |= AVB_SUPPORT;
@@ -17186,31 +17766,17 @@ dbg_msg("%02x %02x\n", id1, id2);
 				sw_host_port = 6;
 			break;
 		}
+		if (id & SW_GIGABIT_ABLE)
+			sw->features |= GIGABIT_SUPPORT;
 
+		if (sw->features & IS_9893)
+dbg_msg("avb=%d  qw=%d  giga=%d\n",
+!!(id & SW_AVB_ABLE), !!(id & SW_QW_ABLE), !!(id & SW_GIGABIT_ABLE));
+		else
 dbg_msg("avb=%d  rr=%d  giga=%d\n",
 !!(id & SW_AVB_ABLE), !!(id & SW_REDUNDANCY_ABLE), !!(id & SW_GIGABIT_ABLE));
 	} else if ((FAMILY_ID_95 & 0x0f) == (id1 & 0x0f))
 		sw->features |= AVB_SUPPORT;
-	if ((CHIP_ID_67 & 0x0f) == (id2 & 0x0f)) {
-		port_count = 7;
-		mib_port_count = 7;
-		phy_port_count = 5;
-		sw->TAIL_TAG_LOOKUP = (1 << (7 + 3));
-		sw->TAIL_TAG_OVERRIDE = (1 << (7 + 2));
-	} else if ((CHIP_ID_66 & 0x0f) == (id2 & 0x0f)) {
-		port_count = 6;
-		mib_port_count = 6;
-		phy_port_count = 5;
-		sw->TAIL_TAG_LOOKUP = (1 << (7 + 3));
-		sw->TAIL_TAG_OVERRIDE = (1 << (7 + 2));
-	} else if ((CHIP_ID_63 & 0x0f) == (id2 & 0x0f)) {
-		port_count = 3;
-		mib_port_count = 3;
-		phy_port_count = 2;
-		sw->TAIL_TAG_LOOKUP = (1 << (3 + 3));
-		sw->TAIL_TAG_OVERRIDE = (1 << (3 + 2));
-		sw->features |= IS_9893;
-	}
 	if ((sw->features & (HSR_HW | DLR_HW)) && port_count > 3)
 		sw->overrides |= HAVE_MORE_THAN_2_PORTS;
 
@@ -17484,19 +18050,25 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 
 #ifndef CONFIG_KSZ_DSA
 	if (!multi_dev && (avb || sw->features & (PTP_HW) ||
-	    sw->overrides & (USE_802_1X_AUTH)))
-		multi_dev = 2;
+	    sw->overrides & (USE_802_1X_AUTH))) {
+		multi_dev = 3;
+		if (!(sw->overrides & (USE_802_1X_AUTH)))
+			stp = 1;
+	}
 #endif
 
 	sw->multi_dev |= multi_dev;
 	sw->stp |= stp;
 	sw->fast_aging |= fast_aging;
+	if (sw->stp)
+		sw->features |= STP_SUPPORT;
+	if (sw->fast_aging)
+		sw->overrides |= FAST_AGING;
 	sw_setup_zone(sw);
 
 #ifdef CONFIG_KSZ_MRP
 	if (sw->features & AVB_SUPPORT) {
 		sw->features |= MRP_SUPPORT;
-		sw->overrides |= MCAST_FILTER;
 	}
 #endif
 
@@ -17577,6 +18149,8 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 #endif
 
 	INIT_WORK(&sw->set_addr, sw_delayed_set_addr);
+	INIT_WORK(&sw->tx_fwd, sw_tx_fwd);
+	skb_queue_head_init(&sw->txq);
 
 	INIT_WORK(&ks->mib_read, ksz9897_mib_read_work);
 

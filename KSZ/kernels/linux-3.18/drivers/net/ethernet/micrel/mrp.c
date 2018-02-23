@@ -1,6 +1,8 @@
 /*
  *	IEEE 802.1Q Multiple Registration Protocol (MRP)
  *
+ *	Copyright (c) 2016-2017 Microchip Technology Inc.
+ *
  *	Copyright (c) 2012 Massachusetts Institute of Technology
  *
  *	Adapted from code in net/802/garp.c
@@ -303,7 +305,7 @@ mrp_tx_la_action_table[MRP_APPLICANT_MAX + 1] = {
 	[MRP_APPLICANT_LO] = MRP_TX_ACTION_S_IN_OPTIONAL,
 };
 
-#ifdef DBG_MRP
+#ifdef DBG_MRP_APP
 static char *format_event(char *str, enum mrp_event event)
 {
 	switch (event) {
@@ -450,7 +452,9 @@ static char *format_app_state(char *str, enum mrp_applicant_state state)
 	}
 	return str;
 }  /* format_app_state */
+#endif
 
+#ifdef DBG_MRP_REG
 static char *format_reg_state(char *str, enum mrp_registrar_state state)
 {
 	switch (state) {
@@ -490,6 +494,16 @@ static int mrp_attr_cmp(const struct mrp_attr *attr,
 	if (attr->len != len)
 		return attr->len - len;
 	return memcmp(attr->value, value, len);
+}
+
+static int mrp_attr_valid(u8 attrtype, const void *value)
+{
+	return true;
+}
+
+static u8 mrp_attr_size(u8 attrtype, u8 attrlen)
+{
+	return attrlen;
 }
 
 static u8 mrp_attr_len(u8 attrtype, u8 attrlen)
@@ -547,7 +561,8 @@ if (10 == len)
 }
 
 static struct mrp_attr *mrp_attr_create(struct mrp_applicant *app,
-					const void *value, u8 len, u8 type)
+					const void *value, u8 len, u8 type,
+					u8 size)
 {
 	struct rb_node *parent = NULL, **p = &app->mad.rb_node;
 	struct mrp_attr *attr;
@@ -566,7 +581,7 @@ static struct mrp_attr *mrp_attr_create(struct mrp_applicant *app,
 			return attr;
 		}
 	}
-	attr = kmalloc(sizeof(*attr) + len, GFP_ATOMIC);
+	attr = kmalloc(sizeof(*attr) + size, GFP_ATOMIC);
 	if (!attr)
 		return attr;
 	attr->state = MRP_APPLICANT_VO;
@@ -576,6 +591,7 @@ static struct mrp_attr *mrp_attr_create(struct mrp_applicant *app,
 
 	attr->new_state = MRP_APPLICANT_VO;
 	attr->action = MRP_TX_ACTION_NONE;
+	attr->fix_state = MRP_REGISTRAR_LV;
 	attr->reg_state = MRP_REGISTRAR_MT;
 	attr->notify = MRP_NOTIFY_NONE;
 	attr->aging = 0;
@@ -587,10 +603,12 @@ static struct mrp_attr *mrp_attr_create(struct mrp_applicant *app,
 
 static void mrp_attr_destroy(struct mrp_applicant *app, struct mrp_attr *attr)
 {
+#if 0
 	u8 len = app->attr_len(attr->type, attr->len);
 	u8 type = app->attr_type(attr);
 dbg_msg("%s p:%d [%d=%d:%02x]\n", __func__, app->port, app->app->type,
 type, attr->value[len - 1]);
+#endif
 	rb_erase(&attr->node, &app->mad);
 	kfree(attr);
 }
@@ -630,7 +648,7 @@ dbg_msg("aging [%02x] %d\n", attr->value[len - 1], attr->aging);
 #endif
 	if (attr->new_state != attr->state) {
 		if (MRP_APPLICANT_VO == attr->new_state) {
-			if (!attr->aging)
+			if (!attr->aging && attr->fix_state == MRP_REGISTRAR_LV)
 				attr->aging = 4;
 		} else if (MRP_APPLICANT_LO != attr->new_state)
 			attr->aging = 0;
@@ -661,6 +679,7 @@ static void mrp_prepare_tx(struct mrp_applicant *app, u8 attrtype,
 	u8 firstval[20];
 	int firstval_cnt = 0;
 	int firstval_opt = 0;
+	int opt_cnt = 0;
 	struct rb_node *node, *next;
 	struct rb_node *opt = NULL;
 	struct mrp_attr *attr;
@@ -685,6 +704,8 @@ dbg_msg(" no send\n");
 		/* At least one attribute that is trying to send something. */
 		if (last) {
 			last = attr;
+
+			/* Rememeber action so that it can be restored. */
 			last_action = attr->action;
 		}
 		if (firstval_cnt) {
@@ -703,29 +724,37 @@ dbg_msg(" no send\n");
 				    attr->action) {
 					if (!opt) {
 						opt = node;
+						opt_cnt = 1;
 						firstval_opt =
 							firstval_cnt % 3;
 						if (!firstval_opt)
 							firstval_opt = 3;
-					} else
+					} else {
+						++opt_cnt;
 						++firstval_opt;
+					}
+
+					/* Exceed allowed encoding. */
 					if (firstval_opt >= firstval_max)
 						first = NULL;
 				} else {
 					opt = NULL;
+					opt_cnt = 0;
 					firstval_opt = 0;
 				}
 			}
 		}
 		if (!first) {
-			while (firstval_opt) {
+			while (opt_cnt) {
 				first = rb_entry(opt, struct mrp_attr, node);
 				first->action = MRP_TX_ACTION_NONE;
 				opt = rb_next(opt);
-				--firstval_opt;
+				--opt_cnt;
 			}
 			opt = NULL;
 			firstval_opt = 0;
+
+			/* Skip if not needed to send. */
 			if (MRP_TX_ACTION_S_JOIN_IN_OPTIONAL == attr->action ||
 			    MRP_TX_ACTION_S_IN_OPTIONAL == attr->action) {
 				attr->action = MRP_TX_ACTION_NONE;
@@ -783,6 +812,36 @@ static void mrp_4pack_decode(u8 val, u8 vect[], int *i)
 }
 #endif
 
+static void mrp_encode_action(struct mrp_attr *attr, u8 *vectevt)
+{
+	switch (attr->action) {
+	case MRP_TX_ACTION_S_JOIN_IN:
+	case MRP_TX_ACTION_S_JOIN_IN_OPTIONAL:
+		*vectevt = MRP_REGISTRAR_IN == attr->reg_state ?
+			MRP_VECATTR_EVENT_JOIN_IN :
+			MRP_VECATTR_EVENT_JOIN_MT;
+		if (attr->fix_state != MRP_REGISTRAR_LV)
+			*vectevt = MRP_VECATTR_EVENT_JOIN_IN;
+		break;
+	case MRP_TX_ACTION_S_IN:
+	case MRP_TX_ACTION_S_IN_OPTIONAL:
+		*vectevt = MRP_REGISTRAR_IN == attr->reg_state ?
+			MRP_VECATTR_EVENT_IN :
+			MRP_VECATTR_EVENT_MT;
+		if (attr->fix_state != MRP_REGISTRAR_LV)
+			*vectevt = MRP_VECATTR_EVENT_IN;
+		break;
+	case MRP_TX_ACTION_S_NEW:
+		*vectevt = MRP_VECATTR_EVENT_NEW;
+		break;
+	case MRP_TX_ACTION_S_LV:
+		*vectevt = MRP_VECATTR_EVENT_LV;
+		break;
+	default:
+		break;
+	}
+}
+
 /* mrp_vecattr_hdr + attrlen + vaevents + 4 endmarks */
 #define MRP_MIN			(2 + 1 + 4)
 
@@ -824,7 +883,6 @@ static int mrp_tx(struct mrp_applicant *app, u8 *msg_buf, u8 *msg_eof,
 
 	node = app->last_node;
 	if (node) {
-dbg_msg("%s 3\n", __func__);
 		attr = rb_entry(node, struct mrp_attr, node);
 		if (attrtype != attr->type)
 			return 0;
@@ -835,11 +893,11 @@ dbg_msg("%s 3\n", __func__);
 	     node = next) {
 
 		/* Check if there is enough space for all required data. */
-		if (!len && msg_ptr > (msg_eof - msg_min))
-{
+		if (!len && msg_ptr > (msg_eof - msg_min)) {
 dbg_msg(" no space\n");
+			node_break = true;
 			break;
-}
+		}
 
 		attr = rb_entry(node, struct mrp_attr, node);
 		if (attrtype != attr->type)
@@ -850,7 +908,8 @@ dbg_msg(" no space\n");
 				mrp_attr_destroy(app, attr);
 
 			/* In case there are events waiting. */
-			i += 2;
+			if (i)
+				i += 2;
 			goto val_end;
 		}
 		if (len) {
@@ -859,7 +918,8 @@ dbg_msg(" no space\n");
 				/* Process with current node. */
 				next = node;
 				num_break = true;
-				i = 3;
+				if (i)
+					i += 2;
 				goto val_end;
 			}
 		}
@@ -868,28 +928,7 @@ dbg_msg(" no space\n");
 			memcpy(vah->firstattrvalue, firstval, attr->len);
 			msg_ptr += attr->len;
 		}
-		switch (attr->action) {
-		case MRP_TX_ACTION_S_JOIN_IN:
-		case MRP_TX_ACTION_S_JOIN_IN_OPTIONAL:
-			vectevt[i] = MRP_REGISTRAR_IN == attr->reg_state ?
-				MRP_VECATTR_EVENT_JOIN_IN :
-				MRP_VECATTR_EVENT_JOIN_MT;
-			break;
-		case MRP_TX_ACTION_S_IN:
-		case MRP_TX_ACTION_S_IN_OPTIONAL:
-			vectevt[i] = MRP_REGISTRAR_IN == attr->reg_state ?
-				MRP_VECATTR_EVENT_IN :
-				MRP_VECATTR_EVENT_MT;
-			break;
-		case MRP_TX_ACTION_S_NEW:
-			vectevt[i] = MRP_VECATTR_EVENT_NEW;
-			break;
-		case MRP_TX_ACTION_S_LV:
-			vectevt[i] = MRP_VECATTR_EVENT_LV;
-			break;
-		default:
-			break;
-		}
+		mrp_encode_action(attr, &vectevt[i]);
 		if (mrp_applicant_chk(attr))
 			mrp_attr_destroy(app, attr);
 
@@ -897,7 +936,7 @@ dbg_msg(" no space\n");
 		++len;
 
 val_end:
-		if (i >= 3) {
+		if (len && i >= 3) {
 			*msg_ptr++ = mrp_3pack_encode(vectevt, &i);
 			if (msg_ptr > msg_eof - (1 + 4)) {
 				num_break = true;
@@ -911,6 +950,11 @@ val_end:
 			len = 0;
 			num_break = false;
 
+			if (msg_ptr > (msg_eof - msg_min)) {
+				node_break = true;
+				break;
+			}
+
 			vah = (struct mrp_vecattr_hdr *) msg_ptr;
 			msg_ptr += sizeof(struct mrp_vecattr_hdr);
 		}
@@ -923,6 +967,13 @@ val_end:
 		put_unaligned(cpu_to_be16(len), &vah->lenflags);
 		if (app->lva.tx & (1 << (attrtype - 1)))
 			vah->lenflags |= MRP_VECATTR_HDR_FLAG_LA;
+
+	/* Need to send LeaveAll with zero number of attributes. */
+	} else if (app->lva.tx & (1 << (attrtype - 1)) && !node_break) {
+		memset(vah->firstattrvalue, 0, attrlen);
+		msg_ptr += attrlen;
+		put_unaligned(0, &vah->lenflags);
+		vah->lenflags |= MRP_VECATTR_HDR_FLAG_LA;
 	}
 	app->last_node = node;
 
@@ -944,13 +995,19 @@ val_end:
 
 static void mrp_leave_timer_arm(struct mrp_applicant *app)
 {
-	/* Extend the timer in case one is already scheduled. */
-#if 0
-	if (app->timer_arm.leave)
-		return;
+	unsigned long delay;
+
+	delay = mrp_leave_time;
+#if 1
+	if (mrp_10_1_2f_hack)
+		delay -= 200;
+	if (fqtss_hack)
+		delay = 10000;
 #endif
+
+	/* Extend the timer in case one is already scheduled. */
 	mod_timer(&app->leave_timer,
-		  jiffies + msecs_to_jiffies(mrp_leave_time));
+		  jiffies + msecs_to_jiffies(delay));
 	app->timer_arm.leave = 1;
 }
 
@@ -959,10 +1016,6 @@ static int mrp_registrar_event(struct mrp_applicant *app, struct mrp_attr *attr,
 {
 	enum mrp_registrar_state state = attr->reg_state;
 	enum mrp_notification notify = MRP_NOTIFY_NONE;
-#ifdef DBG_MRP
-	char last_reg_str[10];
-	char reg_str[10];
-#endif
 
 	switch (event) {
 	case MRP_EVENT_R_LV:
@@ -984,6 +1037,8 @@ static int mrp_registrar_event(struct mrp_applicant *app, struct mrp_attr *attr,
 			notify = MRP_NOTIFY_JOIN;
 		} else if (MRP_REGISTRAR_LV == attr->reg_state)
 			state = MRP_REGISTRAR_IN;
+		if (attr->changed)
+			notify = MRP_NOTIFY_JOIN;
 		break;
 	case MRP_EVENT_LV_TIMER:
 		if (MRP_REGISTRAR_LV == attr->reg_state) {
@@ -992,7 +1047,7 @@ static int mrp_registrar_event(struct mrp_applicant *app, struct mrp_attr *attr,
 		}
 		break;
 	case MRP_EVENT_FLUSH:
-		if (MRP_REGISTRAR_LV == attr->reg_state)
+		if (MRP_REGISTRAR_MT != attr->reg_state)
 			notify = MRP_NOTIFY_LV;
 		state = MRP_REGISTRAR_MT;
 		break;
@@ -1001,8 +1056,10 @@ static int mrp_registrar_event(struct mrp_applicant *app, struct mrp_attr *attr,
 	default:
 		break;
 	}
-#ifdef DBG_MRP
+#ifdef DBG_MRP_REG
 	if (state != attr->reg_state || (notify && notify != attr->notify)) {
+		char last_reg_str[10];
+		char reg_str[10];
 		u8 len = app->attr_len(attr->type, attr->len);
 		u8 type = app->attr_type(attr);
 
@@ -1015,8 +1072,15 @@ type, attr->value[len - 1],
 	last_reg_str, reg_str, notify);
 	}
 #endif
+
+	/* Either fixed IN or MT */
+	if (attr->fix_state != MRP_REGISTRAR_LV) {
+		state = attr->fix_state;
+		notify = MRP_NOTIFY_NONE;
+	}
 	attr->reg_state = state;
 	attr->notify = notify;
+	attr->changed = 0;
 	return notify != MRP_NOTIFY_NONE;
 }
 
@@ -1026,7 +1090,7 @@ static int mrp_attr_event(struct mrp_applicant *app,
 	enum mrp_applicant_state state;
 	int tx = false;
 	int tx_req = false;
-#ifdef DBG_MRP
+#ifdef DBG_MRP_APP
 	char ev_str[10];
 	char last_app_str[10];
 	char last_new_str[10];
@@ -1049,12 +1113,12 @@ static int mrp_attr_event(struct mrp_applicant *app,
 	if (MRP_EVENT_R_JOIN_IN == event) {
 		if ((MRP_APPLICANT_VO == attr->state ||
 		    MRP_APPLICANT_VP == attr->state) && app->p2p_mac)
-			return tx_req;
+			goto registrar;
 
 	/* Note #5. */
 	} else if (MRP_EVENT_R_IN == event) {
 		if (MRP_APPLICANT_AA == attr->state && !app->p2p_mac)
-			return tx_req;
+			goto registrar;
 	}
 
 	state = mrp_applicant_state_table[attr->state][event];
@@ -1062,6 +1126,7 @@ static int mrp_attr_event(struct mrp_applicant *app,
 		WARN_ON(1);
 		return tx_req;
 	}
+
 	/* Note #8. */
 	if (MRP_APPLICANT_AN == attr->state && MRP_EVENT_TX == event &&
 	    MRP_REGISTRAR_IN != attr->reg_state)
@@ -1090,6 +1155,10 @@ static int mrp_attr_event(struct mrp_applicant *app,
 		case MRP_APPLICANT_VP:
 		case MRP_APPLICANT_AP:
 		case MRP_APPLICANT_LO:
+#if 0
+if (MRP_EVENT_R_MT == event)
+dbg_msg("<%d:%d>", attr->state, state);
+#endif
 
 			/* Note #6. */
 			tx_req = true;
@@ -1115,7 +1184,7 @@ static int mrp_attr_event(struct mrp_applicant *app,
 	attr->new_state = state;
 	if (!tx)
 		attr->state = state;
-#ifdef DBG_MRP
+#ifdef DBG_MRP_APP
 	if (last_state != state || last_action != attr->action) {
 		u8 len = app->attr_len(attr->type, attr->len);
 		u8 type = app->attr_type(attr);
@@ -1134,6 +1203,7 @@ dbg_msg(" %s:%s %s %d\n", app_str, new_str, act_str, tx_req);
 	}
 #endif
 
+registrar:
 	switch (event) {
 	case MRP_EVENT_R_NEW:
 	case MRP_EVENT_R_JOIN_IN:
@@ -1153,8 +1223,18 @@ dbg_msg(" %s:%s %s %d\n", app_str, new_str, act_str, tx_req);
 		break;
 	}
 
+	/* Attribute has been changed.  Need to send. */
+	if (!app->rx && attr->changed) {
+		attr->changed = 0;
+		tx_req |= 1;
+	}
+
 	return tx_req;
 }
+
+#if 1
+static int max_lva;
+#endif
 
 static void mrp_lva_timer_arm(struct mrp_applicant *app)
 {
@@ -1162,16 +1242,24 @@ static void mrp_lva_timer_arm(struct mrp_applicant *app)
 	unsigned long fixed;
 	unsigned long random;
 
-	/* Ignore if one is already scheduled. */
-	if (app->timer_arm.lva)
-		return;
+	/* Extend the timer in case one is already scheduled. */
+	/* LeaveAll timer can be 1.5 longer. */
 	app->timer_arm.lva = 1;
-	random = mrp_lva_time / 4;
-	fixed = msecs_to_jiffies(random * 3);
-	random += random / 4;
+	random = mrp_lva_time / 2;
+	fixed = msecs_to_jiffies(mrp_lva_time);
 	delay = (u64)msecs_to_jiffies(random) * prandom_u32() >> 32;
 	delay += fixed;
+#if 1
+	if (max_lva) {
+		delay = 3000;
+		max_lva = 0;
+	}
+#endif
 	mod_timer(&app->lva_timer, jiffies + delay);
+#if 0
+if (app->port < 3 && app->app->type == 2)
+dbg_msg("  s lva: %d=%lu %lu\n", app->port, delay, jiffies);
+#endif
 }
 
 static int mrp_lva_timer_event(struct mrp_applicant *app, enum mrp_event event)
@@ -1189,10 +1277,23 @@ static int mrp_lva_timer_event(struct mrp_applicant *app, enum mrp_event event)
 		break;
 	case MRP_EVENT_R_LA:
 		state = MRP_TIMER_PASSIVE;
+#if 0
+if (app->port < 3 && app->app->type == 2) {
+dbg_msg("  rla  ");
+}
+#endif
+#if 1
+		if (fqtss_34_2_3_hack)
+			max_lva = 1;
+#endif
 		mrp_lva_timer_arm(app);
 		break;
 	case MRP_EVENT_LVA_TIMER:
 		state = MRP_TIMER_ACTIVE;
+#if 0
+if (app->port < 3 && app->app->type == 2)
+dbg_msg("  timer  ");
+#endif
 		mrp_lva_timer_arm(app);
 		break;
 	default:
@@ -1201,6 +1302,13 @@ static int mrp_lva_timer_event(struct mrp_applicant *app, enum mrp_event event)
 	if (state != app->lva.state && MRP_TIMER_ACTIVE == state)
 		tx_req = true;
 	app->lva.state = state;
+#if 0
+if (app->lva.tx && app->port < 2)
+dbg_msg(" lva: %d=%x %x\n", app->port, app->lva.tx, tx_lva);
+#endif
+#if 0
+if (!app->lva.tx)
+#endif
 	app->lva.tx = tx_lva;
 	return tx_req;
 }
@@ -1248,9 +1356,8 @@ static void mrp_join_timer_arm(struct mrp_applicant *app)
 	if (app->timer_arm.join)
 		return;
 	app->timer_arm.join = 1;
-	random = mrp_join_time / 4;
-	fixed = msecs_to_jiffies(random * 3);
-	random += random / 8;
+	random = mrp_join_time / 10;
+	fixed = msecs_to_jiffies(mrp_join_time);
 	delay = (u64)msecs_to_jiffies(random) * prandom_u32() >> 32;
 	delay += fixed;
 	mod_timer(&app->join_timer, jiffies + delay);
@@ -1260,15 +1367,23 @@ static void mrp_mad_event(struct mrp_applicant *app, enum mrp_event event)
 {
 	struct rb_node *node, *next;
 	struct mrp_attr *attr;
+	enum mrp_event tx_event;
 	int tx_req = 0;
 
+	/* Flush! means leavealltimer!. */
+	if (MRP_EVENT_FLUSH == event)
+		tx_req |= mrp_lva_timer_event(app, MRP_EVENT_LVA_TIMER);
+
 	/* Do this first so that tx! becomes txLA! if LeaveAll is indicated. */
-	if (MRP_EVENT_TX == event || MRP_EVENT_R_LA == event ||
+	if (MRP_EVENT_TX == event ||
+	    (MRP_EVENT_R_LA == event && !app->lva.rx) ||
 	    MRP_EVENT_LVA_TIMER == event)
 		tx_req |= mrp_lva_timer_event(app, event);
+#if 1
 	if (MRP_EVENT_TX == event && app->lva.tx)
 		event = MRP_EVENT_TX_LA;
-#if 1
+#endif
+#if 0
 /*
  * Do this first or after txLAF! ?
  * If first the registrar values will always be empty, prompting the other to
@@ -1298,7 +1413,16 @@ static void mrp_mad_event(struct mrp_applicant *app, enum mrp_event event)
 			if (attrtype != app->lva_type)
 				continue;
 		}
-		tx_req |= mrp_attr_event(app, attr, event);
+		tx_event = event;
+#if 0
+		if (MRP_EVENT_TX == event && app->lva.tx) {
+			u8 attrtype = app->attr_type(attr);
+
+			if (app->lva.tx & (attrtype - 1))
+				tx_event = MRP_EVENT_TX_LA;
+		}
+#endif
+		tx_req |= mrp_attr_event(app, attr, tx_event);
 	}
 	if (MRP_EVENT_PERIODIC == event)
 		mrp_periodic_event(app, MRP_EVENT_PERIODIC);
@@ -1306,21 +1430,20 @@ static void mrp_mad_event(struct mrp_applicant *app, enum mrp_event event)
 		int rc;
 
 		event = 0;
-#if 0
+#if 1
 		app->lva.rx = app->lva.tx;
 #endif
 		rc = app->txpdu(app);
 
 		/* Not all attributes sent. */
-		if (rc) {
+		if (app->last_node) {
 			if (app->lva.tx)
 				event = MRP_EVENT_TX_LAF;
 			else
 				tx_req |= 2;
 		} else if (app->lva.rx) {
-#if 0
+#if 1
 			event = MRP_EVENT_R_LA;
-			tx_req |= mrp_lva_timer_event(app, event);
 #endif
 		}
 		if (event) {
@@ -1401,6 +1524,7 @@ static void mrp_leave_timer_exec(struct mrp_applicant *app)
 	app->timer_arm.leave = 0;
 	mrp_mad_event(app, MRP_EVENT_LV_TIMER);
 	spin_unlock(&app->lock);
+	app->cleanup(app);
 }
 
 static void mrp_leave_timer_work(struct work_struct *work)
@@ -1425,6 +1549,12 @@ static void mrp_lva_timer_exec(struct mrp_applicant *app)
 
 	spin_lock(&app->lock);
 	app->timer_arm.lva = 0;
+#if 0
+if (app->port < 3 && app->app->type == 2) {
+dbg_msg(" lva: %d=%lu %lu\n", app->port, jiffies - app->rla_jiffies, jiffies);
+app->rla_jiffies = jiffies;
+}
+#endif
 	tx_req = mrp_lva_timer_event(app, MRP_EVENT_LVA_TIMER);
 	if (tx_req)
 		mrp_join_timer_arm(app);
@@ -1501,9 +1631,28 @@ dbg_msg(" not create\n");
 #endif
 			return;
 }
-		attr = mrp_attr_create(app, attrvalue, attrlen, attrtype);
+		attr = mrp_attr_create(app, attrvalue, attrlen, attrtype,
+				       app->attr_size(attrtype, attrlen));
 		if (!attr)
 			return;
+	}
+
+#if 1
+	/* AVnu test tool sends Lv and does not expect receiving talker
+	 * declaration in MSRP.c.35.4.5b.
+	 */
+	/* MSRP does not follow standard MRP operation.
+	 * Ignore rLv! if not registered.
+	 */
+	if (event == MRP_EVENT_R_LV &&
+	    app->app->type == MRP_APPLICATION_MSRP &&
+	    (attr->fix_state != MRP_REGISTRAR_LV ||
+	    attr->reg_state != MRP_REGISTRAR_IN))
+		return;
+#endif
+
+	if (app->attr_upd) {
+		attr->changed = app->attr_upd(attrvalue, attr, false);
 	}
 
 	app->rx = 1;
@@ -1519,7 +1668,7 @@ static int mrp_parse_end_mark(u8 **msg_ptr, u8 *msg_eof)
 	if (*msg_ptr > (msg_eof - 2))
 {
 dbg_msg(" e1 %02x %02x; %p %p\n", data[0], data[1], *msg_ptr, msg_eof);
-		return -1;
+		return -2;
 }
 
 	/* End mark can terminte list. */
@@ -1544,25 +1693,29 @@ static int mrp_parse_events(struct mrp_applicant *app,
 
 	vah = (struct mrp_vecattr_hdr *) *msg_ptr;
 	valen = get_unaligned(&vah->lenflags);
-	LA = valen & MRP_VECATTR_HDR_FLAG_LA;
+	LA = valen & ~MRP_VECATTR_HDR_LEN_MASK;
+
+	/* Only LeaveAll is understood in this version. */
+	if (app->ver_diff <= 0 && LA && LA != MRP_VECATTR_HDR_FLAG_LA)
+		return -1;
+	LA &= MRP_VECATTR_HDR_FLAG_LA;
 	valen = be16_to_cpu(valen & MRP_VECATTR_HDR_LEN_MASK);
-	if (!valen)
-		return -1;
-	if (*msg_ptr + (valen + 2) / 3 >= msg_eof)
-		return -1;
 
 	*msg_ptr += sizeof(struct mrp_vecattr_hdr);
 
+	memcpy(firstval, vah->firstattrvalue, attrlen);
+	*msg_ptr += attrlen;
+
+	if (*msg_ptr + (valen + 2) / 3 > msg_eof)
+		return -1;
+
 	/* Do it once for each attribute type. */
-	if (LA && !(app->lva.rx & (1 << attrtype))) {
+	if (!app->dry_run && LA && !(app->lva.rx & (1 << attrtype))) {
 		app->lva_type = attrtype;
 		mrp_mad_event(app, MRP_EVENT_R_LA);
 		app->lva_type = 0;
 		app->lva.rx |= (1 << attrtype);
 	}
-
-	memcpy(firstval, vah->firstattrvalue, attrlen);
-	*msg_ptr += attrlen;
 
 	/* In a VectorAttribute, the Vector contains events which are packed
 	 * three to a byte. We process one byte of the Vector at a time.
@@ -1576,9 +1729,11 @@ static int mrp_parse_events(struct mrp_applicant *app,
 				      __MRP_VECATTR_EVENT_MAX);
 		if (vaevent >= __MRP_VECATTR_EVENT_MAX) {
 			/* The byte is malformed; stop processing. */
-			return -1;
+			return -2;
 		}
-		mrp_update_attr(app, firstval, attrlen, attrtype, vaevent);
+		if (!app->dry_run && app->attr_valid(attrtype, firstval))
+			mrp_update_attr(app, firstval, attrlen, attrtype,
+				vaevent);
 
 		/* If present, extract and process the second event. */
 		if (!--valen)
@@ -1587,7 +1742,9 @@ static int mrp_parse_events(struct mrp_applicant *app,
 			     __MRP_VECATTR_EVENT_MAX);
 		vaevent = vaevents / __MRP_VECATTR_EVENT_MAX;
 		app->attrval_inc(firstval, attrlen);
-		mrp_update_attr(app, firstval, attrlen, attrtype, vaevent);
+		if (!app->dry_run && app->attr_valid(attrtype, firstval))
+			mrp_update_attr(app, firstval, attrlen, attrtype,
+				vaevent);
 
 		/* If present, extract and process the third event. */
 		if (!--valen)
@@ -1595,7 +1752,9 @@ static int mrp_parse_events(struct mrp_applicant *app,
 		vaevents %= __MRP_VECATTR_EVENT_MAX;
 		vaevent = vaevents;
 		app->attrval_inc(firstval, attrlen);
-		mrp_update_attr(app, firstval, attrlen, attrtype, vaevent);
+		if (!app->dry_run && app->attr_valid(attrtype, firstval))
+			mrp_update_attr(app, firstval, attrlen, attrtype,
+				vaevent);
 		app->attrval_inc(firstval, attrlen);
 		--valen;
 	}
@@ -1622,6 +1781,10 @@ static int mrp_parse_msg(struct mrp_applicant *app, u8 **msg_ptr, u8 *msg_eof)
 	if (rc < 0)
 		return -1;
 
+	/* Attribute not understood but not in future protocol. */
+	if (rc && (app->ver_diff <= 0 || !app->msg_cnt))
+		return -1;
+
 	*msg_ptr += sizeof(struct mrp_msg_hdr);
 	while (*msg_ptr < (msg_eof - 3)) {
 		rc = mrp_parse_events(app, msg_ptr, msg_eof,
@@ -1631,8 +1794,11 @@ static int mrp_parse_msg(struct mrp_applicant *app, u8 **msg_ptr, u8 *msg_eof)
 
 		/* End mark terminates the vector list. */
 		rc = mrp_parse_end_mark(msg_ptr, msg_eof);
-		if (rc <= 0)
+		if (rc <= 0) {
+			if (app->dry_run)
+				rc = 0;
 			return rc;
+		}
 	}
 	return 0;
 }
@@ -1645,8 +1811,8 @@ static int mrp_rx(struct mrp_applicant *app, u8 *data, int len)
 	int rc;
 
 	ph = (struct mrp_pdu_hdr *) data;
-	if (ph->version != app->app->version)
-		return -1;
+	app->ver_diff = ph->version - app->app->version;
+	app->msg_cnt = 0;
 
 	msg_ptr = (u8 *)(ph + 1);
 	msg_eof = msg_ptr + len - sizeof(struct mrp_pdu_hdr);
@@ -1657,28 +1823,36 @@ static int mrp_rx(struct mrp_applicant *app, u8 *data, int len)
 		app->lva.rx = 0;
 
 		rc = mrp_parse_msg(app, &msg_ptr, msg_eof);
-		if (rc < 0)
+		if (rc < 0) {
+			if (app->dry_run && rc == -2)
+				rc = 0;
 			return rc;
+		}
+		app->msg_cnt++;
 
 		/* End mark terminates the frame. */
 		rc = mrp_parse_end_mark(&msg_ptr, msg_eof);
-		if (rc <= 0)
+		if (rc <= 0) {
+			if (app->dry_run)
+				rc = 0;
 			return rc;
+		}
 	}
 	return 0;
 }
 
 static int mrp_txpdu(struct mrp_applicant *app, u8 *msg_buf, u8 *msg_ptr,
-	u8 *msg_eof, int err)
+	u8 *msg_eof)
 {
 	/* Have something to send. */
 	if (msg_ptr != msg_buf) {
+		int rc;
 #ifndef DBG_MRP_RX
 		struct mrp_info *mrp = app->parent;
 #endif
 
 		/* Reset txLA flags if not txLAF. */
-		if (!err)
+		if (!app->last_node)
 			app->lva.tx = 0;
 		if (msg_ptr <= (msg_eof - 2)) {
 			*msg_ptr++ = MRP_END_MARK;
@@ -1687,22 +1861,22 @@ static int mrp_txpdu(struct mrp_applicant *app, u8 *msg_buf, u8 *msg_ptr,
 		skb_put(app->pdu, msg_ptr - msg_buf);
 		dev_hard_header(app->pdu, app->dev,
 			ntohs(app->app->pkttype.type),
-			app->app->group_address, app->dev->dev_addr,
+			app->group_address, app->src_addr,
 			app->pdu->len);
-#if 1
+#if 0
 		if (app->app->type == 2 && 1 == app->port && app->rla_jiffies) {
 if (jiffies - app->rla_jiffies > 20)
 dbg_msg("p:%d %d %lu: \n", app->port, app->app->type, jiffies - app->rla_jiffies);
 app->rla_jiffies = 0;
-#endif
 		}
+#endif
 #ifdef DBG_MRP_TX
-		for (err = 0; err < app->pdu->len; err++) {
-			dbg_msg("%02x ", app->pdu->data[err]);
-			if ((err % 16) == 15)
+		for (rc = 0; rc < app->pdu->len; rc++) {
+			dbg_msg("%02x ", app->pdu->data[rc]);
+			if ((rc % 16) == 15)
 				dbg_msg("\n");
 		}
-		if ((err % 16))
+		if ((rc % 16))
 			dbg_msg("\n");
 #endif
 #ifdef DBG_MRP_RX
@@ -1712,7 +1886,7 @@ app->rla_jiffies = 0;
 #ifdef MRP_PASSTHRU
 		kfree_skb(app->pdu);
 #else
-		err = proc_mrp_xmit(mrp, app->port, app->pdu);
+		rc = proc_mrp_xmit(mrp, app->port, app->pdu);
 #endif
 #endif
 		app->pdu = NULL;
@@ -1729,43 +1903,80 @@ static int mrp_req_new(struct mrp_applicant *app,
 	struct mrp_attr *attr;
 
 	spin_lock_bh(&app->lock);
-	attr = mrp_attr_create(app, value, len, type);
+
+	/* Create automatically returns found attribute. */
+	attr = mrp_attr_create(app, value, len, type,
+			       app->attr_size(type, len));
 	if (!attr) {
 		spin_unlock_bh(&app->lock);
 		return -ENOMEM;
 	}
 
-	/* Not newly created attribute does not update the rest of data. */
-	if (MRP_EVENT_NEW == event && app->attr_upd)
-		app->attr_upd(value, attr);
+	/* Some data in the attribute can be changed. */
+	if (app->attr_upd)
+		attr->changed = app->attr_upd(value, attr, true);
 	if (mrp_attr_event(app, attr, event))
 		mrp_join_timer_arm(app);
 	spin_unlock_bh(&app->lock);
 	return 0;
 }
 
-static void mrp_req_leave(struct mrp_applicant *app,
+static int mrp_req_leave(struct mrp_applicant *app,
 	const void *value, u8 len, u8 type)
 {
 	struct mrp_attr *attr;
+	int rc;
 
 	spin_lock_bh(&app->lock);
 	attr = mrp_attr_lookup(app, value, len, type);
 	if (!attr) {
 		spin_unlock_bh(&app->lock);
-		return;
+		return 0;
 	}
-	if (mrp_attr_event(app, attr, MRP_EVENT_LV))
+	rc = mrp_attr_event(app, attr, MRP_EVENT_LV);
+	if (rc)
 		mrp_join_timer_arm(app);
 	spin_unlock_bh(&app->lock);
+	return rc;
+}
+
+static void mrp_req_set(struct mrp_applicant *app,
+	const void *value, u8 len, u8 type, enum mrp_registrar_state state)
+{
+	struct mrp_attr *attr;
+
+	spin_lock_bh(&app->lock);
+
+	/* Create automatically returns found attribute. */
+	attr = mrp_attr_create(app, value, len, type,
+			       app->attr_size(type, len));
+	if (!attr) {
+		spin_unlock_bh(&app->lock);
+		return;
+	}
+	if (attr->fix_state == state) {
+		spin_unlock_bh(&app->lock);
+		return;
+	}
+	attr->fix_state = state;
+	if (state != MRP_REGISTRAR_LV) {
+		attr->reg_state = state;
+		attr->notify = (state == MRP_REGISTRAR_IN) ?
+			MRP_NOTIFY_NEW : MRP_NOTIFY_LV;
+	} else if (MRP_APPLICANT_VO == attr->state)
+		attr->aging = 2;
+	spin_unlock_bh(&app->lock);
+	if (state != MRP_REGISTRAR_LV)
+		app->acton(app, attr);
 }
 
 #ifndef NETIF_F_HW_VLAN_CTAG_FILTER
 static struct rnd_state rnd;
 #endif
 
-static int mrp_init_applicant(struct mrp_port *port, struct net_device *dev,
-	struct mrp_application *appl)
+static int mrp_init_applicant(struct mrp_port *port, void *mrp, u8 num,
+			      struct net_device *dev,
+			      struct mrp_application *appl)
 {
 	struct mrp_applicant *app;
 	int err;
@@ -1775,36 +1986,30 @@ static int mrp_init_applicant(struct mrp_port *port, struct net_device *dev,
 	if (!app)
 		goto err2;
 
-	err = dev_mc_add(dev, appl->group_address);
-	if (err < 0)
-		goto err3;
-
 #ifndef NETIF_F_HW_VLAN_CTAG_FILTER
 	app->rnd = &rnd;
 #endif
+	app->parent = mrp;
+	app->port = num;
 	app->dev = dev;
 	app->app = appl;
 	app->mad = RB_ROOT;
 	app->p2p_mac = 1;
+	app->group_address = appl->group_address;
+	inc_mac_addr(app->src_addr, dev->dev_addr, 0);
+#if 0
+	inc_mac_addr(app->src_addr, dev->dev_addr, num + 1);
+#endif
 	spin_lock_init(&app->lock);
 	skb_queue_head_init(&app->queue);
 	rcu_assign_pointer(port->applicants[appl->type], app);
 	INIT_WORK(&app->join_work, mrp_join_timer_work);
 	setup_timer(&app->join_timer, mrp_join_timer, (unsigned long)app);
-#if 0
-	mrp_join_timer_arm(app);
-#endif
 
 	INIT_WORK(&app->periodic_work, mrp_periodic_timer_work);
 	setup_timer(&app->periodic_timer, mrp_periodic_timer,
 		    (unsigned long)app);
-	app->periodic.state = MRP_TIMER_ACTIVE;
-#if 0
-	mrp_periodic_timer_arm(app);
-#endif
-#if 0
-	mrp_periodic_event(app, MRP_EVENT_PERIODIC_DISABLE);
-#endif
+	app->periodic.state = MRP_TIMER_PASSIVE;
 
 	INIT_WORK(&app->leave_work, mrp_leave_timer_work);
 	setup_timer(&app->leave_timer, mrp_leave_timer, (unsigned long)app);
@@ -1815,8 +2020,6 @@ static int mrp_init_applicant(struct mrp_port *port, struct net_device *dev,
 	mrp_lva_timer_arm(app);
 	return 0;
 
-err3:
-	kfree(app);
 err2:
 	return err;
 }
@@ -1847,7 +2050,6 @@ static void mrp_uninit_applicant(struct mrp_port *port,
 	flush_work(&app->leave_work);
 	flush_work(&app->lva_work);
 
-	dev_mc_del(app->dev, appl->group_address);
 	kfree_rcu(app, rcu);
 }
 

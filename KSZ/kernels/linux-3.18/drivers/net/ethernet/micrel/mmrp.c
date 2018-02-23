@@ -1,7 +1,7 @@
 /*
  *	IEEE 802.1Q Multiple MAC Registration Protocol (MMRP)
  *
- *	Copyright (c) 2016 Microchip Technology Inc.
+ *	Copyright (c) 2016-2017 Microchip Technology Inc.
  *
  *	Copyright (c) 2012 Massachusetts Institute of Technology
  *
@@ -42,11 +42,23 @@ static int mmrp_attr_chk(u8 attrtype, u8 attrlen)
 		return 0;
 	else if (MMRP_ATTR_SVC == attrtype && 1 == attrlen)
 		return 0;
+	if (MMRP_ATTR_MAC != attrtype &&
+	    MMRP_ATTR_SVC != attrtype)
+		return 1;
 	return -1;
 }
 
 static int mmrp_rxpdu(struct mrp_applicant *app, u8 *data, int len)
 {
+	int rc;
+
+	app->dry_run = 1;
+	rc = mrp_rx(app, data, len);
+
+	/* Discard entire PDU if malformed. */
+	if (rc < 0)
+		return 0;
+	app->dry_run = 0;
 	return mrp_rx(app, data, len);
 }
 
@@ -58,6 +70,9 @@ static int mmrp_txpdu(struct mrp_applicant *app)
 	u8 *msg_eof;
 	u8 *msg_ptr;
 
+	if (!app->normal)
+		return 0;
+
 	err = mrp_pdu_init(app);
 	if (err < 0)
 		return err;
@@ -67,40 +82,52 @@ static int mmrp_txpdu(struct mrp_applicant *app)
 	msg_buf++;
 	msg_ptr = msg_buf;
 
-	err = mrp_tx(app, msg_ptr, msg_eof, &bytes,
-		MMRP_ATTR_MAC, ETH_ALEN, MMRP_MAC_OPT_MAX, MMRP_MAC_MIN);
+	if (app->normal & (1 << MMRP_ATTR_MAC)) {
+		err = mrp_tx(app, msg_ptr, msg_eof, &bytes,
+			     MMRP_ATTR_MAC, ETH_ALEN, MMRP_MAC_OPT_MAX,
+			     MMRP_MAC_MIN);
 
-	/* LeaveAll for MAC attribute type sent. */
-	if (bytes) {
-		msg_ptr += bytes;
-		app->lva.tx &= ~(1 << (MMRP_ATTR_MAC - 1));
+		/* LeaveAll for MAC attribute type sent. */
+		if (bytes) {
+			msg_ptr += bytes;
+			app->lva.tx &= ~(1 << (MMRP_ATTR_MAC - 1));
 
-		/* No more space. */
-		if (-1 == err)
-			goto send;
+			/* No more space. */
+			if (-1 == err)
+				goto send;
+		}
 	}
 
-	err = mrp_tx(app, msg_ptr, msg_eof, &bytes,
-		MMRP_ATTR_SVC, 1, MMRP_SVC_OPT_MAX, MMRP_SVC_MIN);
+#if 1
+	if (app->normal & (1 << MMRP_ATTR_SVC)) {
+		err = mrp_tx(app, msg_ptr, msg_eof, &bytes,
+			     MMRP_ATTR_SVC, 1, MMRP_SVC_OPT_MAX, MMRP_SVC_MIN);
 
-	/* LeaveAll for SVC attribute type sent. */
-	if (bytes) {
-		msg_ptr += bytes;
-		app->lva.tx &= ~(1 << (MMRP_ATTR_SVC - 1));
+		/* LeaveAll for SVC attribute type sent. */
+		if (bytes) {
+			msg_ptr += bytes;
+			app->lva.tx &= ~(1 << (MMRP_ATTR_SVC - 1));
 
-		/* No more space. */
-		if (-1 == err)
-			goto send;
+			/* No more space. */
+			if (-1 == err)
+				goto send;
+		}
 	}
+#endif
+	app->lva.tx = 0;
 
 send:
-	return mrp_txpdu(app, msg_buf, msg_ptr, msg_eof, err);
+	return mrp_txpdu(app, msg_buf, msg_ptr, msg_eof);
 }
 
-static int mmrp_req_join_mac(struct mrp_applicant *app, u8 *addr)
+static int mmrp_req_join_mac(struct mrp_applicant *app, u8 *addr, u8 new_decl)
 {
+	if (new_decl)
+		new_decl = MRP_EVENT_NEW;
+	else
+		new_decl = MRP_EVENT_JOIN;
 	return mrp_req_new(app, addr, ETH_ALEN, MMRP_ATTR_MAC,
-		MRP_EVENT_JOIN);
+		new_decl);
 }
 
 #if 0
@@ -111,30 +138,40 @@ static int mmrp_req_join_svc(struct mrp_applicant *app, u8 svc)
 }
 #endif
 
-static void mmrp_req_leave_mac(struct mrp_applicant *app, u8 *addr)
+static int mmrp_req_leave_mac(struct mrp_applicant *app, u8 *addr)
 {
-	mrp_req_leave(app, addr, ETH_ALEN, MMRP_ATTR_MAC);
+	return mrp_req_leave(app, addr, ETH_ALEN, MMRP_ATTR_MAC);
 }
 
 #if 0
-static void mmrp_req_leave_svc(struct mrp_applicant *app, u8 svc)
+static int mmrp_req_leave_svc(struct mrp_applicant *app, u8 svc)
 {
-	mrp_req_leave(app, &svc, 1, MMRP_ATTR_SVC);
+	return mrp_req_leave(app, &svc, 1, MMRP_ATTR_SVC);
 }
 #endif
 
-static void mmrp_init_application(struct mrp_applicant *app, void *mrp, u8 port,
-	void (*acton)(struct mrp_applicant *app, struct mrp_attr *attr))
+static void mmrp_req_set_mac(struct mrp_applicant *app, u8 *addr,
+			enum mrp_registrar_state state)
 {
-	app->parent = mrp;
-	app->port = port;
+	mrp_req_set(app, addr, ETH_ALEN, MMRP_ATTR_MAC, state);
+}
+
+static void mmrp_init_application(struct mrp_applicant *app,
+				  void (*acton)(struct mrp_applicant *app,
+				  struct mrp_attr *attr),
+				  void (*cleanup)(struct mrp_applicant *app))
+{
 	app->attrval_inc = mrp_attrvalue_inc;
 	app->attr_chk = mmrp_attr_chk;
 	app->attr_cmp = mrp_attr_cmp;
+	app->attr_valid = mrp_attr_valid;
+	app->attr_size = mrp_attr_size;
 	app->attr_len = mrp_attr_len;
 	app->attr_type = mrp_attr_type;
 	app->rxpdu = mmrp_rxpdu;
 	app->txpdu = mmrp_txpdu;
 	app->acton = acton;
+	app->cleanup = cleanup;
+	app->normal = (1 << MMRP_ATTR_MAC);
 }
 

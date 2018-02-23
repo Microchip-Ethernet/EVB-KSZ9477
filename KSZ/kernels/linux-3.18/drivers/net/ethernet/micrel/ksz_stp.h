@@ -164,6 +164,7 @@ struct ksz_stp_timers {
 	 * Topology Change timer is used to send TCN Messages.
 	 */
 	uint tcWhile_;
+	uint tcDetected_;
 };
 
 struct stp_admin_vars {
@@ -228,7 +229,7 @@ struct stp_vars {
 	struct stp_times portTimes_;
 };
 
-#define NUM_OF_PORT_TIMERS		(8 + 1)
+#define NUM_OF_PORT_TIMERS		(9 + 1)
 
 struct stp_port_vars {
 	uint timers[NUM_OF_PORT_TIMERS];
@@ -319,6 +320,7 @@ struct stp_ops {
 
 	int (*dev_req)(struct ksz_stp_info *stp, char *arg, void *info);
 
+	int (*get_tcDetected)(struct ksz_stp_info *info, int p);
 };
 
 struct ksz_stp_info {

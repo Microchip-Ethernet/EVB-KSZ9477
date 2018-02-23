@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8692 Ethernet driver
  *
- * Copyright (c) 2015-2017 Microchip Technology Inc.
+ * Copyright (c) 2015-2018 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -4113,15 +4113,13 @@ static inline int rx_proc(struct dev_info *hw_priv, struct ksz_hw *hw,
 #ifdef CONFIG_1588_PTP
 	ptr = ptp;
 	if (sw_is_switch(sw) && sw->features & PTP_HW) {
-		if (ptp->ops->drop_pkt(ptp, skb, sw->vlan_id, &tag, &ptp_tag)) {
+		if (ptp->ops->drop_pkt(ptp, skb, sw->vlan_id, &tag, &ptp_tag,
+				       &forward)) {
 			dev_kfree_skb_irq(skb);
 			return 0;
 		}
-		if (ptp_tag) {
+		if (ptp_tag)
 			rx_tstamp = ptp->ops->get_rx_tstamp;
-			if (!forward)
-				forward = FWD_VLAN_DEV | FWD_MAIN_DEV;
-		}
 	}
 #endif
 #if defined(CONFIG_KSZ_SWITCH)
@@ -4149,7 +4147,7 @@ static inline int rx_proc(struct dev_info *hw_priv, struct ksz_hw *hw,
 		/* No VLAN port forwarding; need to send to parent. */
 		if ((forward & FWD_VLAN_DEV) && !tag)
 			forward &= ~FWD_VLAN_DEV;
-		dev = sw->net_ops->parent_rx(sw, dev, skb, forward,
+		dev = sw->net_ops->parent_rx(sw, dev, skb, &forward,
 			&parent_dev, &parent_skb);
 
 		/* dev may change. */
@@ -6084,42 +6082,49 @@ static int netdev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 #ifdef CONFIG_1588_PTP
 	case SIOCSHWTSTAMP:
 		result = -EOPNOTSUPP;
-		if (sw->features & PTP_HW)
-			result = ptp->ops->hwtstamp_ioctl(ptp, ifr);
+		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
+			int i;
+			int p;
+			u16 ports;
+
+			ports = 0;
+			for (i = 0, p = priv->port.first_port;
+			     i < priv->port.port_cnt; i++, p++)
+				ports |= (1 << p);
+			ptp = &sw->ptp_hw;
+			result = ptp->ops->hwtstamp_ioctl(ptp, ifr, ports);
+		}
 		break;
 	case SIOCDEVPRIVATE + 15:
 		result = -EOPNOTSUPP;
-		if (sw->features & PTP_HW)
+		if (sw_is_switch(sw) && (sw->features & PTP_HW))
 			result = ptp->ops->dev_req(ptp, priv->port.first_port,
 				ifr->ifr_data, NULL);
 		break;
 #endif
 #ifdef CONFIG_KSZ_MRP
 	case SIOCDEVPRIVATE + 14:
-	{
-		struct mrp_info *mrp = &sw->mrp;
-
 		result = -EOPNOTSUPP;
-		if (sw->features & MRP_SUPPORT)
+		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
+			struct mrp_info *mrp = &sw->mrp;
+
 			result = mrp->ops->dev_req(mrp, priv->port.first_port,
 				ifr->ifr_data);
+		}
 		break;
-	}
 #endif
 #ifdef CONFIG_HAVE_KSZ9897
 	case SIOCDEVPRIVATE + 13:
-	{
-		struct ksz_sw *sw = hw_priv->sw;
-
-		result = sw->ops->dev_req(sw, priv->port.first_port,
-			ifr->ifr_data, NULL);
+		if (sw_is_switch(sw)) {
+			result = sw->ops->dev_req(sw, priv->port.first_port,
+				ifr->ifr_data, NULL);
+		}
 		break;
-	}
 #endif
 	default:
 		result = -EOPNOTSUPP;
 #ifdef CONFIG_1588_PTP
-		if (sw->features & PTP_HW)
+		if (sw_is_switch(sw) && (sw->features & PTP_HW))
 			result = ptp->ops->ixxat_ioctl(ptp, cmd, ifr);
 #endif
 	}
@@ -7999,7 +8004,8 @@ static int netdev_create(struct net_device *dev)
 	dev->irq = hw_priv->hw.shift;
 	dev->base_addr = 0;
 	dev->mem_end = dev->mem_start + BASE_IO_RANGE - 1;
-	memcpy(dev->dev_addr, hw_priv->hw.override_addr, ETH_ALEN);
+	if (empty_addr(dev->dev_addr))
+		memcpy(dev->dev_addr, hw_priv->hw.override_addr, ETH_ALEN);
 	dev->netdev_ops = &netdev_ops;
 	dev->ethtool_ops = &netdev_ethtool_ops;
 	return register_netdev(dev);

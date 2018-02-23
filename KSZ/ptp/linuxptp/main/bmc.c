@@ -130,7 +130,7 @@ enum port_state bmc_state_decision(struct clock *c, struct port *r)
 	port_best = port_best_foreign(r);
 	ps = port_state(r);
 
-	if (!port_best && PS_LISTENING == ps)
+	if (!port_best && (PS_LISTENING == ps || PS_FAULTY == ps))
 		return ps;
 
 	if (clock_class(c) <= 127) {

@@ -37,6 +37,7 @@ struct interface {
 	STAILQ_ENTRY(interface) list;
 	char name[MAX_IFNAME_SIZE + 1];
 #ifdef KSZ_1588_PTP
+	char basename[MAX_IFNAME_SIZE + 1];
 	char devname[MAX_IFNAME_SIZE + 1];
 #endif
 	struct sk_ts_info ts_info;

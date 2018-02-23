@@ -23,6 +23,7 @@
 #include "dm.h"
 #include "ds.h"
 #include "config.h"
+#include "fsm.h"
 #include "notification.h"
 #include "servo.h"
 #include "tlv.h"
@@ -121,6 +122,8 @@ struct port *clock_first_port(struct clock *c);
  * @param f  Pointer to the TLV.
  */
 void clock_follow_up_info(struct clock *c, struct follow_up_info_tlv *f);
+void clock_get_follow_up_info(struct clock *c, struct follow_up_info_tlv *f);
+void clock_set_follow_up_info(struct clock *c);
 
 /**
  * Obtain the gmCapable flag from a clock's default data set.
@@ -315,9 +318,30 @@ UInteger8 get_port_cnt(struct clock *c);
 UInteger32 get_min_sync_interval(struct clock *c);
 void set_min_sync_interval(struct clock *c, UInteger32 interval);
 int get_master_port(struct clock *c);
+struct port *get_slave_port(struct clock *c);
 void set_master_port(struct clock *c, int p);
+void set_slave_port(struct clock *c, struct port *p);
+int is_host_port(struct clock *c, struct port *p);
+int is_peer_port(struct clock *c, struct port *p);
+int skip_host_port(struct clock *c, struct port *p);
+void update_dev_cnt(struct clock *c, int cnt);
+int get_dev_cnt(struct clock *c);
+struct port *get_port(struct clock *c, int index);
 void set_master_utc_offset(struct clock *c, int offset);
 int clock_syntonized(struct clock *c);
+void clock_set_port_state(struct clock *c, enum fsm_event event);
+int is_slave_port(struct clock *c, struct port *p);
+int port_dispatched(struct clock *c);
+void clock_port_dispatch(struct clock *c, struct port *p);
+void clock_clear_sync_fup(struct clock *c, int n);
+void clock_clear_sync_tx(struct clock *c, int n);
+void clock_update_sync(struct clock *c, int n, struct timespec *ts,
+	Integer64 corr, struct timestamp *timestamp);
+void clock_update_fup(struct clock *c, int n, Integer64 corr,
+	struct timestamp *timestamp);
+void clock_update_sync_tx(struct clock *c, int n);
+void clock_update_port_grandmaster(struct clock *c);
+int skip_sync_check(struct clock *c);
 #endif
 
 #endif

@@ -48,6 +48,9 @@
 
 struct raw {
 	struct transport t;
+#ifdef KSZ_1588_PTP
+	struct address mac_addr;
+#endif
 	struct address src_addr;
 	struct address ptp_addr;
 	struct address p2p_addr;
@@ -77,7 +80,7 @@ static struct sock_filter raw_filter[N_RAW_FILTER] = {
 	{OP_LDB,  0, 0, ETH_HLEN    },
 	{OP_AND,  0, 0, PTP_GEN_BIT }, /*test general bit*/
 	{OP_JEQ,  0, 1, 0           }, /*0,1=accept event; 1,0=accept general*/
-	{OP_RETK, 0, 0, 1500        }, /*accept*/
+	{OP_RETK, 0, 0, 1518        }, /*accept*/
 	{OP_RETK, 0, 0, 0           }, /*reject*/
 };
 
@@ -241,6 +244,20 @@ static int raw_open(struct transport *t, const char *name,
 	if (sk_general_init(gfd))
 		goto no_timestamping;
 
+#ifdef KSZ_1588_PTP
+	do {
+		char tmp[80];
+		char *dot;
+
+		mac_to_addr(&raw->mac_addr, raw->src_addr.sll.sll_addr);
+		strncpy(tmp, name, sizeof(tmp));
+		dot = strchr(tmp, '.');
+		if (dot) {
+			*dot = '\0';
+			sk_interface_macaddr(tmp, &raw->mac_addr);
+		}
+	} while (0);
+#endif
 	fda->fd[FD_EVENT] = efd;
 	fda->fd[FD_GENERAL] = gfd;
 	return 0;
@@ -332,6 +349,10 @@ static int raw_send(struct transport *t, struct fdarray *fda, int event,
 	hdr = (struct eth_hdr *) ptr;
 	addr_to_mac(&hdr->dst, addr);
 	addr_to_mac(&hdr->src, &raw->src_addr);
+#ifdef KSZ_1588_PTP_
+	if (!peer)
+		addr_to_mac(&hdr->src, &raw->mac_addr);
+#endif
 
 	hdr->type = htons(ETH_P_1588);
 

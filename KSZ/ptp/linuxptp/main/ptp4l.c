@@ -81,6 +81,7 @@ int main(int argc, char *argv[])
 	char dev_names[20];
 	int mports = 0;
 	int two_step = 0;
+	int vlan = 0;
 #endif
 
 	if (handle_term_signals())
@@ -155,6 +156,7 @@ int main(int argc, char *argv[])
 		case 'R':
 			if (config_set_int(cfg, "c37_238", 1))
 				goto out;
+			vlan = 1;
 			break;
 		case 'Z':
 			if (config_set_int(cfg, "twoStepFlag", 1))
@@ -250,22 +252,45 @@ int main(int argc, char *argv[])
 		int len;
 		char port_names[20];
 		char *dot;
+		char *dot2;
 
 		len = strlen(dev_names);
 		strcpy(port_names, dev_names);
 		dot = strchr(port_names, '.');
 		if (dot) {
 			dot++;
+
+			/* This is the VLAN extension. */
+			dot2 = strchr(dot, '.');
 			lan = atoi(dot);
 			*dot = '\0';
-		} else {
+		} else if (!vlan) {
 			lan = dev_names[len - 1] - '0';
 			port_names[len - 1] = '\0';
+		} else {
+			fprintf(stderr, "VLAN configuration not right\n");
+			goto out;
 		}
 		for (i = cfg->n_interfaces; i < mports; i++) {
-			sprintf(dev_names, "%s%u", port_names, lan + i);
+			if (dot2)
+				sprintf(dev_names, "%s%u%s", port_names,
+					lan + i, dot2);
+			else
+				sprintf(dev_names, "%s%u", port_names,
+					lan + i);
 			if (!config_create_interface(dev_names, cfg))
 				break;
+		}
+
+		/* Create one final device for master clock operation. */
+		if (dot && config_get_int(cfg, NULL, "transparent")) {
+			dot--;
+			*dot = '\0';
+			if (dot2)
+				sprintf(dev_names, "%s%s", port_names, dot2);
+			else
+				sprintf(dev_names, "%s", port_names);
+			config_create_interface(dev_names, cfg);
 		}
 	}
 #endif

@@ -616,6 +616,7 @@ enum {
 	DEV_PTP_UTC_OFFSET,
 	DEV_PTP_TIMESTAMP,
 	DEV_PTP_MSG,
+	DEV_PTP_PORT_CFG,
 };
 
 #ifndef TSM_CMD_CLOCK_SET
@@ -703,11 +704,18 @@ struct tsm_get_time {
 	u32 nsec;
 } __packed;
 
-#define PTP_CAN_RX_TIMESTAMP		(1 << 0)
-#define PTP_KNOW_ABOUT_LATENCY		(1 << 1)
-#define PTP_HAVE_MULT_DEVICES		(1 << 2)
-#define PTP_HAVE_MULT_PORTS		(1 << 3)
-#define PTP_KNOW_ABOUT_MULT_PORTS	(1 << 4)
+#define BIT(x)				(1 << (x))
+
+#define PTP_CAN_RX_TIMESTAMP		BIT(0)
+#define PTP_KNOW_ABOUT_LATENCY		BIT(1)
+#define PTP_HAVE_MULT_DEVICES		BIT(2)
+#define PTP_HAVE_MULT_PORTS		BIT(3)
+#define PTP_KNOW_ABOUT_MULT_PORTS	BIT(4)
+#define PTP_USE_RESERVED_FIELDS		BIT(5)
+#define PTP_SEPARATE_PATHS		BIT(6)
+
+#define PTP_PORT_ENABLED		BIT(0)
+#define PTP_PORT_ASCAPABLE		BIT(1)
 
 #ifdef USE_DEV_IOCTL
 #define DEV_IO_PTP			0

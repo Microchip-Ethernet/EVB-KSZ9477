@@ -134,11 +134,16 @@ struct clock {
 	int transparent;
 	int port_mask;
 	int master_port;
+	int dev_cnt;
 	int drift;
+	int skip_sync_check;
 	UInteger8 port_cnt;
 	UInteger8 version;
 	UInteger32 access_delay;
 	UInteger32 min_sync_interval;
+	struct port *dispatch;
+	struct port *host_port;
+	struct port *slave_port;
 #endif
 };
 
@@ -287,14 +292,13 @@ void clock_destroy(struct clock *c)
 {
 	struct port *p, *tmp;
 
-#ifdef KSZ_1588_PTP
-	p = LIST_FIRST(&c->ports);
-	port_exit_ptp(p);
-#endif
 	clock_flush_subscriptions(c);
 	LIST_FOREACH_SAFE(p, &c->ports, list, tmp) {
 		clock_remove_port(c, p);
 	}
+#ifdef KSZ_1588_PTP
+	port_exit_ptp(c);
+#endif
 	if (c->pollfd[0].fd >= 0) {
 		rtnl_close(c->pollfd[0].fd);
 	}
@@ -577,13 +581,23 @@ int clock_master_lost(struct clock *c)
 {
 	enum port_state state;
 	struct port *p;
+int n = 0;
 
 	LIST_FOREACH(p, &c->ports, list) {
+n++;
+		if (skip_host_port(c, p))
+			continue;
 		state = port_state(p);
 		if (PS_SLAVE == state ||
 		    PS_UNCALIBRATED == state)
+{
+if (!c->slave_port)
+printf(" no slave? %d\n", n);
 			return 0;
+}
 	}
+if (c->slave_port)
+printf(" slave ?\n");
 	return 1;
 }
 
@@ -593,6 +607,8 @@ int clock_master_selected(struct clock *c)
 	struct port *p;
 
 	LIST_FOREACH(p, &c->ports, list) {
+		if (p == c->host_port)
+			continue;
 		state = port_state(p);
 		if (PS_MASTER == state || PS_GRAND_MASTER == state)
 			return 1;
@@ -769,6 +785,17 @@ static void clock_update_slave(struct clock *c)
 	pds->grandmasterClockQuality   = msg->announce.grandmasterClockQuality;
 	pds->grandmasterPriority1      = msg->announce.grandmasterPriority1;
 	pds->grandmasterPriority2      = msg->announce.grandmasterPriority2;
+
+#ifdef KSZ_1588_PTP
+	/* Update pathTrace here instead in update_current_master(). */
+	do {
+		struct path_trace_tlv *ptt;
+
+		ptt = (struct path_trace_tlv *) msg->announce.suffix;
+		memcpy(c->dad.ptl, ptt->cid, ptt->length);
+		c->dad.path_length = path_length(ptt);
+	} while (0);
+#endif
 	c->tds.currentUtcOffset        = msg->announce.currentUtcOffset;
 	c->tds.flags                   = msg->header.flagField[1];
 	c->tds.timeSource              = msg->announce.timeSource;
@@ -928,6 +955,12 @@ static int clock_add_port(struct clock *c, int phc_index,
 	}
 	close(fd);
 
+#ifdef KSZ_1588_PTP
+	/* The final device is the host port for master clock. */
+	if (c->direct && !strchr(iface->basename, '.'))
+		c->host_port = p;
+#endif
+
 	return 0;
 }
 
@@ -959,6 +992,10 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	struct interface *iface, *udsif = &c->uds_interface;
 	struct timespec ts;
 	int sfl;
+#ifdef KSZ_1588_PTP
+	char name[40];
+	char *dot;
+#endif
 
 	clock_gettime(CLOCK_REALTIME, &ts);
 	srandom(ts.tv_sec ^ ts.tv_nsec);
@@ -969,9 +1006,11 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 #ifdef KSZ_1588_PTP
 	if (CLOCK_TYPE_BOUNDARY == type) {
 		c->transparent = config_get_int(config, NULL, "transparent");
-		if (c->transparent)
+		if (c->transparent) {
 			type = CLOCK_TYPE_TRANSPARENT;
+		}
 	}
+	c->skip_sync_check = config_get_int(config, NULL, "skip_sync_check");
 #endif
 	switch (type) {
 #ifdef KSZ_1588_PTP
@@ -1112,7 +1151,15 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 		pr_info("selected /dev/ptp%d as PTP clock", phc_index);
 	}
 
+#ifdef KSZ_1588_PTP
+	strncpy(name, iface->name, sizeof(name));
+	dot = strchr(name, '.');
+	if (dot)
+		*dot = '\0';
+	if (generate_clock_identity(&c->dds.clockIdentity, name)) {
+#else
 	if (generate_clock_identity(&c->dds.clockIdentity, iface->name)) {
+#endif
 		pr_err("failed to generate a clock identity");
 		return NULL;
 	}
@@ -1263,6 +1310,11 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	c->dds.numberPorts = c->nports;
 
 	LIST_FOREACH(p, &c->ports, list) {
+
+#ifdef KSZ_1588_PTP
+		if (c->host_port && p != c->host_port)
+			port_set_host_port(p, c->host_port);
+#endif
 		port_dispatch(p, EV_INITIALIZE, 0);
 	}
 	port_dispatch(c->uds_port, EV_INITIALIZE, 0);
@@ -1276,6 +1328,8 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 #define PTP_HAVE_MULT_DEVICES		(1 << 2)
 #define PTP_HAVE_MULT_PORTS		(1 << 3)
 #define PTP_KNOW_ABOUT_MULT_PORTS	(1 << 4)
+#define PTP_USE_RESERVED_FIELDS		(1 << 5)
+#define PTP_SEPARATE_PATHS		(1 << 6)
 
 	p = LIST_FIRST(&c->ports);
 	c->dm = config_get_int(config, p->name, "delay_mechanism");
@@ -1295,6 +1349,9 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 			&c->port_cnt, &c->access_delay);
 	} while (0);
 	c->port_mask = (1 << c->port_cnt) - 1;
+	LIST_FOREACH(p, &c->ports, list) {
+		port_get_info(p);
+	}
 #endif
 	return c;
 }
@@ -1337,8 +1394,17 @@ struct port *clock_first_port(struct clock *c)
 	return LIST_FIRST(&c->ports);
 }
 
+static int dbg_phase_change;
+
 void clock_follow_up_info(struct clock *c, struct follow_up_info_tlv *f)
 {
+#if 0
+if (dbg_phase_change)
+printf("%d %u %d %u.%llu\n", f->cumulativeScaledRateOffset,
+f->gmTimeBaseIndicator, f->scaledLastGmPhaseChange,
+f->lastGmPhaseChange.nanoseconds_msb,
+f->lastGmPhaseChange.nanoseconds_lsb);
+#endif
 	c->status.cumulativeScaledRateOffset = f->cumulativeScaledRateOffset;
 	c->status.scaledLastGmPhaseChange = f->scaledLastGmPhaseChange;
 	c->status.gmTimeBaseIndicator = f->gmTimeBaseIndicator;
@@ -1346,9 +1412,43 @@ void clock_follow_up_info(struct clock *c, struct follow_up_info_tlv *f)
 	       sizeof(c->status.lastGmPhaseChange));
 }
 
+void clock_get_follow_up_info(struct clock *c, struct follow_up_info_tlv *f)
+{
+	f->cumulativeScaledRateOffset =
+		(Integer32) (c->status.cumulativeScaledRateOffset +
+			     c->nrr * POW2_41 - POW2_41);
+#if 0
+if (dbg_phase_change && !f->cumulativeScaledRateOffset) {
+printf(" phase change: %d %lf\n", c->status.cumulativeScaledRateOffset, c->nrr);
+dbg_phase_change = 0;
+}
+#endif
+	f->scaledLastGmPhaseChange = c->status.scaledLastGmPhaseChange;
+	f->gmTimeBaseIndicator = c->status.gmTimeBaseIndicator;
+	memcpy(&f->lastGmPhaseChange, &c->status.lastGmPhaseChange,
+	       sizeof(c->status.lastGmPhaseChange));
+}
+
+void clock_set_follow_up_info(struct clock *c)
+{
+	struct timespec now;
+	uint64_t ns;
+
+	clock_gettime(c->clkid, &now);
+	ns = now.tv_sec;
+	ns *= NS_PER_SEC;
+	ns += now.tv_nsec;
+	c->status.cumulativeScaledRateOffset = 0;
+	c->status.scaledLastGmPhaseChange = 0;
+	c->status.gmTimeBaseIndicator++;
+	c->status.lastGmPhaseChange.nanoseconds_msb = 0;
+	c->status.lastGmPhaseChange.nanoseconds_lsb = ns;
+	c->status.lastGmPhaseChange.fractional_nanoseconds = 0;
+}
+
 int clock_gm_capable(struct clock *c)
 {
-	return c->grand_master_capable;
+	return c->grand_master_capable && c->dds.priority1 < 255;
 }
 
 struct ClockIdentity clock_identity(struct clock *c)
@@ -1484,8 +1584,10 @@ int clock_manage(struct clock *c, struct port *p, struct ptp_message *msg)
 		break;
 	case SET:
 		if (mgt->length == 2 && mgt->id != TLV_NULL_MANAGEMENT) {
+if (mgt->id != TLV_DISABLE_PORT && mgt->id != TLV_ENABLE_PORT) {
 			clock_management_send_error(p, msg, TLV_WRONG_LENGTH);
 			return changed;
+}
 		}
 		if (p != c->uds_port) {
 			/* Sorry, only allowed on the UDS port. */
@@ -1655,15 +1757,15 @@ int clock_poll(struct clock *c)
 				event = port_event(p, i);
 				if (EV_STATE_DECISION_EVENT == event)
 					c->sde = 1;
+				port_dispatch(p, event, 0);
+
 #ifdef KSZ_1588_PTP
 				/* Only needed for state decision. */
-				if (transparent_clock(c) &&
-				    clock_master_lost(c) &&
-				    !clock_master_selected(c))
+				if (!transparent_clock(c) ||
+				    (clock_master_lost(c)))
 #endif
 				if (EV_ANNOUNCE_RECEIPT_TIMEOUT_EXPIRES == event)
 					c->sde = 1;
-				port_dispatch(p, event, 0);
 				/* Clear any fault after a little while. */
 				if (PS_FAULTY == port_state(p)) {
 					clock_fault_timeout(p, 1);
@@ -1705,12 +1807,17 @@ int clock_poll(struct clock *c)
 
 void clock_path_delay(struct clock *c, tmv_t req, tmv_t rx)
 {
+#ifdef KSZ_1588_PTP
+	/* Wait until syntonization to start calculating path delay. */
+	if (c->servo_state == SERVO_UNLOCKED) {
+
+		/* Need valid inddication in clock_synchronize(). */
+		tsproc_set_delay(c->tsproc, 0);
+		return;
+	}
+#endif
 	tsproc_up_ts(c->tsproc, req, rx);
 
-#ifdef KSZ_1588_PTP
-	if (c->servo_state == SERVO_UNLOCKED)
-		return;
-#endif
 	if (tsproc_update_delay(c->tsproc, &c->path_delay))
 		return;
 
@@ -1907,6 +2014,7 @@ static void handle_state_decision_event(struct clock *c)
 	struct port *piter;
 	int fresh_best = 0;
 	int n = 0;
+	int update_grandmaster = 0;
 
 	LIST_FOREACH(piter, &c->ports, list) {
 		fc = port_compute_best(piter);
@@ -1917,6 +2025,7 @@ static void handle_state_decision_event(struct clock *c)
 	}
 
 #ifdef KSZ_1588_PTP
+	/* Above code only checks for foreign clocks. */
 	if (best) {
 		if (dscmp(clock_default_ds(c), &best->dataset) > 0)
 			best = NULL;
@@ -1936,9 +2045,11 @@ static void handle_state_decision_event(struct clock *c)
 		tsproc_reset(c->tsproc, 1);
 		c->ingress_ts = tmv_zero();
 		c->path_delay = 0;
+		c->servo_state = SERVO_UNLOCKED;
 		c->nrr = 1.0;
 		fresh_best = 1;
 	}
+	update_grandmaster = fresh_best;
 
 	c->best = best;
 	c->best_id = best_id;
@@ -1946,6 +2057,8 @@ static void handle_state_decision_event(struct clock *c)
 	LIST_FOREACH(piter, &c->ports, list) {
 		enum port_state ps;
 		enum fsm_event event;
+		if (skip_host_port(c, piter))
+			continue;
 		ps = bmc_state_decision(c, piter);
 		n++;
 		switch (ps) {
@@ -1954,11 +2067,25 @@ static void handle_state_decision_event(struct clock *c)
 			break;
 		case PS_GRAND_MASTER:
 #ifdef KSZ_1588_PTP
+#if 1
+			if (!new_state(piter)) {
+				event = EV_RS_GRAND_MASTER;
+				break;
+			}
+#endif
 			pr_notice("%hu: assuming the grand master role", n);
 #else
 			pr_notice("assuming the grand master role");
 #endif
+#ifdef KSZ_1588_PTP
+			if (update_grandmaster) {
+				update_grandmaster = 0;
+#endif
 			clock_update_grandmaster(c);
+#ifdef KSZ_1588_PTP
+				clock_update_port_grandmaster(c);
+			}
+#endif
 			event = EV_RS_GRAND_MASTER;
 			break;
 		case PS_MASTER:
@@ -1969,6 +2096,9 @@ static void handle_state_decision_event(struct clock *c)
 			break;
 		case PS_SLAVE:
 			clock_update_slave(c);
+#ifdef KSZ_1588_PTP
+			clock_update_port_grandmaster(c);
+#endif
 			event = EV_RS_SLAVE;
 			break;
 		default:
@@ -2036,7 +2166,7 @@ int boundary_clock(struct clock *c)
 
 int transparent_clock(struct clock *c)
 {
-	return (1 == c->transparent);
+	return (1 == c->transparent && c->nports > 1);
 }
 
 void set_transparent_clock(struct clock *c, int transparent)
@@ -2069,9 +2199,73 @@ int get_master_port(struct clock *c)
 	return c->master_port;
 }
 
+struct port *get_slave_port(struct clock *c)
+{
+	return c->slave_port;
+}
+
 void set_master_port(struct clock *c, int p)
 {
 	c->master_port = p;
+}
+
+void set_slave_port(struct clock *c, struct port *p)
+{
+#if 0
+if (p)
+printf("%s %p\n", __func__, p);
+#endif
+	c->slave_port = p;
+}
+
+int is_host_port(struct clock *c, struct port *p)
+{
+	int ret = TRUE;
+
+	if (c->transparent && c->host_port && p != c->host_port)
+		ret = FALSE;
+	return ret;
+}
+
+int is_peer_port(struct clock *c, struct port *p)
+{
+	int ret = TRUE;
+
+	if (c->transparent && c->host_port && p == c->host_port)
+		ret = FALSE;
+	return ret;
+}
+
+int skip_host_port(struct clock *c, struct port *p)
+{
+	int ret = FALSE;
+
+	if (c->transparent && c->host_port && p == c->host_port)
+		ret = TRUE;
+	return ret;
+}
+
+void update_dev_cnt(struct clock *c, int cnt)
+{
+	c->dev_cnt += cnt;
+}
+
+int get_dev_cnt(struct clock *c)
+{
+	return c->dev_cnt;
+}
+
+struct port *get_port(struct clock *c, int port)
+{
+	struct port *p;
+	int i = 1;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		if (port_matched(p, port))
+			return p;
+		i++;
+	}
+	return NULL;
 }
 
 void set_master_utc_offset(struct clock *c, int offset)
@@ -2087,5 +2281,103 @@ int clock_syntonized(struct clock *c)
 		return TRUE;
 	else
 		return FALSE;
+}
+
+void clock_set_port_state(struct clock *c, enum fsm_event event)
+{
+	struct port *p;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		if (p != c->host_port && p != c->dispatch)
+			port_set_port_state(p, event);
+	}
+}
+
+int is_slave_port(struct clock *c, struct port *p)
+{
+	return c->slave_port == p;
+}
+
+int port_dispatched(struct clock *c)
+{
+	return c->dispatch != NULL;
+}
+
+void clock_port_dispatch(struct clock *c, struct port *p)
+{
+	c->dispatch = p;
+}
+
+void clock_clear_sync_fup(struct clock *c, int n)
+{
+	struct port *p;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		port_clear_sync_fup(p, n);
+	}
+}
+
+void clock_clear_sync_tx(struct clock *c, int n)
+{
+	struct port *p;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		port_clear_sync_tx(p, n);
+	}
+}
+
+void clock_update_sync(struct clock *c, int n, struct timespec *ts,
+	Integer64 corr, struct timestamp *timestamp)
+{
+	struct port *p;
+	int i = 1;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		if (i != n)
+			port_update_sync(p, ts, corr, timestamp);
+		i++;
+	}
+}
+
+void clock_update_fup(struct clock *c, int n, Integer64 corr,
+	struct timestamp *timestamp)
+{
+	struct port *p;
+	int i = 1;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		if (i != n)
+			port_update_fup(p, corr, timestamp);
+		i++;
+	}
+}
+
+void clock_update_sync_tx(struct clock *c, int n)
+{
+	struct port *p;
+	int i = 1;
+
+	LIST_FOREACH(p, &c->ports, list) {
+		if (i != n)
+			port_update_sync_tx(p);
+		i++;
+	}
+}
+
+void clock_update_port_grandmaster(struct clock *c)
+{
+	struct port *p;
+	int i = 1;
+
+dbg_phase_change = 1;
+	LIST_FOREACH(p, &c->ports, list) {
+		port_update_grandmaster(p);
+		i++;
+	}
+}
+
+int skip_sync_check(struct clock *c)
+{
+	return c->skip_sync_check;
 }
 #endif

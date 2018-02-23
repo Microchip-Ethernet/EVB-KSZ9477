@@ -83,11 +83,26 @@ void port_dispatch(struct port *p, enum fsm_event event, int mdiff);
 enum fsm_event port_event(struct port *port, int fd_index);
 
 #ifdef KSZ_1588_PTP
-int port_exit_ptp(struct port *p);
+int port_exit_ptp(struct clock *c);
 int port_init_ptp(struct port *p, int cap, int *drift, uint8_t *version,
 	uint8_t *ports, uint32_t *access_delay);
+int port_get_info(struct port *p);
 
 enum fsm_event port_tx_event(struct port *port, int fd_index);
+
+int new_state(struct port *p);
+void port_set_host_port(struct port *p, struct port *host_port);
+void port_set_port_state(struct port *p, enum fsm_event event);
+int port_update_peer_delay(struct port *p, int n);
+void port_clear_sync_fup(struct port *p, int n);
+void port_clear_sync_tx(struct port *p, int n);
+void port_update_sync(struct port *p, struct timespec *ts, Integer64 corr,
+	struct timestamp *timestamp);
+void port_update_fup(struct port *p, Integer64 corr,
+	struct timestamp *timestamp);
+void port_update_sync_tx(struct port *p);
+void port_update_grandmaster(struct port *p);
+int port_matched(struct port *p, int n);
 #endif
 
 /**

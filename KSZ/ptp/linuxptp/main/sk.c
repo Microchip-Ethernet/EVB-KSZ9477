@@ -346,6 +346,7 @@ int sk_timestamping_close(int fd, const char *device, enum timestamp_type type)
 	memset(&ifreq, 0, sizeof(ifreq));
 	memset(&cfg, 0, sizeof(cfg));
 
+#if 0
 	s = strchr(device, '.');
 	if (s) {
 		int n = s - device;
@@ -354,12 +355,25 @@ int sk_timestamping_close(int fd, const char *device, enum timestamp_type type)
 		tmp[n] = '\0';
 		device = tmp;
 	}
+#endif
 	strncpy(ifreq.ifr_name, device, sizeof(ifreq.ifr_name));
 
 	ifreq.ifr_data = (void *) &cfg;
 	cfg.tx_type    = HWTSTAMP_TX_OFF;
 	cfg.rx_filter  = HWTSTAMP_FILTER_NONE;
 	err = ioctl(fd, SIOCSHWTSTAMP, &ifreq);
+	if (err) {
+		s = strchr(device, '.');
+		if (s) {
+			int n = s - device;
+
+			strncpy(tmp, device, n);
+			tmp[n] = '\0';
+			device = tmp;
+			strncpy(ifreq.ifr_name, device, sizeof(ifreq.ifr_name));
+			err = ioctl(fd, SIOCSHWTSTAMP, &ifreq);
+		}
+	}
 	return err;
 }
 #endif
@@ -412,6 +426,8 @@ int sk_timestamping_init(int fd, const char *device, enum timestamp_type type,
 			return -1;
 		}
 #ifdef KSZ_1588_PTP
+		err = hwts_init(fd, device, filter1, one_step);
+		if (err) {
 		s = strchr(device, '.');
 		if (s) {
 			int n = s - device;
@@ -419,6 +435,7 @@ int sk_timestamping_init(int fd, const char *device, enum timestamp_type type,
 			strncpy(tmp, device, n);
 			tmp[n] = '\0';
 			device = tmp;
+		}
 		}
 #endif
 		err = hwts_init(fd, device, filter1, one_step);

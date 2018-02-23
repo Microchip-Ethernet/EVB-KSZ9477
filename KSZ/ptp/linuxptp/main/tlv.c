@@ -35,14 +35,14 @@ uint8_t ieee_c37_238_id[3] = { IEEE_C37_238 };
 static void scaled_ns_n2h(ScaledNs *sns)
 {
 	sns->nanoseconds_msb = ntohs(sns->nanoseconds_msb);
-	sns->nanoseconds_lsb = net2host64(sns->nanoseconds_msb);
+	sns->nanoseconds_lsb = net2host64(sns->nanoseconds_lsb);
 	sns->fractional_nanoseconds = ntohs(sns->fractional_nanoseconds);
 }
 
 static void scaled_ns_h2n(ScaledNs *sns)
 {
 	sns->nanoseconds_msb = htons(sns->nanoseconds_msb);
-	sns->nanoseconds_lsb = host2net64(sns->nanoseconds_msb);
+	sns->nanoseconds_lsb = host2net64(sns->nanoseconds_lsb);
 	sns->fractional_nanoseconds = htons(sns->fractional_nanoseconds);
 }
 

@@ -254,6 +254,9 @@ struct config_item config_tab[] = {
 #ifdef KSZ_1588_PTP
 	GLOB_ITEM_INT("c37_238", 0, 0, 1),
 	GLOB_ITEM_INT("transparent", 1, 0, 1),
+	GLOB_ITEM_INT("skip_sync_check", 0, 0, 1),
+	PORT_ITEM_INT("followUpReceiptTimeout", 0, 0, INT_MAX),
+	PORT_ITEM_INT("syncTxContTimeout", 0, 0, INT_MAX),
 #endif
 };
 
@@ -634,6 +637,10 @@ parse_error:
 struct interface *config_create_interface(char *name, struct config *cfg)
 {
 	struct interface *iface;
+#ifdef KSZ_1588_PTP
+	static char ext[20];
+	static int ext_len = 0;
+#endif
 
 	/* only create each interface once (by name) */
 	STAILQ_FOREACH(iface, &cfg->interfaces, list) {
@@ -652,6 +659,26 @@ struct interface *config_create_interface(char *name, struct config *cfg)
 	do {
 		char *s;
 
+		strncpy(iface->basename, name, MAX_IFNAME_SIZE);
+		s = strchr(iface->basename, '.');
+		if (s) {
+			char *t = s;
+
+			s++;
+			s = strchr(s, '.');
+			if (s) {
+				if (!ext_len) {
+					strcpy(ext, s);
+					ext_len = strlen(ext);
+				} else {
+					if (strncmp(ext, s, ext_len))
+						printf("not same ext\n");
+				}
+				*s = '\0';
+			} else if (ext_len && !strncmp(ext, t, ext_len)) {
+				*t = '\0';
+			}
+		}
 		strncpy(iface->devname, name, MAX_IFNAME_SIZE);
 		s = strchr(iface->devname, '.');
 		if (s)

@@ -23,6 +23,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/queue.h>
+#if 1
+#include <linux/if_ether.h>
+#endif
 
 #include "bmc.h"
 #include "clock.h"
@@ -39,6 +42,11 @@
 #include "util.h"
 
 #ifdef KSZ_1588_PTP
+
+#if 0
+#define KSZ_DBG_HOST
+#define KSZ_DBG_TIMER
+#endif
 
 #define _ptp_second
 #define _ptp_text
@@ -99,16 +107,42 @@ struct port {
 	struct ptp_message *delay_resp;
 	struct ptp_message *pdelay_resp;
 	struct ptp_message *pdelay_resp_fup;
+	struct port *host_port;
+	int index;
 	int dest_port;
 	int forward_port;
 	int receive_port;
 	int pdelay_resp_port;
 	int pdelay_resp_fup_port;
-	int actual_port;
-	int peer_port;
+	int phys_port;
+	int port_mask;
+	int new_state;
+	char *basename;
 	char *devname;
 	u32 p2p_sec;
 	u32 p2p_nsec;
+	int followUpReceiptTimeout;
+	int syncTxContTimeout;
+	int syncTxCont;
+	u32 ann_rx_timeout:1;
+	u32 ann_tx_timeout:1;
+	u32 sync_rx_timeout:1;
+	u32 sync_tx_timeout:1;
+	u32 fup_rx_timeout:1;
+	u32 fup_tx_timeout:1;
+	u32 gm_change:1;
+	u32 tx_ann:1;
+	u32 sync_rx_tx:1;
+	u32 multiple_pdr:1;
+	u32 last_rx_sec;
+	u32 last_tx_sec;
+	u32 rx_sec;
+	u32 tx_sec;
+	struct timespec sync_ts;
+	struct timestamp sync_timestamp;
+	struct timestamp fup_timestamp;
+	Integer64 sync_correction;
+	Integer64 fup_correction;
 #endif
 	int peer_portid_valid;
 	struct PortIdentity peer_portid;
@@ -168,14 +202,16 @@ struct port {
 #ifdef KSZ_1588_PTP
 int port_set_peer_delay(struct port *p)
 {
-	int port = p->actual_port;
+	int port = p->phys_port;
 
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf(" !! %s %d %p\n", __func__, portnum(p), p);
+#endif
 	if (need_dest_port(p->clock))
 		port = p->pdelay_resp_port;
-#if 0
-	if (ptp_host_port && port >= ptp_host_port)
-		++port;
-#endif
+	if (!port)
+		return -ENODEV;
 	return set_peer_delay(&ptpdev,
 		port - 1, (int) p->peer_delay);
 }
@@ -200,10 +236,20 @@ int port_set_msg_info(struct port *p, struct ptp_header *header, u32 port,
 	return rc;
 }
 
-int port_exit_ptp(struct port *p)
+int port_set_port_cfg(struct port *p, int enable, int asCapable)
+{
+	int port = p->phys_port;
+
+	if (!port)
+		return -ENODEV;
+	return set_port_cfg(&ptpdev,
+		port - 1, enable, asCapable);
+}
+
+int port_exit_ptp(struct clock *c)
 {
 	int rc;
-	struct timePropertiesDS *tp = clock_time_properties(p->clock);
+	struct timePropertiesDS *tp = clock_time_properties(c);
 
 	if (tp->flags & UTC_OFF_VALID)
 		rc = set_utc_offset(&ptpdev,
@@ -211,6 +257,7 @@ int port_exit_ptp(struct port *p)
 	rc = set_global_cfg(&ptpdev,
 		0, 0, 0, 0);
 	rc = ptp_dev_exit(&ptpdev);
+	close(ptpdev.sock);
 	return rc;
 }
 
@@ -236,7 +283,7 @@ int port_init_ptp(struct port *p, int cap, int *drift, UInteger8 *version,
 	UInteger8 domain;
 
 	strncpy(ptpdev.name, p->devname, sizeof(ptpdev.name));
-	ptpdev.sock = p->fda.fd[FD_EVENT];
+	ptpdev.sock = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 
 	rc = ptp_dev_init(&ptpdev, cap,
 		drift, version, ports, &ptp_host_port);
@@ -284,6 +331,28 @@ int port_init_ptp(struct port *p, int cap, int *drift, UInteger8 *version,
 		}
 	}
 	return rc;
+}
+
+int new_state(struct port *p)
+{
+	return p->new_state;
+}
+
+void port_set_host_port(struct port *p, struct port *host_port)
+{
+#if 0
+printf("%s %d %d; %p %p\n", __func__, portnum(p), portnum(host_port),
+p, host_port);
+#endif
+	p->host_port = host_port;
+}
+
+void port_set_port_state(struct port *p, enum fsm_event event)
+{
+#if 0
+printf("%s %d %d %d\n", __func__, portnum(p), p->state, p->host_port->state);
+#endif
+	port_dispatch(p, event, 0);
 }
 #endif
 
@@ -405,12 +474,11 @@ int set_tmo_log(int fd, unsigned int scale, int log_seconds)
 		for (i = 1, ns = scale * 500000000ULL; i < log_seconds; i++) {
 			ns >>= 1;
 		}
-		tmo.it_value.tv_nsec = ns;
-
-		while (tmo.it_value.tv_nsec >= NS_PER_SEC) {
-			tmo.it_value.tv_nsec -= NS_PER_SEC;
+		while (ns >= NS_PER_SEC) {
+			ns -= NS_PER_SEC;
 			tmo.it_value.tv_sec++;
 		}
+		tmo.it_value.tv_nsec = ns;
 
 	} else
 		tmo.it_value.tv_sec = scale * (1 << log_seconds);
@@ -427,6 +495,23 @@ int set_tmo_lin(int fd, int seconds)
 	tmo.it_value.tv_sec = seconds;
 	return timerfd_settime(fd, 0, &tmo, NULL);
 }
+
+#ifdef KSZ_1588_PTP
+int set_tmo_ms(int fd, int milliseconds)
+{
+	struct itimerspec tmo = {
+		{0, 0}, {0, 0}
+	};
+
+	tmo.it_value.tv_nsec = milliseconds * (NS_PER_SEC / 1000);
+	while (tmo.it_value.tv_nsec >= NS_PER_SEC) {
+		tmo.it_value.tv_nsec -= NS_PER_SEC;
+		tmo.it_value.tv_sec++;
+	}
+	return timerfd_settime(fd, 0, &tmo, NULL);
+}
+
+#endif
 
 int set_tmo_random(int fd, int min, int span, int log_seconds)
 {
@@ -516,6 +601,15 @@ static void ts_add(struct timespec *ts, int ns)
 }
 #endif
 
+#ifdef KSZ_1588_PTP
+static void tspdu_to_timestamp(struct timestamp *src, struct Timestamp *dst)
+{
+	dst->seconds_lsb = (uint32_t) src->sec;
+	dst->seconds_msb = src->sec >> 32;
+	dst->nanoseconds = src->nsec;
+}
+#endif
+
 static void ts_to_timestamp(struct timespec *src, struct Timestamp *dst)
 {
 	dst->seconds_lsb = src->tv_sec;
@@ -551,6 +645,9 @@ static int add_foreign_master(struct port *p, struct ptp_message *m)
 		fc->port = p;
 		fc->dataset.sender = m->header.sourcePortIdentity;
 		/* We do not count this first message, see 9.5.3(b) */
+#ifdef KSZ_1588_PTP
+		if (!port_is_ieee8021as(p))
+#endif
 		return 0;
 	}
 
@@ -560,6 +657,10 @@ static int add_foreign_master(struct port *p, struct ptp_message *m)
 	fc_prune(fc);
 	if (FOREIGN_MASTER_THRESHOLD - 1 == fc->n_messages)
 		broke_threshold = 1;
+#ifdef KSZ_1588_PTP
+	else if (port_is_ieee8021as(p))
+		broke_threshold = 1;
+#endif
 
 	/*
 	 * Okay, go ahead and add this announcement.
@@ -587,6 +688,7 @@ static int follow_up_info_append(struct port *p, struct ptp_message *m)
 	fui->length = sizeof(*fui) - sizeof(fui->type) - sizeof(fui->length);
 	memcpy(fui->id, ieee8021_id, sizeof(ieee8021_id));
 	fui->subtype[2] = 1;
+	clock_get_follow_up_info(p->clock, fui);
 	m->tlv_count = 1;
 	return sizeof(*fui);
 }
@@ -594,6 +696,25 @@ static int follow_up_info_append(struct port *p, struct ptp_message *m)
 static struct follow_up_info_tlv *follow_up_info_extract(struct ptp_message *m)
 {
 	struct follow_up_info_tlv *f;
+#ifdef KSZ_1588_PTP
+	struct TLV *tlv;
+	uint8_t *ptr;
+	int i;
+
+	ptr = (uint8_t *) m->follow_up.suffix;
+	for (i = 0; i < m->tlv_count; i++) {
+		tlv = (struct TLV *) ptr;
+		f = (struct follow_up_info_tlv *) tlv;
+		if (f->type == TLV_ORGANIZATION_EXTENSION &&
+		    f->length >= sizeof(*f) - sizeof(struct TLV) &&
+		    !memcmp(f->id, ieee8021_id, sizeof(ieee8021_id)) &&
+		    f->subtype[0] == 0 && f->subtype[1] == 0 &&
+		    f->subtype[2] == 1)
+			return f;
+		ptr += sizeof(struct TLV) + tlv->length;
+	}
+	return NULL;
+#else
 	f = (struct follow_up_info_tlv *) m->follow_up.suffix;
 
 	if (m->tlv_count != 1 ||
@@ -603,6 +724,7 @@ static struct follow_up_info_tlv *follow_up_info_extract(struct ptp_message *m)
 	    f->subtype[0] || f->subtype[1] || f->subtype[2] != 1) {
 		return NULL;
 	}
+#endif
 	return f;
 }
 
@@ -664,6 +786,10 @@ static int path_trace_ignore(struct port *p, struct ptp_message *m)
 {
 	struct ClockIdentity cid;
 	struct path_trace_tlv *ptt;
+#ifdef KSZ_1588_PTP
+	struct TLV *tlv;
+	uint8_t *ptr;
+#endif
 	int i, cnt;
 
 	if (!p->path_trace_enabled) {
@@ -672,6 +798,7 @@ static int path_trace_ignore(struct port *p, struct ptp_message *m)
 	if (msg_type(m) != ANNOUNCE) {
 		return 0;
 	}
+#ifndef KSZ_1588_PTP
 	if (m->tlv_count != 1) {
 		return 1;
 	}
@@ -679,6 +806,18 @@ static int path_trace_ignore(struct port *p, struct ptp_message *m)
 	if (ptt->type != TLV_PATH_TRACE) {
 		return 1;
 	}
+#else
+	ptr = (uint8_t *) m->announce.suffix;
+	for (i = 0; i < m->tlv_count; i++) {
+		tlv = (struct TLV *) ptr;
+		if (tlv->type == TLV_PATH_TRACE)
+			break;
+		ptr += sizeof(struct TLV) + tlv->length;
+	}
+	if (i >= m->tlv_count)
+		return 1;
+	ptt = (struct path_trace_tlv *) tlv;
+#endif
 	cnt = path_length(ptt);
 	cid = clock_identity(p->clock);
 	for (i = 0; i < cnt; i++) {
@@ -820,6 +959,11 @@ static int port_capable(struct port *p)
 		/* Normal 1588 ports are always capable. */
 		goto capable;
 	}
+#if 0
+if (port_is_ieee8021as(p)) {
+	goto capable;
+}
+#endif
 
 	if (tmv_to_nanoseconds(p->peer_delay) >	p->neighborPropDelayThresh) {
 		if (p->asCapable)
@@ -853,6 +997,15 @@ static int port_capable(struct port *p)
 		goto not_capable;
 	}
 
+#ifdef KSZ_1588_PTP
+	if (p->multiple_pdr) {
+		if (p->asCapable)
+			pr_debug("port %hu: multiple peer delay resp, "
+				"resetting asCapable", portnum(p));
+		goto not_capable;
+	}
+#endif
+
 	if (!p->peer_portid_valid) {
 		if (p->asCapable)
 			pr_debug("port %hu: invalid peer port id, "
@@ -870,10 +1023,34 @@ static int port_capable(struct port *p)
 capable:
 	if (!p->asCapable)
 		pr_debug("port %hu: setting asCapable", portnum(p));
+#ifdef KSZ_1588_PTP
+	/* Port 0 can be IEEE 802.1AS port. */
+	if (!p->asCapable && port_is_ieee8021as(p) && portnum(p) > 0) {
+		if (p->state == PS_MASTER || p->state == PS_GRAND_MASTER) {
+			/* Want to send Announce as fast as possible. */
+			if (p->gm_change && !p->tx_ann) {
+				set_tmo_log(p->fda.fd[FD_MANNO_TIMER], 1, -10);
+				if (!p->ann_tx_timeout) {
+					p->ann_tx_timeout = 1;
+				}
+			}
+		}
+		port_set_port_cfg(p, 1, 1);
+#if 0
+printf(" as: %d\n", portnum(p));
+#endif
+	}
+#endif
 	p->asCapable = 1;
 	return 1;
 
 not_capable:
+#ifdef KSZ_1588_PTP
+	/* Port 0 can be IEEE 802.1AS port. */
+	if (p->asCapable && port_is_ieee8021as(p) && portnum(p) > 0) {
+		port_set_port_cfg(p, 1, 0);
+	}
+#endif
 	if (p->asCapable)
 		port_nrate_initialize(p);
 	p->asCapable = 0;
@@ -912,6 +1089,16 @@ static int port_ignore(struct port *p, struct ptp_message *m)
 	c2 = m->header.sourcePortIdentity.clockIdentity;
 
 	if (0 == memcmp(&c1, &c2, sizeof(c1))) {
+#ifdef KSZ_1588_PTP
+		/* Allow own Pdelay_Resp to detect multiple responses. */
+		if (msg_type(m) == PDELAY_RESP)
+			return 0;
+#if 0
+		if (msg_type(m) == PDELAY_REQ ||
+		    msg_type(m) == PDELAY_RESP_FOLLOW_UP)
+			return 0;
+#endif
+#endif
 		return 1;
 	}
 	return 0;
@@ -1083,6 +1270,10 @@ static int port_management_fill_response(struct port *target,
 		respond = 1;
 		break;
 	}
+	case TLV_DISABLE_PORT:
+	case TLV_ENABLE_PORT:
+		respond = 1;
+		break;
 #endif
 	case TLV_LOG_ANNOUNCE_INTERVAL:
 		mtd = (struct management_tlv_datum *) tlv->data;
@@ -1193,6 +1384,20 @@ static int port_management_set(struct port *target,
 		target->neighborPropDelayThresh = pdsnp->neighborPropDelayThresh;
 		respond = 1;
 		break;
+#ifdef KSZ_1588_PTP
+	case TLV_DISABLE_PORT:
+		if (PS_DISABLED != target->state) {
+			port_dispatch(target, EV_DESIGNATED_DISABLED, 0);
+		}
+		respond = 1;
+		break;
+	case TLV_ENABLE_PORT:
+		if (PS_DISABLED == target->state) {
+			port_dispatch(target, EV_DESIGNATED_ENABLED, 0);
+		}
+		respond = 1;
+		break;
+#endif
 	}
 	if (respond && !port_management_get_response(target, ingress, id, req))
 		pr_err("port %hu: failed to send management set response", portnum(target));
@@ -1258,6 +1463,19 @@ static void port_nrate_initialize(struct port *p)
 
 static int port_set_announce_tmo(struct port *p)
 {
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s\n", __func__);
+#endif
+	if (!p->ann_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s %d\n", __func__, portnum(p));
+#endif
+		p->ann_rx_timeout = 1;
+	}
 	return set_tmo_random(p->fda.fd[FD_ANNOUNCE_TIMER],
 			      p->announceReceiptTimeout,
 			      p->announce_span, p->logAnnounceInterval);
@@ -1265,6 +1483,10 @@ static int port_set_announce_tmo(struct port *p)
 
 static int port_set_delay_tmo(struct port *p)
 {
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d\n", __func__, portnum(p));
+#endif
 	if (p->delayMechanism == DM_P2P) {
 		return set_tmo_log(p->fda.fd[FD_DELAY_TIMER], 1,
 			       p->logMinPdelayReqInterval);
@@ -1281,6 +1503,19 @@ static int port_set_delay_tmo(struct port *p)
 
 static int port_set_manno_tmo(struct port *p)
 {
+#ifdef KSZ_DBG_HOST
+if (!is_host_port(p->clock, p))
+printf("  !! %s\n", __func__);
+#endif
+	if (!p->ann_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s %d\n", __func__, portnum(p));
+#endif
+		p->ann_tx_timeout = 1;
+	}
 	return set_tmo_log(p->fda.fd[FD_MANNO_TIMER], 1, p->logAnnounceInterval);
 }
 
@@ -1292,14 +1527,228 @@ static int port_set_qualification_tmo(struct port *p)
 
 static int port_set_sync_rx_tmo(struct port *p)
 {
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s\n", __func__);
+#endif
+	if (!p->sync_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s %d\n", __func__, portnum(p));
+#endif
+		p->sync_rx_timeout = 1;
+	}
 	return set_tmo_log(p->fda.fd[FD_SYNC_RX_TIMER],
 			   p->syncReceiptTimeout, p->logSyncInterval);
 }
 
 static int port_set_sync_tx_tmo(struct port *p)
 {
+#ifdef KSZ_DBG_HOST
+if (!is_host_port(p->clock, p))
+printf("  !! %s\n", __func__);
+#endif
+	if (!p->sync_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s %d\n", __func__, portnum(p));
+#endif
+		p->sync_tx_timeout = 1;
+	}
 	return set_tmo_log(p->fda.fd[FD_SYNC_TX_TIMER], 1, p->logSyncInterval);
 }
+
+#ifdef KSZ_1588_PTP
+static int port_set_sync_fup_tx_tmo(struct port *p)
+{
+	if (!p->sync_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0
+if (portnum(p) == 5)
+#endif
+printf(" %s %d\n", __func__, portnum(p));
+#endif
+		p->sync_tx_timeout = 1;
+	}
+	return set_tmo_ms(p->fda.fd[FD_SYNC_TX_TIMER], 50);
+}
+
+static int port_set_fup_rx_tmo(struct port *p)
+{
+	if (!p->fup_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 1
+if (portnum(p) == 5)
+#endif
+printf(" %s %d\n", __func__, portnum(p));
+#endif
+		p->fup_rx_timeout = 1;
+	}
+	return set_tmo_log(p->fda.fd[FD_FUP_RX_TIMER],
+			   p->followUpReceiptTimeout, p->logSyncInterval);
+}
+
+static int port_set_sync_cont_tmo(struct port *p)
+{
+	if (!p->fup_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+if (portnum(p) == 5)
+printf(" %s %d\n", __func__, portnum(p));
+#endif
+		p->fup_tx_timeout = 1;
+	}
+	return set_tmo_ms(p->fda.fd[FD_SYNC_CONT_TIMER],
+		p->syncTxContTimeout);
+}
+
+void port_clear_sync_fup(struct port *p, int n)
+{
+	memset(&p->sync_ts, 0, sizeof(struct timespec));
+	p->sync_correction = p->fup_correction = 0;
+	memset(&p->sync_timestamp, 0, sizeof(struct timestamp));
+	memset(&p->fup_timestamp, 0, sizeof(struct timestamp));
+	if (p->sync_rx_tx) {
+#ifdef KSZ_DBG_TIMER
+#if 0
+if (portnum(p) == 5)
+#endif
+printf(" %s sync_rx_tx %d\n", __func__, portnum(p));
+#endif
+		p->sync_rx_tx = 0;
+	}
+	if (p->index != n) {
+		p->gm_change = 1;
+
+		/* Want to send Announce for new grandmaster. */
+		set_tmo_log(p->fda.fd[FD_MANNO_TIMER], 1, -10); /*~1ms*/
+		if (!p->ann_tx_timeout) {
+			p->ann_tx_timeout = 1;
+		}
+		port_set_sync_tx_tmo(p);
+	}
+}
+
+void port_clear_sync_tx(struct port *p, int n)
+{
+	if (p->index != n) {
+		if (p->syncTxCont) {
+			port_clr_tmo(p->fda.fd[FD_SYNC_TX_TIMER]);
+			if (p->sync_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0
+if (portnum(p) == 5)
+#endif
+printf(" %s sync_tx %d\n", __func__, portnum(p));
+#endif
+				p->sync_tx_timeout = 0;
+			}
+		}
+		p->syncTxCont = 0;
+	}
+}
+
+void port_update_sync(struct port *p, struct timespec *ts, Integer64 corr,
+	struct timestamp *timestamp)
+{
+#if 0
+if (portnum(p) == 5)
+printf(" update sync: %d\n", portnum(p));
+#endif
+	if (!p->sync_ts.tv_sec) {
+		port_clr_tmo(p->fda.fd[FD_SYNC_TX_TIMER]);
+		if (p->sync_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0
+if (portnum(p) == 5)
+#endif
+printf(" %s sync_tx %d\n", __func__, portnum(p));
+#endif
+			p->sync_tx_timeout = 0;
+		}
+	}
+	memcpy(&p->sync_ts, ts, sizeof(struct timespec));
+	p->sync_correction = corr;
+	memcpy(&p->sync_timestamp, timestamp, sizeof(struct timestamp));
+	if (!p->sync_rx_tx) {
+#ifdef KSZ_DBG_TIMER
+if (portnum(p) == 5)
+printf(" %s sync_rx_tx %d\n", __func__, portnum(p));
+#endif
+		p->sync_rx_tx = 1;
+	}
+}
+
+void port_update_fup(struct port *p, Integer64 corr,
+	struct timestamp *timestamp)
+{
+	if (p->state != PS_MASTER && p->state != PS_GRAND_MASTER)
+		return;
+	p->fup_correction = corr;
+	memcpy(&p->fup_timestamp, timestamp, sizeof(struct timestamp));
+	port_set_sync_fup_tx_tmo(p);
+}
+
+void port_update_sync_tx(struct port *p)
+{
+	if (p->state != PS_MASTER && p->state != PS_GRAND_MASTER)
+		return;
+	p->syncTxCont = 2;
+	port_set_sync_fup_tx_tmo(p);
+#ifdef KSZ_DBG_TIMER
+if (portnum(p) < 3)
+printf(" update_sync: %d\n", portnum(p));
+#endif
+}
+
+void port_update_grandmaster(struct port *p)
+{
+	if (!p->gm_change) {
+#if 0
+printf(" %s %p:%d\n", __func__, p, portnum(p));
+#endif
+		p->gm_change = 1;
+		if (port_is_ieee8021as(p) && p->sync_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0
+if (portnum(p) == 5)
+#endif
+printf(" %s sync_tx %d\n", __func__, portnum(p));
+#endif
+			p->sync_tx_timeout = 0;
+			port_clr_tmo(p->fda.fd[FD_SYNC_TX_TIMER]);
+		}
+	}
+}
+
+int port_get_info(struct port *p)
+{
+	int rc;
+	u8 phys_port;
+	u32 port_mask;
+
+	rc = ptp_port_info(&ptpdev, p->basename, &phys_port, &port_mask);
+	if (!rc) {
+		p->phys_port = phys_port;
+		p->port_mask = port_mask;
+		if (!is_host_port(p->clock, p) || port_is_ieee8021as(p))
+			p->portIdentity.portNumber = p->phys_port;
+		else if (p->portIdentity.portNumber != 1)
+			p->portIdentity.portNumber = ptp_host_port;
+	}
+	return rc;
+}
+
+int port_matched(struct port *p, int n)
+{
+	if (p->phys_port == n)
+		return TRUE;
+	return FALSE;
+}
+#endif
 
 static void port_show_transition(struct port *p,
 				 enum port_state next, enum fsm_event event)
@@ -1330,6 +1779,13 @@ static void port_synchronize(struct port *p,
 	enum servo_state state;
 	tmv_t t1, t1c, t2, c1, c2;
 
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d\n", __func__, portnum(p));
+#endif
+#if 0
+printf("%s %d\n", __func__, portnum(p));
+#endif
 	port_set_sync_rx_tmo(p);
 
 	t1 = timestamp_to_tmv(origin_ts);
@@ -1339,6 +1795,9 @@ static void port_synchronize(struct port *p,
 	t1c = tmv_add(t1, tmv_add(c1, c2));
 
 	state = clock_synchronize(p->clock, t2, t1c);
+#if 0
+printf("%s %d %d\n", __func__, portnum(p), state);
+#endif
 	switch (state) {
 	case SERVO_UNLOCKED:
 		port_dispatch(p, EV_SYNCHRONIZATION_FAULT, 0);
@@ -1356,6 +1815,20 @@ static void port_synchronize(struct port *p,
 		break;
 	case SERVO_LOCKED:
 		port_dispatch(p, EV_MASTER_CLOCK_SELECTED, 0);
+#ifdef KSZ_1588_PTP
+		if (p->best && p->best->bad_cnt) {
+			if (p->rx_sec != p->last_rx_sec) {
+				p->last_rx_sec = p->rx_sec;
+				p->best->good_cnt++;
+				if (p->best->good_cnt > 4) {
+					p->best->good_cnt = 0;
+					p->best->bad_cnt--;
+					if (!p->best->bad_cnt)
+						p->best->bad_master = 0;
+				}
+			}
+		}
+#endif
 		break;
 #ifdef KSZ_1588_PTP
 	case SERVO_LOCKING:
@@ -1367,8 +1840,10 @@ static void port_synchronize(struct port *p,
 			msg_put(p->peer_delay_req);
 			p->peer_delay_req = NULL;
 		}
+#if 1
 		if (p->delayMechanism == DM_E2E)
 			port_delay_request(p);
+#endif
 		break;
 #endif
 	}
@@ -1394,6 +1869,15 @@ static void port_syfufsm(struct port *p, enum syfu_event event,
 			p->syfu = SF_HAVE_SYNC;
 			break;
 		case FUP_MISMATCH:
+#ifdef KSZ_1588_PTP
+			/*
+			 * Unlikely to receive Sync/Follow_Up messages not
+			 * in sequence in 802.1AS.
+			 */
+			if (port_is_ieee8021as(p)) {
+				break;
+			}
+#endif
 			msg_get(m);
 			p->last_syncfup = m;
 			p->syfu = SF_HAVE_FUP;
@@ -1409,6 +1893,16 @@ static void port_syfufsm(struct port *p, enum syfu_event event,
 		switch (event) {
 		case SYNC_MISMATCH:
 			msg_put(p->last_syncfup);
+#ifdef KSZ_1588_PTP
+			/*
+			 * Unlikely to receive Sync/Follow_Up messages not
+			 * in sequence in 802.1AS.
+			 */
+			if (port_is_ieee8021as(p)) {
+				p->syfu = SF_EMPTY;
+				break;
+			}
+#endif
 			msg_get(m);
 			p->last_syncfup = m;
 			break;
@@ -1416,6 +1910,16 @@ static void port_syfufsm(struct port *p, enum syfu_event event,
 			break;
 		case FUP_MISMATCH:
 			msg_put(p->last_syncfup);
+#ifdef KSZ_1588_PTP
+			/*
+			 * Unlikely to receive Sync/Follow_Up messages not
+			 * in sequence in 802.1AS.
+			 */
+			if (port_is_ieee8021as(p)) {
+				p->syfu = SF_EMPTY;
+				break;
+			}
+#endif
 			msg_get(m);
 			p->last_syncfup = m;
 			p->syfu = SF_HAVE_FUP;
@@ -1464,10 +1968,21 @@ static int port_pdelay_request(struct port *p)
 	struct ptp_message *msg;
 	int err;
 
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s\n", __func__);
+#endif
+#ifndef KSZ_1588_PTP
 	/* If multiple pdelay resp were not detected the counter can be reset */
 	if (!p->multiple_pdr_detected)
 		p->multiple_seq_pdr_count = 0;
 	p->multiple_pdr_detected = 0;
+#endif
+#ifdef KSZ_1588_PTP
+	if (!p->multiple_pdr_detected && p->multiple_seq_pdr_count)
+		p->multiple_seq_pdr_count--;
+	p->multiple_pdr_detected = 0;
+#endif
 
 	msg = msg_allocate();
 	if (!msg)
@@ -1486,6 +2001,9 @@ static int port_pdelay_request(struct port *p)
 	msg->header.logMessageInterval = port_is_ieee8021as(p) ?
 		p->logMinPdelayReqInterval : 0x7f;
 
+#ifdef KSZ_1588_PTP
+	msg->header.flagField[1] |= PTP_TIMESCALE;
+#endif
 	err = peer_prepare_and_send(p, msg, 1);
 	if (err) {
 		pr_err("port %hu: send peer delay request failed", portnum(p));
@@ -1528,6 +2046,10 @@ static int port_delay_request(struct port *p)
 	if (p->delayMechanism == DM_P2P)
 		return port_pdelay_request(p);
 
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s\n", __func__);
+#endif
 	msg = msg_allocate();
 	if (!msg)
 		return -1;
@@ -1551,6 +2073,7 @@ static int port_delay_request(struct port *p)
 	}
 
 #ifdef KSZ_1588_PTP
+	msg->header.flagField[1] |= PTP_TIMESCALE;
 	p->dest_port = get_master_port(p->clock);
 #endif
 	if (port_prepare_and_send(p, msg, 1)) {
@@ -1574,6 +2097,23 @@ out:
 	return -1;
 }
 
+#if 0
+static unsigned char test_data[] = {
+	0x0d, 0x00, 0x16, 0x00, 0xab, 0x56, 0x78, 0xab,
+	0xcd, 0x00, 0x8b, 0xa0, 0xf9, 0x52, 0xf4, 0x40,
+	0xff, 0x52, 0xad, 0xd1, 0x96, 0xee, 0x93, 0x55,
+	0xe1, 0xad
+};
+
+static int test_append(struct port *p, struct ptp_message *m)
+{
+	u8 *tlv = m->announce.suffix;
+	memcpy(tlv, test_data, sizeof(test_data));
+	m->tlv_count = 1;
+	return sizeof(test_data);
+}
+#endif
+
 static int port_tx_announce(struct port *p)
 {
 	struct parent_ds *dad = clock_parent_ds(p->clock);
@@ -1581,6 +2121,15 @@ static int port_tx_announce(struct port *p)
 	struct ptp_message *msg;
 	int err, pdulen;
 
+#ifdef KSZ_DBG_HOST
+if (!is_host_port(p->clock, p))
+printf("  !! %s\n", __func__);
+#endif
+#if 0
+if (portnum(p) == 5)
+printf("tx ann: %d=%x\n", portnum(p), p->seqnum.announce);
+#endif
+	p->tx_ann = 1;
 	if (!port_capable(p)) {
 		return 0;
 	}
@@ -1596,6 +2145,9 @@ static int port_tx_announce(struct port *p)
 #ifdef KSZ_1588_PTP
 	if (clock_c37_238(p->clock))
 		pdulen += c37_238_append(p, msg);
+#if 0
+pdulen += test_append(p, msg);
+#endif
 #endif
 
 	msg->header.tsmt               = ANNOUNCE | p->transportSpecific;
@@ -1619,6 +2171,9 @@ static int port_tx_announce(struct port *p)
 
 #ifdef KSZ_1588_PTP
 	p->dest_port = 0;
+	if (p->gm_change) {
+		p->gm_change = 0;
+	}
 #endif
 	err = port_prepare_and_send(p, msg, 0);
 	if (err)
@@ -1633,12 +2188,29 @@ static int port_tx_sync(struct port *p)
 	int err, pdulen;
 	int event = p->timestamping == TS_ONESTEP ? TRANS_ONESTEP : TRANS_EVENT;
 
+#ifdef KSZ_DBG_HOST
+if (!is_host_port(p->clock, p))
+printf("  !! %s\n", __func__);
+#endif
+	p->tx_ann = 0;
 	if (!port_capable(p)) {
 		return 0;
 	}
 	if (port_sync_incapable(p)) {
 		return 0;
 	}
+#ifdef KSZ_1588_PTP
+	if (p->sync) {
+		msg = p->sync;
+		p->sync = NULL;
+		msg_put(msg);
+	}
+	if (p->follow_up) {
+		msg = p->follow_up;
+		p->follow_up = NULL;
+		msg_put(msg);
+	}
+#endif
 	msg = msg_allocate();
 	if (!msg)
 		return -1;
@@ -1659,13 +2231,28 @@ static int port_tx_sync(struct port *p)
 	msg->header.sequenceId         = p->seqnum.sync++;
 	msg->header.control            = CTL_SYNC;
 	msg->header.logMessageInterval = p->logSyncInterval;
+#if 0
+if (p->syncTxCont)
+printf(" tx cont: %d %d %d; %d\n", portnum(p), p->seqnum.sync, p->logSyncInterval,
+p->syncTxCont);
+#endif
+#if 0
+else if (portnum(p) == 5)
+printf(" tx sync: %d\n", portnum(p));
+#endif
 
 	if (p->timestamping != TS_ONESTEP)
 		msg->header.flagField[0] |= TWO_STEP;
 
 #ifdef KSZ_1588_PTP
+	msg->header.flagField[1] |= PTP_TIMESCALE;
 	if (get_hw_version(p->clock) < 2)
 		p->dest_port = all_ports(p->clock);
+	if (port_is_ieee8021as(p) && p->sync_ts.tv_sec) {
+		msg->header.correction = p->sync_correction;
+		tspdu_to_timestamp(&p->sync_timestamp,
+			&msg->sync.originTimestamp);
+	}
 #endif
 	err = port_prepare_and_send(p, msg, event);
 	if (err) {
@@ -1809,6 +2396,11 @@ static void port_disable(struct port *p)
 {
 	int i;
 
+#ifdef KSZ_1588_PTP
+	/* Port 0 can be IEEE 802.1AS port. */
+	if (p->asCapable && port_is_ieee8021as(p) && portnum(p) > 0)
+		port_set_port_cfg(p, 1, 0);
+#endif
 	flush_last_sync(p);
 	flush_delay_req(p);
 	flush_peer_delay(p);
@@ -1843,6 +2435,12 @@ static int port_initialize(struct port *p)
 	p->logMinPdelayReqInterval = config_get_int(cfg, p->name, "logMinPdelayReqInterval");
 	p->neighborPropDelayThresh = config_get_int(cfg, p->name, "neighborPropDelayThresh");
 	p->min_neighbor_prop_delay = config_get_int(cfg, p->name, "min_neighbor_prop_delay");
+#ifdef KSZ_1588_PTP
+	p->followUpReceiptTimeout  = config_get_int(cfg, p->name, "followUpReceiptTimeout");
+	p->syncTxContTimeout  = config_get_int(cfg, p->name, "syncTxContTimeout");
+	if (p->syncTxContTimeout < 140)
+		p->syncTxContTimeout = 140;
+#endif
 
 	for (i = 0; i < N_TIMER_FDS; i++) {
 		fd[i] = -1;
@@ -1861,6 +2459,9 @@ static int port_initialize(struct port *p)
 		p->fda.fd[FD_ANNOUNCE_TIMER + i] = fd[i];
 	}
 
+#ifdef KSZ_1588_PTP
+	if (is_peer_port(p->clock, p))
+#endif
 	if (port_set_announce_tmo(p))
 		goto no_tmo;
 
@@ -1903,10 +2504,16 @@ static int update_current_master(struct port *p, struct ptp_message *m)
 {
 	struct foreign_clock *fc = p->best;
 	struct ptp_message *tmp;
+#ifndef KSZ_1588_PTP
 	struct parent_ds *dad;
 	struct path_trace_tlv *ptt;
+#endif
 	struct timePropertiesDS tds;
 
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf(" !! %s\n", __func__);
+#endif
 	if (!msg_source_equal(m, fc))
 		return add_foreign_master(p, m);
 
@@ -1916,12 +2523,15 @@ static int update_current_master(struct port *p, struct ptp_message *m)
 		tds.timeSource = m->announce.timeSource;
 		clock_update_time_properties(p->clock, tds);
 	}
+#ifndef KSZ_1588_PTP
+	/* Update pathTrace in clock_update_slave(). */
 	if (p->path_trace_enabled) {
 		ptt = (struct path_trace_tlv *) m->announce.suffix;
 		dad = clock_parent_ds(p->clock);
 		memcpy(dad->ptl, ptt->cid, ptt->length);
 		dad->path_length = path_length(ptt);
 	}
+#endif
 	port_set_announce_tmo(p);
 	fc_prune(fc);
 	msg_get(m);
@@ -1956,6 +2566,11 @@ static int process_announce(struct port *p, struct ptp_message *m)
 		if (!c37_238_extract(m, &c37, &alt))
 			return result;
 	}
+
+	/* Grandmaster cannot be self. */
+	if (!memcmp(&p->portIdentity.clockIdentity,
+	    &m->announce.grandmasterIdentity, sizeof(struct ClockIdentity)))
+		return result;
 #endif
 	/* Do not qualify announce messages with stepsRemoved >= 255, see
 	 * IEEE1588-2008 section 9.3.2.5 (d)
@@ -2008,6 +2623,7 @@ static int process_delay_req(struct port *p, struct ptp_message *m)
 	msg->header.domainNumber       = m->header.domainNumber;
 	msg->header.correction         = m->header.correction;
 	msg->header.sourcePortIdentity = p->portIdentity;
+	msg->header.sourcePortIdentity = p->host_port->portIdentity;
 	msg->header.sequenceId         = m->header.sequenceId;
 	msg->header.control            = CTL_DELAY_RESP;
 	msg->header.logMessageInterval = p->logMinDelayReqInterval;
@@ -2023,6 +2639,7 @@ static int process_delay_req(struct port *p, struct ptp_message *m)
 	}
 
 #ifdef KSZ_1588_PTP
+	msg->header.flagField[1] |= PTP_TIMESCALE;
 	p->dest_port = p->receive_port;
 #endif
 	err = port_prepare_and_send(p, msg, 0);
@@ -2111,6 +2728,9 @@ static void process_follow_up(struct port *p, struct ptp_message *m)
 		break;
 	}
 	master = clock_parent_identity(p->clock);
+#ifdef KSZ_1588_PTP
+	if (!skip_sync_check(p->clock))
+#endif
 	if (memcmp(&master, &m->header.sourcePortIdentity, sizeof(master)))
 		return;
 
@@ -2127,6 +2747,28 @@ static void process_follow_up(struct port *p, struct ptp_message *m)
 	} else {
 		event = FUP_MISMATCH;
 	}
+#ifdef KSZ_1588_PTP
+	/* Out of sequence Follow_Up does not satisfy receive timer. */
+	if (event == FUP_MATCH && port_is_ieee8021as(p)) {
+		port_clr_tmo(p->fda.fd[FD_FUP_RX_TIMER]);
+		if (p->fup_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 1
+if (portnum(p) == 5)
+#endif
+printf(" %s fup_rx %d\n", __func__, portnum(p));
+#endif
+			p->fup_rx_timeout = 0;
+		}
+		if (PS_SLAVE == p->state) {
+			p->fup_correction = m->header.correction;
+			memcpy(&p->fup_timestamp, &m->ts.pdu,
+				sizeof(struct timestamp));
+			clock_update_fup(p->clock, p->index,
+				p->fup_correction, &p->fup_timestamp);
+		}
+	}
+#endif
 	port_syfufsm(p, event, m);
 }
 
@@ -2197,6 +2839,9 @@ static int process_pdelay_req(struct port *p, struct ptp_message *m)
 	 * fields, neither in the response or the follow up.
 	 */
 #ifdef KSZ_1588_PTP
+	if (need_dest_port(p->clock))
+		rsp->header.sourcePortIdentity.portNumber = p->receive_port;
+	rsp->header.flagField[1] |= PTP_TIMESCALE;
 	p->p2p_sec = p->p2p_nsec = 0;
 	if (!clock_two_step(p->clock)) {
 		if (get_hw_version(p->clock) < 2) {
@@ -2228,6 +2873,11 @@ static int process_pdelay_req(struct port *p, struct ptp_message *m)
 
 	fup->pdelay_resp_fup.requestingPortIdentity = m->header.sourcePortIdentity;
 
+#ifdef KSZ_1588_PTP
+	if (need_dest_port(p->clock))
+		fup->header.sourcePortIdentity.portNumber = p->receive_port;
+	fup->header.flagField[1] |= PTP_TIMESCALE;
+#endif
 	err = peer_prepare_and_send(p, rsp, 1);
 	if (err) {
 		pr_err("port %hu: send peer delay response failed", portnum(p));
@@ -2271,13 +2921,27 @@ static void port_peer_delay(struct port *p)
 	struct ptp_message *req = p->peer_delay_req;
 	struct ptp_message *rsp = p->peer_delay_resp;
 	struct ptp_message *fup = p->peer_delay_fup;
+#ifdef KSZ_1588_PTP
+	struct PortIdentity *portIdentity = &p->portIdentity;
+#endif
 
 	/* Check for response, validate port and sequence number. */
 
 	if (!rsp)
 		return;
 
+#ifdef KSZ_1588_PTP
+	if (need_dest_port(p->clock)) {
+		struct PortIdentity pid;
+
+		pid = p->portIdentity;
+		pid.portNumber = p->receive_port;
+		portIdentity = &pid;
+	}
+	if (!pid_eq(&rsp->pdelay_resp.requestingPortIdentity, portIdentity))
+#else
 	if (!pid_eq(&rsp->pdelay_resp.requestingPortIdentity, &p->portIdentity))
+#endif
 		return;
 
 	if (rsp->header.sequenceId != ntohs(req->header.sequenceId))
@@ -2348,7 +3012,16 @@ calc:
 
 static int process_pdelay_resp(struct port *p, struct ptp_message *m)
 {
+#ifdef KSZ_1588_PTP
+	p->multiple_pdr = 0;
+	if (0 == memcmp(&p->portIdentity, &m->header.sourcePortIdentity,
+		        sizeof(struct ClockIdentity))) {
+		p->multiple_pdr = 1;
+		return 0;
+	}
+#endif
 	if (p->peer_delay_resp) {
+		p->multiple_pdr = 1;
 		if (!source_pid_eq(p->peer_delay_resp, m)) {
 			pr_err("port %hu: multiple peer responses", portnum(p));
 			if (!p->multiple_pdr_detected) {
@@ -2396,6 +3069,12 @@ static int process_pdelay_resp(struct port *p, struct ptp_message *m)
 
 static void process_pdelay_resp_fup(struct port *p, struct ptp_message *m)
 {
+#ifdef KSZ_1588_PTP
+	if (0 == memcmp(&p->portIdentity, &m->header.sourcePortIdentity,
+		        sizeof(struct ClockIdentity))) {
+		return;
+	}
+#endif
 	if (!p->peer_delay_req)
 		return;
 
@@ -2430,6 +3109,9 @@ static void process_sync(struct port *p, struct ptp_message *m)
 		break;
 	}
 	master = clock_parent_identity(p->clock);
+#ifdef KSZ_1588_PTP
+	if (!skip_sync_check(p->clock))
+#endif
 	if (memcmp(&master, &m->header.sourcePortIdentity, sizeof(master))) {
 		return;
 	}
@@ -2442,11 +3124,22 @@ static void process_sync(struct port *p, struct ptp_message *m)
 	m->header.correction += p->asymmetry;
 
 #ifdef KSZ_1588_PTP
+	p->rx_sec = m->hwts.ts.tv_sec;
 	if (need_dest_port(p->clock)) {
 		if (get_hw_version(p->clock) < 2)
 			set_master_port(p->clock, m->header.reserved1);
 		if (get_hw_version(p->clock) >= 2)
 			set_master_port(p->clock, p->receive_port);
+	}
+	if (port_is_ieee8021as(p) && p->state == PS_SLAVE) {
+		set_master_port(p->clock, portnum(p));
+		memcpy(&p->sync_ts, &m->hwts.ts, sizeof(struct timespec));
+		p->sync_correction = m->header.correction;
+		memcpy(&p->sync_timestamp, &m->ts.pdu,
+			sizeof(struct timestamp));
+		clock_update_sync(p->clock, p->index, &p->sync_ts,
+			p->sync_correction, &p->sync_timestamp);
+		port_set_sync_cont_tmo(p);
 	}
 #endif
 	if (one_step(m)) {
@@ -2462,6 +3155,10 @@ static void process_sync(struct port *p, struct ptp_message *m)
 		event = SYNC_MATCH;
 	} else {
 		event = SYNC_MISMATCH;
+#ifdef KSZ_1588_PTP
+		if (p->followUpReceiptTimeout && !p->fup_rx_timeout)
+			port_set_fup_rx_tmo(p);
+#endif
 	}
 	port_syfufsm(p, event, m);
 }
@@ -2496,6 +3193,11 @@ struct foreign_clock *port_compute_best(struct port *p)
 
 		fc_prune(fc);
 
+#ifdef KSZ_1588_PTP
+		if (fc->bad_master)
+			continue;
+		if (!port_is_ieee8021as(p))
+#endif
 		if (fc->n_messages < FOREIGN_MASTER_THRESHOLD)
 			continue;
 
@@ -2518,6 +3220,12 @@ static void port_e2e_transition(struct port *p, enum port_state next)
 	port_clr_tmo(p->fda.fd[FD_QUALIFICATION_TIMER]);
 	port_clr_tmo(p->fda.fd[FD_MANNO_TIMER]);
 	port_clr_tmo(p->fda.fd[FD_SYNC_TX_TIMER]);
+#ifdef KSZ_1588_PTP
+	p->ann_rx_timeout = 0;
+	p->ann_tx_timeout = 0;
+	p->sync_rx_timeout = 0;
+	p->sync_tx_timeout = 0;
+#endif
 
 	switch (next) {
 	case PS_INITIALIZING:
@@ -2527,29 +3235,66 @@ static void port_e2e_transition(struct port *p, enum port_state next)
 		port_disable(p);
 		break;
 	case PS_LISTENING:
+		if (p == get_slave_port(p->clock))
+			set_slave_port(p->clock, NULL);
+		if (!is_peer_port(p->clock, p) ||
+		    clock_slave_only(p->clock) ||
+		    PS_MASTER == p->state ||
+		    PS_GRAND_MASTER == p->state)
+			break;
 		port_set_announce_tmo(p);
 		break;
 	case PS_PRE_MASTER:
+		if (!is_host_port(p->clock, p))
+			break;
 		port_set_qualification_tmo(p);
 		break;
 	case PS_MASTER:
 	case PS_GRAND_MASTER:
-		set_tmo_log(p->fda.fd[FD_MANNO_TIMER], 1, -10); /*~1ms*/
-		port_set_sync_tx_tmo(p);
 #ifdef KSZ_1588_PTP
 		free_foreign_masters(p);
-		set_master_port(p->clock, 0);
+		if (p == get_slave_port(p->clock))
+			set_slave_port(p->clock, NULL);
+
+		/* Only host port handles master clock operation. */
+		if (!is_host_port(p->clock, p))
+			break;
 #endif
+		set_tmo_log(p->fda.fd[FD_MANNO_TIMER], 1, -10); /*~1ms*/
+		if (!p->ann_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s ann_tx %d\n", __func__, portnum(p));
+#endif
+			p->ann_tx_timeout = 1;
+		}
+		port_set_sync_tx_tmo(p);
 		break;
 	case PS_PASSIVE:
+
+		/* Host port does not handle Announce. */
+		if (!is_peer_port(p->clock, p))
+			break;
 		port_set_announce_tmo(p);
 		break;
 	case PS_UNCALIBRATED:
+		if (is_peer_port(p->clock, p))
+			set_slave_port(p->clock, p);
 		flush_last_sync(p);
 		flush_delay_req(p);
 		/* fall through */
 	case PS_SLAVE:
+
+		/* Host port does not handle Announce. */
+		if (is_peer_port(p->clock, p) &&
+		    !clock_slave_only(p->clock))
 		port_set_announce_tmo(p);
+
+		/* Host port does not handle delay. */
+		if (!is_peer_port(p->clock, p))
+			break;
 		port_set_delay_tmo(p);
 		break;
 	};
@@ -2563,6 +3308,16 @@ static void port_p2p_transition(struct port *p, enum port_state next)
 	port_clr_tmo(p->fda.fd[FD_QUALIFICATION_TIMER]);
 	port_clr_tmo(p->fda.fd[FD_MANNO_TIMER]);
 	port_clr_tmo(p->fda.fd[FD_SYNC_TX_TIMER]);
+#ifdef KSZ_1588_PTP
+	port_clr_tmo(p->fda.fd[FD_FUP_RX_TIMER]);
+	port_clr_tmo(p->fda.fd[FD_SYNC_CONT_TIMER]);
+	p->ann_rx_timeout = 0;
+	p->ann_tx_timeout = 0;
+	p->sync_rx_timeout = 0;
+	p->sync_tx_timeout = 0;
+	p->fup_rx_timeout = 0;
+	p->fup_tx_timeout = 0;
+#endif
 
 	switch (next) {
 	case PS_INITIALIZING:
@@ -2572,28 +3327,73 @@ static void port_p2p_transition(struct port *p, enum port_state next)
 		port_disable(p);
 		break;
 	case PS_LISTENING:
+		if (p == get_slave_port(p->clock))
+			set_slave_port(p->clock, NULL);
+
+		/* Host port does not handle Announce. */
+		if (is_peer_port(p->clock, p) &&
+		    !clock_slave_only(p->clock) &&
+		    PS_MASTER != p->state &&
+		    PS_GRAND_MASTER != p->state)
 		port_set_announce_tmo(p);
+
+		/* Host port does not handle delay. */
+		if (!is_peer_port(p->clock, p))
+			break;
 		port_set_delay_tmo(p);
 		break;
 	case PS_PRE_MASTER:
+
+		/* Only host port handles master clock operation. */
+		if (!is_host_port(p->clock, p))
+			break;
 		port_set_qualification_tmo(p);
 		break;
 	case PS_MASTER:
 	case PS_GRAND_MASTER:
-		set_tmo_log(p->fda.fd[FD_MANNO_TIMER], 1, -10); /*~1ms*/
-		port_set_sync_tx_tmo(p);
 #ifdef KSZ_1588_PTP
-		set_master_port(p->clock, 0);
+		if (port_is_ieee8021as(p) && p->sync_ts.tv_sec &&
+		    p == get_slave_port(p->clock)) {
+			clock_set_follow_up_info(p->clock);
+			clock_clear_sync_fup(p->clock, p->index);
+		}
+		if (p == get_slave_port(p->clock))
+			set_slave_port(p->clock, NULL);
+
+		/* Only host port handles master clock operation. */
+		if (!is_host_port(p->clock, p))
+			break;
 #endif
+		set_tmo_log(p->fda.fd[FD_MANNO_TIMER], 1, -10); /*~1ms*/
+		if (!p->ann_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s ann_tx %d\n", __func__, portnum(p));
+#endif
+			p->ann_tx_timeout = 1;
+		}
+		port_set_sync_tx_tmo(p);
 		break;
 	case PS_PASSIVE:
+
+		/* Host port does not handle Announce. */
+		if (!is_peer_port(p->clock, p))
+			break;
 		port_set_announce_tmo(p);
 		break;
 	case PS_UNCALIBRATED:
+		if (is_peer_port(p->clock, p))
+			set_slave_port(p->clock, p);
 		flush_last_sync(p);
 		flush_peer_delay(p);
 		/* fall through */
 	case PS_SLAVE:
+
+		/* Host port does not handle Announce and Sync. */
+		if (!is_peer_port(p->clock, p) || clock_slave_only(p->clock))
+			break;
 		port_set_announce_tmo(p);
 		break;
 	};
@@ -2602,7 +3402,12 @@ static void port_p2p_transition(struct port *p, enum port_state next)
 void port_dispatch(struct port *p, enum fsm_event event, int mdiff)
 {
 	enum port_state next;
+	enum port_state old = p->state;
 
+#if 0
+if (event)
+printf("%s %d %d\n", __func__, portnum(p), event);
+#endif
 	if (clock_slave_only(p->clock)) {
 		if (event == EV_RS_MASTER || event == EV_RS_GRAND_MASTER) {
 			port_slave_priority_warning(p);
@@ -2612,12 +3417,31 @@ void port_dispatch(struct port *p, enum fsm_event event, int mdiff)
 #ifdef KSZ_1588_PTP
 	if (!clock_slave_only(p->clock)) {
 		if (transparent_clock(p->clock) &&
-				!clock_master_lost(p->clock)) {
+		    (PS_UNCALIBRATED != p->state && PS_SLAVE != p->state) &&
+		    !clock_master_lost(p->clock)) {
 			switch (next) {
 			case PS_MASTER:
 			case PS_GRAND_MASTER:
 			case PS_PASSIVE:
+#if 0
+printf(" change to listen %d\n", portnum(p));
+#endif
 				next = PS_LISTENING;
+
+				if (next != p->state)
+					break;
+
+				/* Will not go through transition. */
+				port_clr_tmo(p->fda.fd[FD_ANNOUNCE_TIMER]);
+				if (p->ann_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s ann_rx %d\n", __func__, portnum(p));
+#endif
+					p->ann_rx_timeout = 0;
+				}
 				break;
 			default:
 				break;
@@ -2651,6 +3475,9 @@ void port_dispatch(struct port *p, enum fsm_event event, int mdiff)
 		next = p->state_machine(next, event, 0);
 	}
 
+#ifdef KSZ_1588_PTP
+	p->new_state = 0;
+#endif
 	if (next == p->state)
 		return;
 
@@ -2663,7 +3490,19 @@ void port_dispatch(struct port *p, enum fsm_event event, int mdiff)
 	}
 
 #ifdef KSZ_1588_PTP
+	if (event == EV_SYNCHRONIZATION_FAULT && p->best) {
+		if (!p->best->bad_master) {
+			p->best->good_cnt = 0;
+			p->best->bad_cnt++;
+			if (p->best->bad_cnt > 2) {
+				p->best->bad_master = 1;
+				set_tmo_ms(p->fda.fd[FD_ANNOUNCE_TIMER], 10);
+			}
+		}
+	}
 	if (boundary_clock(p->clock))
+		;
+	else if (!is_host_port(p->clock, p))
 		;
 	else if (p->state == PS_MASTER || p->state == PS_GRAND_MASTER)
 		set_hw_master(&ptpdev, 0);
@@ -2675,8 +3514,51 @@ void port_dispatch(struct port *p, enum fsm_event event, int mdiff)
 		else if (next == PS_SLAVE)
 			set_hw_as(&ptpdev, 0);
 	}
+	p->new_state = 1;
 #endif
 	p->state = next;
+
+#ifdef KSZ_1588_PTP
+	/* Pass event to host port. */
+	if (transparent_clock(p->clock) && !port_dispatched(p->clock) &&
+	    p != p->host_port) {
+		clock_port_dispatch(p->clock, p);
+		switch (next) {
+		case PS_FAULTY:
+			update_dev_cnt(p->clock, -1);
+			if (0 == get_dev_cnt(p->clock))
+				port_dispatch(p->host_port,
+					      EV_FAULT_DETECTED, 0);
+			break;
+		case PS_LISTENING:
+
+			/* Not being slave anymore. */
+			if (PS_UNCALIBRATED == old || PS_SLAVE == old) {
+				port_dispatch(p->host_port, event, 0);
+			} else if (PS_FAULTY == old || PS_INITIALIZING == old) {
+				update_dev_cnt(p->clock, 1);
+				if (0 != get_dev_cnt(p->clock))
+					port_dispatch(p->host_port,
+						      EV_FAULT_CLEARED, 0);
+			}
+			break;
+		case PS_MASTER:
+		case PS_GRAND_MASTER:
+			port_dispatch(p->host_port, event, 0);
+			clock_set_port_state(p->clock, event);
+			break;
+		case PS_UNCALIBRATED:
+		case PS_SLAVE:
+			port_dispatch(p->host_port, event, 0);
+			clock_set_port_state(p->clock,
+					     EV_INIT_COMPLETE);
+			break;
+		default:
+			break;
+		}
+		clock_port_dispatch(p->clock, NULL);
+	}
+#endif
 	port_notify_event(p, NOTIFY_PORT_STATE);
 
 	if (p->jbod && next == PS_UNCALIBRATED) {
@@ -2696,12 +3578,56 @@ enum fsm_event port_event(struct port *p, int fd_index)
 	int cnt, fd = p->fda.fd[fd_index], err;
 
 	switch (fd_index) {
-	case FD_ANNOUNCE_TIMER:
 	case FD_SYNC_RX_TIMER:
+		if (port_is_ieee8021as(p)) {
+#ifdef KSZ_DBG_TIMER
+printf("syn: %d=%d %d\n", fd_index, p->announceReceiptTimeout, p->syncReceiptTimeout);
+#endif
+			port_clr_tmo(p->fda.fd[FD_SYNC_RX_TIMER]);
+			if (p->sync_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s sync_rx %d\n", __func__, portnum(p));
+#endif
+				p->sync_rx_timeout = 0;
+			}
+			clock_clear_sync_tx(p->clock, p->index);
+		}
+	case FD_ANNOUNCE_TIMER:
 		pr_debug("port %hu: %s timeout", portnum(p),
 			 fd_index == FD_SYNC_RX_TIMER ? "rx sync" : "announce");
 		if (p->best)
 			fc_clear(p->best);
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s 1\n", __func__);
+#endif
+		if (clock_slave_only(p->clock) ||
+		    PS_MASTER == p->state || PS_GRAND_MASTER == p->state) {
+			port_clr_tmo(p->fda.fd[FD_ANNOUNCE_TIMER]);
+			port_clr_tmo(p->fda.fd[FD_SYNC_RX_TIMER]);
+			if (p->ann_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s ann_rx %d\n", __func__, portnum(p));
+#endif
+				p->ann_rx_timeout = 0;
+			}
+			if (p->sync_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0 
+if (portnum(p) == 5)
+#endif
+printf(" %s sync_rx %d\n", __func__, portnum(p));
+#endif
+				p->sync_rx_timeout = 0;
+			}
+		}
+		else
 		port_set_announce_tmo(p);
 #ifdef KSZ_1588_PTP
 		if (clock_slave_only(p->clock) && clock_master_lost(p->clock)
@@ -2712,10 +3638,20 @@ enum fsm_event port_event(struct port *p, int fd_index)
 #endif
 			return EV_FAULT_DETECTED;
 		}
+		if (p->syncTxCont) {
+			p->syncTxCont = 0;
+		}
+#ifdef KSZ_DBG_TIMER
+printf("ann: %d=%d %d\n", fd_index, portnum(p), p->syncTxCont);
+#endif
 		return EV_ANNOUNCE_RECEIPT_TIMEOUT_EXPIRES;
 
 	case FD_DELAY_TIMER:
 		pr_debug("port %hu: delay timeout", portnum(p));
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d 2a %p\n", __func__, portnum(p), p);
+#endif
 		port_set_delay_tmo(p);
 		return port_delay_request(p) ? EV_FAULT_DETECTED : EV_NONE;
 
@@ -2724,19 +3660,82 @@ enum fsm_event port_event(struct port *p, int fd_index)
 		return EV_QUALIFICATION_TIMEOUT_EXPIRES;
 
 	case FD_MANNO_TIMER:
+#ifdef KSZ_DBG_HOST
+if (!is_host_port(p->clock, p))
+printf("  !! %s %d 3\n", __func__, portnum(p));
+#endif
 		pr_debug("port %hu: master tx announce timeout", portnum(p));
 		port_set_manno_tmo(p);
 		return port_tx_announce(p) ? EV_FAULT_DETECTED : EV_NONE;
 
 	case FD_SYNC_TX_TIMER:
 		pr_debug("port %hu: master sync timeout", portnum(p));
+#ifdef KSZ_DBG_HOST
+if (!is_host_port(p->clock, p))
+printf("  !! %s %d 4\n", __func__, portnum(p));
+#endif
 #ifdef KSZ_1588_PTP
 		/* Clearing the timeout may not take effect yet. */
 		if (p->state != PS_MASTER && p->state != PS_GRAND_MASTER)
 			return event;
 #endif
+
+#ifdef KSZ_1588_PTP
+		/* Need to wait for Sync from grandmaster. */
+		if (port_is_ieee8021as(p) && p->sync_ts.tv_sec &&
+		    !p->syncTxCont) {
+#if 0
+printf(" wait tx: %d %ld; ", portnum(p), p->sync_ts.tv_sec);
+#endif
+			port_clr_tmo(p->fda.fd[FD_SYNC_TX_TIMER]);
+			if (p->sync_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 0
+if (portnum(p) == 5)
+#endif
+printf(" %s sync_tx %d\n", __func__, portnum(p));
+#endif
+				p->sync_tx_timeout = 0;
+			}
+		} else
+#endif
 		port_set_sync_tx_tmo(p);
 		return port_tx_sync(p) ? EV_FAULT_DETECTED : EV_NONE;
+
+#ifdef KSZ_1588_PTP
+	case FD_FUP_RX_TIMER:
+		port_clr_tmo(p->fda.fd[FD_FUP_RX_TIMER]);
+		if (p->fup_rx_timeout) {
+#ifdef KSZ_DBG_TIMER
+#if 1
+if (portnum(p) == 5)
+#endif
+printf(" %s fup_rx %d\n", __func__, portnum(p));
+#endif
+			p->fup_rx_timeout = 0;
+		}
+		if (p->syfu == SF_HAVE_SYNC) {
+			msg_put(p->last_syncfup);
+			p->syfu = SF_EMPTY;
+		}
+		return port_event(p, FD_ANNOUNCE_TIMER);
+	case FD_SYNC_CONT_TIMER:
+		port_clr_tmo(p->fda.fd[FD_SYNC_CONT_TIMER]);
+		if (p->fup_tx_timeout) {
+#ifdef KSZ_DBG_TIMER
+if (portnum(p) == 5)
+printf(" %s fup_tx %d\n", __func__, portnum(p));
+#endif
+			p->fup_tx_timeout = 0;
+		}
+		p->sync_tx_timeout = 0;
+		p->syncTxCont = 1;
+		clock_update_sync_tx(p->clock, p->index);
+#ifdef KSZ_DBG_TIMER
+printf(" sync cont\n");
+#endif
+		return EV_NONE;
+#endif
 	}
 
 	msg = msg_allocate();
@@ -2756,9 +3755,14 @@ enum fsm_event port_event(struct port *p, int fd_index)
 #endif
 	}
 #ifdef KSZ_1588_PTP
+	/* A hack to drop looped transmitted raw frame. */
+	if (cnt <= 1) {
+		msg_put(msg);
+		return EV_NONE;
+	}
 	p->receive_port = portnum(p);
 	if (need_dest_port(p->clock) ||
-	    (!p->peer_port && PDELAY_REQ == msg_type(msg))) {
+	    !skip_host_port(p->clock, p)) {
 		if (get_hw_version(p->clock) >= 2) {
 			u32 port;
 			u32 sec;
@@ -2769,18 +3773,13 @@ enum fsm_event port_event(struct port *p, int fd_index)
 			rc = port_get_msg_info(p, &msg->header, &tx,
 				&port, &sec, &nsec);
 			if (!rc) {
+#if 0
+printf("rc: %d\n", port);
+#endif
 				p->receive_port = port;
-				if (!p->peer_port) {
-					p->peer_port = port;
-					p->portIdentity.portNumber = port;
-				}
 			}
 		} else {
 			p->receive_port = msg->header.reserved1;
-			if (!p->peer_port) {
-				p->peer_port = p->receive_port;
-				p->portIdentity.portNumber = p->receive_port;
-			}
 		}
 	}
 #endif
@@ -2814,17 +3813,34 @@ enum fsm_event port_event(struct port *p, int fd_index)
 
 	switch (msg_type(msg)) {
 	case SYNC:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d a\n", __func__, portnum(p));
+#endif
 		process_sync(p, msg);
 		break;
 	case DELAY_REQ:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d b\n", __func__, portnum(p));
+#endif
 		if (process_delay_req(p, msg))
 			event = EV_FAULT_DETECTED;
 		break;
 	case PDELAY_REQ:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d c\n", __func__, portnum(p));
+else
+#endif
 		if (process_pdelay_req(p, msg))
 			event = EV_FAULT_DETECTED;
 		break;
 	case PDELAY_RESP:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d d\n", __func__, portnum(p));
+#endif
 #ifdef KSZ_1588_PTP
 		p->pdelay_resp_port = p->receive_port;
 #endif
@@ -2832,9 +3848,17 @@ enum fsm_event port_event(struct port *p, int fd_index)
 			event = EV_FAULT_DETECTED;
 		break;
 	case FOLLOW_UP:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d e\n", __func__, portnum(p));
+#endif
 		process_follow_up(p, msg);
 		break;
 	case DELAY_RESP:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d f\n", __func__, portnum(p));
+#endif
 		process_delay_resp(p, msg);
 #ifdef KSZ_1588_PTP
 		if (p->delay_resp)
@@ -2842,12 +3866,20 @@ enum fsm_event port_event(struct port *p, int fd_index)
 #endif
 		break;
 	case PDELAY_RESP_FOLLOW_UP:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d g\n", __func__, portnum(p));
+#endif
 #ifdef KSZ_1588_PTP
 		p->pdelay_resp_fup_port = p->receive_port;
 #endif
 		process_pdelay_resp_fup(p, msg);
 		break;
 	case ANNOUNCE:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d h\n", __func__, portnum(p));
+#endif
 		if (process_announce(p, msg))
 			event = EV_STATE_DECISION_EVENT;
 		break;
@@ -2880,6 +3912,7 @@ static int process_delayed_sync(struct port *p, struct ptp_message *msg)
 	struct ptp_header *hdr;
 	int pdulen;
 	int err = 0;
+	struct port *q = p;
 
 	if (!fup)
 		return 0;
@@ -2905,14 +3938,57 @@ static int process_delayed_sync(struct port *p, struct ptp_message *msg)
 	fup->header.sequenceId         = p->seqnum.sync - 1;
 	fup->header.control            = CTL_FOLLOW_UP;
 	fup->header.logMessageInterval = p->logSyncInterval;
+#if 0
+if (p->syncTxCont)
+fup->header.logMessageInterval = -1;
+#endif
 
+#if 0
+	p->tx_sec = msg->hwts.ts.tv_sec;
+	if (p->last_tx_sec != p->tx_sec) {
+		p->last_tx_sec = p->tx_sec;
+printf(" s: %u\n", p->tx_sec);
+	}
+#endif
 	ts_to_timestamp(&msg->hwts.ts, &fup->follow_up.preciseOriginTimestamp);
+	if (port_is_ieee8021as(p) && p->sync_ts.tv_sec) {
+		Integer64 r1;
+		Integer64 t1;
+		Integer64 correction;
 
+		r1 = p->sync_ts.tv_sec;
+		r1 *= NS_PER_SEC;
+		r1 += p->sync_ts.tv_nsec;
+		t1 = msg->hwts.ts.tv_sec;
+		t1 *= NS_PER_SEC;
+		t1 += msg->hwts.ts.tv_nsec;
+		correction = t1 - r1;
+		if (correction < 0)
+			correction = 0;
+		correction <<= 16;
+		correction += p->fup_correction;
+		fup->header.correction = correction;
+		tspdu_to_timestamp(&p->fup_timestamp,
+			&fup->follow_up.preciseOriginTimestamp);
+#if 0
+if (p->syncTxCont)
+printf(" tx fup:%d\n", portnum(p));
+#endif
+	}
+
+	fup->header.flagField[1] |= PTP_TIMESCALE;
 	p->dest_port = msg->header.reserved1;
-	err = port_prepare_and_send(p, fup, 0);
+
+	/* Follow_Up needs to be sent by individual port. */
+	if (!is_peer_port(p->clock, p)) {
+		q = get_port(p->clock, p->dest_port);
+		if (!q)
+			return err;
+	}
+	err = port_prepare_and_send(q, fup, 0);
 	if (err)
 		pr_err("port %hu: send follow up failed", portnum(p));
-	if (!need_dest_port(p->clock)) {
+	if (!need_dest_port(p->clock) && is_peer_port(p->clock, p)) {
 		msg = p->sync;
 		p->sync = NULL;
 		msg_put(msg);
@@ -2958,13 +4034,6 @@ static int process_delayed_pdelay_req(struct port *p, struct ptp_message *msg)
 		return 0;
 
 	/* Pdelay_Req in 1-step mode has real port number in port identity. */
-	if (!p->actual_port) {
-		p->actual_port = msg->header.reserved1;
-	}
-	if (!p->peer_port) {
-		p->peer_port = p->actual_port;
-		p->portIdentity.portNumber = p->actual_port;
-	}
 	if (need_dest_port(p->clock) &&
 	    (p->state == PS_UNCALIBRATED || p->state == PS_SLAVE) &&
 	    msg->header.reserved1 != get_master_port(p->clock))
@@ -3035,17 +4104,33 @@ enum fsm_event port_tx_event(struct port *p, int fd_index)
 
 	switch (msg_type(msg)) {
 	case SYNC:
+#ifdef KSZ_DBG_HOST
+if (!is_host_port(p->clock, p))
+printf("  !! %s %d a\n", __func__, portnum(p));
+#endif
 		if (process_delayed_sync(p, msg))
 			event = EV_FAULT_DETECTED;
 		break;
 	case DELAY_REQ:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d b\n", __func__, portnum(p));
+#endif
 		process_delayed_delay_req(p, msg);
 		break;
 	case PDELAY_REQ:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d c\n", __func__, portnum(p));
+#endif
 		if (process_delayed_pdelay_req(p, msg))
 			event = EV_FAULT_DETECTED;
 		break;
 	case PDELAY_RESP:
+#ifdef KSZ_DBG_HOST
+if (!is_peer_port(p->clock, p))
+printf("  !! %s %d d\n", __func__, portnum(p));
+#endif
 		if (process_delayed_pdelay_resp(p, msg))
 			event = EV_FAULT_DETECTED;
 		break;
@@ -3166,8 +4251,10 @@ int port_manage(struct port *p, struct port *ingress, struct ptp_message *msg)
 	case TLV_ANNOUNCE_RECEIPT_TIMEOUT:
 	case TLV_LOG_SYNC_INTERVAL:
 	case TLV_VERSION_NUMBER:
+#ifndef KSZ_1588_PTP
 	case TLV_ENABLE_PORT:
 	case TLV_DISABLE_PORT:
+#endif
 	case TLV_UNICAST_NEGOTIATION_ENABLE:
 	case TLV_UNICAST_MASTER_TABLE:
 	case TLV_UNICAST_MASTER_MAX_TABLE_SIZE:
@@ -3344,7 +4431,12 @@ struct port *port_open(int phc_index,
 	}
 
 #ifdef KSZ_1588_PTP
+	p->basename = interface->basename;
 	p->devname = interface->devname;
+	p->host_port = p;
+
+	/* Port number may not be the same as index. */
+	p->index = number;
 #endif
 	p->name = interface->name;
 	p->asymmetry = config_get_int(cfg, p->name, "delayAsymmetry");
@@ -3367,11 +4459,6 @@ struct port *port_open(int phc_index,
 	p->state = PS_INITIALIZING;
 	p->delayMechanism = config_get_int(cfg, p->name, "delay_mechanism");
 	p->versionNumber = PTP_VERSION;
-
-#ifdef KSZ_1588_PTP
-	if (p->delayMechanism != DM_P2P || p->timestamping != TS_ONESTEP)
-		p->peer_port = number;
-#endif
 
 	if (p->hybrid_e2e && p->delayMechanism != DM_E2E) {
 		pr_warning("port %d: hybrid_e2e only works with E2E", number);

@@ -104,8 +104,13 @@ struct management_id idtab[] = {
 	{ "ANNOUNCE_RECEIPT_TIMEOUT", TLV_ANNOUNCE_RECEIPT_TIMEOUT, do_get_action },
 	{ "LOG_SYNC_INTERVAL", TLV_LOG_SYNC_INTERVAL, do_get_action },
 	{ "VERSION_NUMBER", TLV_VERSION_NUMBER, do_get_action },
+#ifdef KSZ_1588_PTP
+	{ "ENABLE_PORT", TLV_ENABLE_PORT, do_set_action },
+	{ "DISABLE_PORT", TLV_DISABLE_PORT, do_set_action },
+#else
 	{ "ENABLE_PORT", TLV_ENABLE_PORT, not_supported },
 	{ "DISABLE_PORT", TLV_DISABLE_PORT, not_supported },
+#endif
 	{ "UNICAST_NEGOTIATION_ENABLE", TLV_UNICAST_NEGOTIATION_ENABLE, not_supported },
 	{ "UNICAST_MASTER_TABLE", TLV_UNICAST_MASTER_TABLE, not_supported },
 	{ "UNICAST_MASTER_MAX_TABLE_SIZE", TLV_UNICAST_MASTER_MAX_TABLE_SIZE, not_supported },
@@ -638,6 +643,12 @@ static void do_set_action(int action, int index, char *str)
 		}
 		pmc_send_set_action(pmc, code, &pnp, sizeof(pnp));
 		break;
+#ifdef KSZ_1588_PTP
+	case TLV_DISABLE_PORT:
+	case TLV_ENABLE_PORT:
+		pmc_send_set_action(pmc, code, NULL, 0);
+		break;
+#endif
 	}
 }
 

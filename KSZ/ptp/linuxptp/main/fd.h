@@ -20,7 +20,11 @@
 #ifndef HAVE_FD_H
 #define HAVE_FD_H
 
+#ifdef KSZ_1588_PTP
+#define N_TIMER_FDS 8
+#else
 #define N_TIMER_FDS 6
+#endif
 
 enum {
 	FD_EVENT,
@@ -31,6 +35,11 @@ enum {
 	FD_QUALIFICATION_TIMER,
 	FD_MANNO_TIMER,
 	FD_SYNC_TX_TIMER,
+
+#ifdef KSZ_1588_PTP
+	FD_FUP_RX_TIMER,
+	FD_SYNC_CONT_TIMER,
+#endif
 	N_POLLFD,
 };
 

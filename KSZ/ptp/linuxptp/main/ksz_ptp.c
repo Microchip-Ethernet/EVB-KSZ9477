@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2015-2018 Microchip Technology Inc.
  * Copyright (c) 2012-2014 Micrel, Inc.
  *
  */
@@ -385,6 +386,37 @@ static void set_peer_delay_req(void *ptr,
 		param->rx_latency = delay >> 16;
 }  /* set_peer_delay_req */
 
+static void get_port_cfg_req(void *ptr,
+	int port)
+{
+	struct ksz_request *req = (struct ksz_request *) ptr;
+
+	req->size = SIZEOF_ksz_request;
+	req->size += sizeof(struct ptp_delay_values);
+	req->cmd = DEV_CMD_GET;
+	req->subcmd = DEV_PTP_PORT_CFG;
+	req->output = port;
+}  /* get_port_cfg_req */
+
+static void set_port_cfg_req(void *ptr,
+	int port, int enable, int asCapable)
+{
+	struct ksz_request *req = (struct ksz_request *) ptr;
+	struct ptp_delay_values *param = (struct ptp_delay_values *)
+		&req->param;
+
+	req->size = SIZEOF_ksz_request;
+	req->size += sizeof(struct ptp_delay_values);
+	req->cmd = DEV_CMD_PUT;
+	req->subcmd = DEV_PTP_PORT_CFG;
+	req->output = port;
+	param->reserved = 0;
+	if (enable)
+		param->reserved |= PTP_PORT_ENABLED;
+	if (asCapable)
+		param->reserved |= PTP_PORT_ASCAPABLE;
+}  /* set_port_cfg_req */
+
 static void get_utc_offset_req(void *ptr)
 {
 	struct ksz_request *req = (struct ksz_request *) ptr;
@@ -658,6 +690,32 @@ int ptp_dev_init(void *fd,
 			}
 		}
 		*drift = req.output;
+	}
+	return rc;
+}
+
+int ptp_port_info(void *fd,
+	char *name, u8 *port, u32 *mask)
+{
+	struct ksz_request_actual req;
+	int len;
+	int rc;
+
+	len = strlen(name);
+	req.size = SIZEOF_ksz_request + len + 2;
+	req.cmd = DEV_CMD_INFO;
+	req.subcmd = DEV_INFO_PORT;
+	memcpy(&req.param.data, name, len);
+	req.param.data[len] = '\0';
+	rc = ptp_ioctl(fd, &req);
+	if (!rc) {
+		if ('M' == req.param.data[0] &&
+				'i' == req.param.data[1] &&
+				'c' == req.param.data[2] &&
+				'r' == req.param.data[3]) {
+			*port = req.param.data[4];
+			*mask = req.output;
+		}
 	}
 	return rc;
 }
@@ -1026,6 +1084,39 @@ int set_peer_delay(void *fd,
 		rc = req.result;
 	return rc;
 }  /* set_peer_delay */
+
+int get_port_cfg(void *fd,
+	int port, int *enable, int *asCapable)
+{
+	struct ksz_request_actual req;
+	int rc;
+
+	get_port_cfg_req(&req, port);
+	rc = ptp_ioctl(fd, &req);
+	if (!rc)
+		rc = req.result;
+	if (!rc) {
+		struct ptp_delay_values *param = (struct ptp_delay_values *)
+			&req.param;
+
+		*enable = !!(param->reserved & PTP_PORT_ENABLED);
+		*asCapable = !!(param->reserved & PTP_PORT_ASCAPABLE);
+	}
+	return rc;
+}  /* get_port_cfg */
+
+int set_port_cfg(void *fd,
+	int port, int enable, int asCapable)
+{
+	struct ksz_request_actual req;
+	int rc;
+
+	set_port_cfg_req(&req, port, enable, asCapable);
+	rc = ptp_ioctl(fd, &req);
+	if (!rc)
+		rc = req.result;
+	return rc;
+}  /* set_port_cfg */
 
 int get_utc_offset(void *fd,
 	int *offset)

@@ -119,12 +119,14 @@ char devname[20];
 int ptp_2step = 0;
 int ptp_alternate = 0;
 int ptp_unicast = 0;
+int vlan = 0;
+int vlan_prio = 2;
 
 #ifdef _SYS_SOCKET_H
 struct sockaddr_ll eth_bpdu_addr[NUM_OF_PORTS];
 u8 *eth_bpdu_buf[NUM_OF_PORTS];
 
-u8 eth_bpdu[] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x00 };
+u8 eth_bpdu[] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x10 };
 
 u8 hw_addr[ETH_ALEN];
 
@@ -204,7 +206,7 @@ static void signal_wait(struct thread_info *pthread, int cond)
 
 	ftime(&tb);
 	ts.tv_sec = tb.time;
-	ts.tv_nsec = (tb.millitm + 100 - 10) * 1000 * 1000;
+	ts.tv_nsec = (tb.millitm + 10) * 1000 * 1000;
 	if (ts.tv_nsec >= 1000000000) {
 		ts.tv_nsec -= 1000000000;
 		ts.tv_sec++;
@@ -270,14 +272,28 @@ void send_data(int p, u8 data[], int len)
 	socklen_t servlen;
 	char *buf;
 	u16 *ptr;
+	int hdr_len = 14;
 
 	pservaddr = (SAI *) &eth_bpdu_addr[p];
 	servlen = sizeof(eth_bpdu_addr[0]);
 	buf = (char *) eth_bpdu_buf[p];
 	ptr = (u16 *) &buf[12];
-	*ptr = htons(len);
-	memcpy(&buf[14], data, len);
-	len += 14;
+	if (vlan) {
+		u16 tag = vlan - 1;
+
+		if (tag > 4094)
+			tag = 0;
+		tag |= vlan_prio << 13;
+		*ptr++ = htons(ETH_P_8021Q);
+		*ptr++ = htons(tag);
+		*ptr++ = htons(0x22f0);
+		len -= 0;
+		hdr_len += 4;
+	} else {
+		*ptr++ = htons(len);
+	}
+	memcpy(ptr, data, len);
+	len += hdr_len;
 	Sendto(sockfd, buf, len, 0, (SA *) pservaddr, servlen);
 }  /* send_data */
 
@@ -317,32 +333,44 @@ int get_cmd(FILE *fp)
 			n = 1;
 			if (count >= 2)
 				n = num[0];
-			for (i = 0; i < n; i++) 
-				send_data(p, payload, 1500);
+			for (i = 0; i < n; i++) {
+				send_data(p, payload, 150);
+				if ((i % 500) == (500 - 1))
+					signal_wait(&tx_job_thread, 0);
+			}
 			break;
 		case 'b':
 			memset(payload, 0xff, 1500);
 			n = 1;
 			if (count >= 2)
 				n = num[0];
-			for (i = 0; i < n; i++) 
+			for (i = 0; i < n; i++) {
 				send_data(p, payload, 1500);
+				if ((i % 50) == (50 - 1))
+					signal_wait(&tx_job_thread, 0);
+			}
 			break;
 		case 'c':
 			memset(payload, 0x55, 1500);
 			n = 1;
 			if (count >= 2)
 				n = num[0];
-			for (i = 0; i < n; i++) 
+			for (i = 0; i < n; i++) {
 				send_data(p, payload, 1500);
+				if ((i % 50) == (50 - 1))
+					signal_wait(&tx_job_thread, 0);
+			}
 			break;
 		case 'd':
 			memset(payload, 0xaa, 1500);
 			n = 1;
 			if (count >= 2)
 				n = num[0];
-			for (i = 0; i < n; i++) 
+			for (i = 0; i < n; i++) {
 				send_data(p, payload, 1500);
+				if ((i % 50) == (50 - 1))
+					signal_wait(&tx_job_thread, 0);
+			}
 			break;
 		case 'p':
 			if (count >= 2) {
@@ -716,10 +744,27 @@ int main(int argc, char *argv[])
 					break;
 				case 'u':
 					++i;
+					if (i >= argc)
+						break;
 					strcpy(dest_ip, argv[i]);
 					break;
 				case 'v':
 					eth_vlan = 1;
+					break;
+				case 'x':
+					++i;
+					if (i >= argc)
+						break;
+					vlan = atoi(argv[i]);
+					++vlan;
+					break;
+				case 'y':
+					++i;
+					if (i >= argc)
+						break;
+					vlan_prio = atoi(argv[i]);
+					if (vlan_prio > 7)
+						vlan_prio = 7;
 					break;
 				}
 			}
@@ -781,6 +826,8 @@ int main(int argc, char *argv[])
 		}
 		add_multi(eth_fd[p], ethnames[p], eth_bpdu);
 	}
+	signal_init(&tx_job_thread);
+	signal_update(&tx_job_thread, NULL, 0);
 
 	rx_param.bpdu = eth_fd;
 	rx_param.cnt = rstp_ports;

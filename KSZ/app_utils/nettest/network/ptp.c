@@ -219,6 +219,7 @@ struct ptp_utime ptp_tx_sync[8];
 struct ptp_utime ptp_tx_delay[8];
 struct ptp_utime ptp_tx_pdelay[8];
 struct ptp_utime ptp_tx_pdresp[8];
+static int send_path_trace;
 static int send_tlv;
 static int reserved3;
 
@@ -363,6 +364,29 @@ void *tlv_msg(void *msg, int *size, u16 tlvType, int ext)
 		len = sizeof(struct ptp_alternate_time_offset_tlv) - 1 +
 			alt->displayName.lengthField;
 		msg = &alt->displayName.textField[3];
+		break;
+	}
+	case TLV_PATH_TRACE:
+	{
+		int i;
+		u8 *data = (u8 *)(tlv + 1);
+
+		if (send_path_trace > 179)
+			send_path_trace = 179;
+		len = sizeof(struct ptp_tlv);
+		for (i = 0; i < send_path_trace; i++) {
+			data[0] = 0x01;
+			data[1] = 0x02;
+			data[2] = 0x03;
+			data[3] = 0x04;
+			data[4] = 0x05;
+			data[5] = 0x06;
+			data[6] = 0x07;
+			data[7] = i;
+			data += 8;
+			len += 8;
+		}
+		msg = data;
 		break;
 	}
 	default:
@@ -720,6 +744,10 @@ void prepare_msg(struct ptp_msg *msg, int message)
 				0);
 			tlv = tlv_msg(tlv, &len,
 				TLV_ALTERNATE_TIME_OFFSET_INDICATOR, 0);
+		} else if (send_path_trace) {
+			tlv = announce + 1;
+			tlv = tlv_msg(tlv, &len, TLV_PATH_TRACE,
+				0);
 		}
 		break;
 	default:
@@ -1477,7 +1505,8 @@ static void print_sw_help(void)
 	printf("\tt\t0 = 1-step; 1 = 2-step\n");
 	printf("\tu\treply count\n");
 	printf("\tv\talternate master\n");
-	printf("\tw\tsend TLV\n");
+	printf("\tw 1\tsend TLV\n");
+	printf("\tw 2 #\tsend Path Trace\n");
 	printf("\tmci\tmaster clockIdentity\n");
 	printf("\tsci\tslave clockIdentity\n");
 	printf("\th\thelp\n");
@@ -1732,10 +1761,13 @@ int get_cmd(FILE *fp)
 				printf("%d\n", ptp_alternate);
 			break;
 		case 'w':
-			if (count >= 2)
-				send_tlv = num[0];
-			else
-				printf("%d\n", send_tlv);
+			if (count >= 3) {
+				if (1 == num[0])
+					send_tlv = num[1];
+				else if (2 == num[0])
+					send_path_trace = num[1];
+			} else
+				printf("%d %d\n", send_tlv, send_path_trace);
 			break;
 		case 'h':
 			print_sw_help();
@@ -2668,6 +2700,7 @@ get_dev_raw:
 	if (found)
 		goto get_dev_addr;
 
+	/* 0x1002 = dev down; 0x1003 = dev up */
 	sprintf(path, "%s%s/%s", _PATH_SYSNET_DEV, devname, NETDEV_FLAGS);
 	f = fopen(path, "r");
 	if (!f)
@@ -2675,15 +2708,18 @@ get_dev_raw:
 	rc = fscanf(f, "%x", &num[0]);
 	fclose(f);
 
+	/* down = link down; up = link up */
 	sprintf(path, "%s%s/%s", _PATH_SYSNET_DEV, devname, NETDEV_OPERSTATE);
 	f = fopen(path, "r");
 	if (!f)
 		goto get_dev_addr;
 	rc = fscanf(f, "%s", file);
 	fclose(f);
+#if 0
 	if ((!strcmp(file, "up") && !(num[0] & IFF_UP)) ||
 	    (!strcmp(file, "down") && (num[0] & IFF_UP)))
 		printf(" ? %s 0x%04x\n", file, num[0]);
+#endif
 
 	/* Device not running. */
 	if (!(num[0] & IFF_UP))
@@ -2725,13 +2761,25 @@ static int get_vlan_dev(char *devname, int vlan)
 	char file[40];
 	int num[6];
 
+	sprintf(path, "%s%s/sw/%s", _PATH_SYSNET_DEV, devname, "dev_start");
+	f = fopen(path, "r");
+	if (!f)
+		goto get_vlan_done;
+	rc = fscanf(f, "%u", &num[0]);
+	fclose(f);
+	if (num[0])
+		goto next;
+
 	sprintf(path, "%s%s/sw/%s", _PATH_SYSNET_DEV, devname, "vlan_start");
 	f = fopen(path, "r");
 	if (!f)
 		goto get_vlan_done;
 	rc = fscanf(f, "%u", &num[0]);
 	fclose(f);
+	if (num[0])
+		num[0]++;
 
+next:
 	sprintf(path, "%s%s/sw/%s", _PATH_SYSNET_DEV, devname, "ports");
 	f = fopen(path, "r");
 	if (!f)
@@ -2748,7 +2796,7 @@ static int get_vlan_dev(char *devname, int vlan)
 
 	if (num[2])
 		--num[1];
-	if (num[0] && num[0] < vlan && vlan <= num[0] + num[1])
+	if (num[0] && num[0] <= vlan && vlan < num[0] + num[1])
 		return TRUE;
 
 get_vlan_done:
@@ -3208,8 +3256,7 @@ int main(int argc, char *argv[])
 #ifdef _SYS_SOCKET_H
 		capability = PTP_KNOW_ABOUT_MULT_PORTS;
 		if (strcmp(devname, argv[1]) && get_vlan_dev(devname, vlan)) {
-			capability |= PTP_CAN_RX_TIMESTAMP |
-				PTP_HAVE_MULT_DEVICES;
+			capability |= PTP_HAVE_MULT_DEVICES;
 		}
 		rc = ptp_dev_init(&ptpdev, capability,
 			&ptp_drift, &ptp_version, &ptp_ports, &ptp_host_port);

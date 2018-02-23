@@ -41,6 +41,36 @@ update_interfaces() {
         sed -i "s/netmask $CUR/netmask $NETMASK/" $FILE
     fi
     sync
+
+    MMC=$(grep /boot /proc/mounts)
+    if [ ! -z "$MMC" ]; then
+        umount /boot
+    fi
+
+    ETH=0
+    if [ -e "/sys/class/net/eth$ETH/sw/dev_start" ]; then
+        VLAN=$(cat /sys/class/net/eth$ETH/sw/dev_start)
+        if [ $VLAN -gt 0 ]; then
+            PORTS=2
+            if [ -e "/sys/class/net/eth$ETH/sw/ports" ]; then
+                PORTS=$(cat /sys/class/net/eth$ETH/sw/ports)
+            fi
+
+            HOST_PORT=3
+            if [ -e "/sys/class/net/eth$ETH/sw/host_port" ]; then
+                HOST_PORT=$(cat /sys/class/net/eth$ETH/sw/host_port)
+                let PORTS=$PORTS-1
+            fi
+
+            p=0
+            while [ $p -lt $PORTS ]; do
+                let q=$VLAN+$p
+                ifconfig eth$ETH.$q up
+                let p=$p+1
+            done
+        fi
+    fi
+
 }
 
 start() {

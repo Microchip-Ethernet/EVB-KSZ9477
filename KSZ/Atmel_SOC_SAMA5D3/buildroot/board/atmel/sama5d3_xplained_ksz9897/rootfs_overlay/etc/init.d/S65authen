@@ -18,9 +18,15 @@ start_authen() {
     fi
     [ $AUTHEN -eq 0 ] && exit 0
 
-    if [ -e "/sys/class/net/eth$ETH/sw/vlan_start" ]; then
+    if [ -e "/sys/class/net/eth$ETH/sw/dev_start" ]; then
+        VLAN=$(cat /sys/class/net/eth$ETH/sw/dev_start)
+    fi
+
+    if [ $VLAN -eq 0 ] && [ -e "/sys/class/net/eth$ETH/sw/vlan_start" ]; then
         VLAN=$(cat /sys/class/net/eth$ETH/sw/vlan_start)
-        let VLAN=$VLAN+1
+        if [ $VLAN -gt 0 ]; then
+            let VLAN=$VLAN+1
+        fi
     fi
 
     PORTS=2

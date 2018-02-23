@@ -1,7 +1,7 @@
 /**
  * Microchip IBA code
  *
- * Copyright (c) 2015-2017 Microchip Technology Inc.
+ * Copyright (c) 2015-2018 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -1644,6 +1644,7 @@ static u32 s_dyn_mac_pre(struct ksz_iba_info *info, u16 addr, u8 *src_addr,
 		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
 			REG_SW_ALU_INDEX_1);
 	}
+	ctrl |= ALU_START;
 	return ctrl;
 }  /* s_dyn_mac_pre */
 
@@ -1667,7 +1668,11 @@ static void *r_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 	ctrl = s_dyn_mac_pre(info, addr, src_addr, src_fid);
 	ctrl |= ALU_READ;
-	ctrl |= ALU_START;
+
+	/* Dynamic MAC table does not use USE_FID bit and does not clear it. */
+	info->data[0] = 0;
+	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
+		REG_SW_ALU_VAL_B);
 	info->data[0] = ctrl;
 	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
 		REG_SW_ALU_CTRL__4);
@@ -1729,7 +1734,6 @@ static void *w_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 	ctrl = s_dyn_mac_pre(info, addr, src_addr, src_fid);
 	ctrl |= ALU_WRITE;
-	ctrl |= ALU_START;
 	w_mac_table_pre(info, mac);
 	info->data[0] = ctrl;
 	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
@@ -1774,6 +1778,11 @@ static void *start_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 	ctrl = ALU_SEARCH;
 	ctrl |= ALU_START;
+
+	/* Dynamic MAC table does not use USE_FID bit and does not clear it. */
+	info->data[0] = 0;
+	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
+		REG_SW_ALU_VAL_B);
 	info->data[0] = ctrl;
 	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
 		REG_SW_ALU_CTRL__4);
@@ -1833,10 +1842,7 @@ static int iba_g_dyn_mac_hw(struct ksz_sw *sw, struct ksz_mac_table *mac)
  */
 static void *stop_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	u32 ctrl;
-
-	ctrl = 0;
-	info->data[0] = ctrl;
+	info->data[0] = 0;
 	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
 		REG_SW_ALU_CTRL__4);
 	info->data[0] = 0;
@@ -2303,6 +2309,7 @@ static u32 s_hsr_pre(struct ksz_iba_info *info, u16 addr, u8 *src_addr,
 		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
 			REG_HSR_ALU_INDEX_3);
 	}
+	ctrl |= HSR_START;
 	return ctrl;
 }  /* s_hsr_pre */
 
@@ -2325,7 +2332,6 @@ static void *r_hsr_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 	ctrl = s_hsr_pre(info, addr, hsr->src_mac, hsr->path_id);
 	ctrl |= HSR_READ;
-	ctrl |= HSR_START;
 	info->data[0] = ctrl;
 	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
 		REG_HSR_ALU_CTRL__4);
@@ -2373,7 +2379,6 @@ static void *w_hsr_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 	ctrl = s_hsr_pre(info, addr, hsr->src_mac, hsr->path_id);
 	ctrl |= HSR_WRITE;
-	ctrl |= HSR_START;
 	w_hsr_table_pre(info, hsr);
 	info->data[0] = ctrl;
 	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
@@ -2545,14 +2550,18 @@ static void *r_mib_cnt_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 ctrl;
 	u32 *data = in;
-	int *port = obj;
+	uint *port = obj;
 	int cnt;
 	int num = data[0];
+	struct ksz_sw *sw = info->sw_dev;
+	u32 freeze = sw->info->port_cfg[*port].freeze ?
+		MIB_COUNTER_FLUSH_FREEZE : 0;
 
 	for (cnt = 0; cnt < num; cnt++, data++) {
 		ctrl = data[1] & MIB_COUNTER_INDEX_M;
 		ctrl <<= MIB_COUNTER_INDEX_S;
 		ctrl |= MIB_COUNTER_READ;
+		ctrl |= freeze;
 		info->data[0] = ctrl;
 		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
 			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4));
@@ -2581,7 +2590,7 @@ static int r_mib_cnt_post(struct ksz_iba_info *info, void *out, void *obj)
 	u32 cmd;
 	int i = 0;
 	u32 *data = out;
-	int *port = obj;
+	uint *port = obj;
 
 	while (info->regs[i].cmd != (u32) -1) {
 		cmd = (info->regs[i].cmd >> IBA_CMD_S);
@@ -2621,7 +2630,7 @@ dbg_msg(" ?? %s %x %x\n", __func__, reg, *port);
  *
  * This function reads MIB counters of the port using IBA.
  */
-static int iba_r_mib_cnt_hw(struct ksz_sw *sw, int port, u32 addr[], int num,
+static int iba_r_mib_cnt_hw(struct ksz_sw *sw, uint port, u32 addr[], int num,
 	u32 data[])
 {
 	u32 data_in[MAX_IBA_MIB_ENTRIES + 1];
@@ -2649,7 +2658,7 @@ static int iba_r_mib_cnt_hw(struct ksz_sw *sw, int port, u32 addr[], int num,
 static void *r_acl_table_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 *data = in;
-	int *port = obj;
+	uint *port = obj;
 	u16 addr = data[4];
 	u32 ctrl = (addr & PORT_ACL_INDEX_M);
 	int i;
@@ -2726,7 +2735,7 @@ static int r_acl_table_post(struct ksz_iba_info *info, void *out, void *obj)
  *
  * This function reads from ACL table of the port using IBA.
  */
-static int iba_r_acl_hw(struct ksz_sw *sw, int port, u16 addr, u8 data[])
+static int iba_r_acl_hw(struct ksz_sw *sw, uint port, u16 addr, u8 data[])
 {
 	u32 *ptr_32 = (u32 *) data;
 
@@ -2749,7 +2758,7 @@ static int iba_r_acl_hw(struct ksz_sw *sw, int port, u16 addr, u8 data[])
 static void *w_acl_table_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 *data = in;
-	int *port = obj;
+	uint *port = obj;
 	u16 addr = data[4];
 	u32 ctrl = (addr & PORT_ACL_INDEX_M) | PORT_ACL_WRITE;
 	int i;
@@ -2777,7 +2786,7 @@ static void *w_acl_table_pre(struct ksz_iba_info *info, void *in, void *obj)
  *
  * This function writes to ACL table of the port using IBA.
  */
-static int iba_w_acl_hw(struct ksz_sw *sw, int port, u16 addr, u8 data[])
+static int iba_w_acl_hw(struct ksz_sw *sw, uint port, u16 addr, u8 data[])
 {
 	u32 *ptr_32 = (u32 *) data;
 

@@ -1,7 +1,7 @@
 /**
  * Microchip MRP driver API header
  *
- * Copyright (c) 2015-2016 Microchip Technology Inc.
+ * Copyright (c) 2015-2017 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2014-2015 Micrel, Inc.
@@ -31,7 +31,6 @@ enum {
 
 enum {
 	DEV_MRP_ATTRIBUTE,
-	DEV_MRP_MCAST_ADDR,
 };
 
 struct MRP_mac {
@@ -119,11 +118,13 @@ union mrp_data {
 	struct SRP_talker talker;
 	struct SRP_listener listener;
 	struct SRP_domain_class domain;
+	u32 data[4];
 } __packed;
 
 enum {
 	MRP_ACTION_RX,
 	MRP_ACTION_TX,
+	MRP_ACTION_TX_NEW,
 	MRP_ACTION_LV,
 	MRP_ACTION_ON,
 	MRP_ACTION_OFF,
@@ -132,6 +133,9 @@ enum {
 
 	MRP_ACTION_DBG,
 	MRP_ACTION_SPEED,
+	MRP_ACTION_DELTA,
+	MRP_ACTION_CHK_TALKER,
+	MRP_ACTION_CHK_REG,
 };
 
 enum {
@@ -148,7 +152,7 @@ struct mrp_cfg_options {
 	u8 action;
 	u8 type;
 	u8 port;
-	u8 reserved;
+	u8 new_decl;
 	union mrp_data data;
 } __packed;
 
@@ -166,29 +170,5 @@ struct mrp_cfg_options {
 
 #define SIZEOF_SRP_domain_class	\
 	(sizeof(struct SRP_domain_class) + sizeof(u8) * 4)
-
-
-int set_mac_lv(void *fd,
-	int port, struct MRP_mac *mac);
-int set_mac_rx(void *fd,
-	int port, struct MRP_mac *mac);
-int set_vlan_lv(void *fd,
-	int port, struct MRP_vlan *vlan);
-int set_vlan_rx(void *fd,
-	int port, struct MRP_vlan *vlan);
-int set_domain_lv(void *fd,
-	int port, struct SRP_domain_class *domain);
-int set_domain_rx(void *fd,
-	int port, struct SRP_domain_class *domain);
-int set_listener_lv(void *fd,
-	int port, struct SRP_listener *listener);
-int set_listener_rx(void *fd,
-	int port, struct SRP_listener *listener);
-int set_talker_lv(void *fd,
-	int port, struct SRP_talker *talker);
-int set_talker_rx(void *fd,
-	int port, struct SRP_talker *talker);
-int get_attribute(void *fd,
-	int *port, int *type, int *action, void *buf, size_t size);
 
 #endif

@@ -315,9 +315,6 @@
 
 #define SW_MIB_COUNTER_FLUSH		(1 << 7)
 #define SW_MIB_COUNTER_FREEZE		(1 << 6)
-#if 0
-#define SW_MIB_COUNTER_DONE		(1 << 0)
-#endif
 
 #define REG_SW_MAC_802_1P_MAP_0		0x0338
 #define REG_SW_MAC_802_1P_MAP_1		0x0339
@@ -1231,7 +1228,9 @@
 
 #define PORT_SGMII_SEL			(1 << 7)
 #define PORT_MII_FULL_DUPLEX		(1 << 6)
+#define PORT_MII_TX_FLOW_CTRL		(1 << 5)
 #define PORT_MII_100MBIT		(1 << 4)
+#define PORT_MII_RX_FLOW_CTRL		(1 << 3)
 #define PORT_GRXC_ENABLE		(1 << 0)
 
 #define REG_PORT_XMII_CTRL_1		0x0301
@@ -1476,9 +1475,10 @@
 
 #define PORT_ACL_ENABLE			(1 << 2)
 #define PORT_AUTHEN_MODE		0x3
-#define PORT_AUTHEN_PASS		0
+#define PORT_AUTHEN_NORMAL		0
 #define PORT_AUTHEN_BLOCK		1
-#define PORT_AUTHEN_TRAP		2
+#define PORT_AUTHEN_PASS		2
+#define PORT_AUTHEN_TRAP		3
 
 #define REG_PORT_MRI_INDEX__4		0x0804
 

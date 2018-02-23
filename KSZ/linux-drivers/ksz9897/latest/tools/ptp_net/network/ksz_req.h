@@ -1,7 +1,7 @@
 /**
  * Microchip driver request common header
  *
- * Copyright (c) 2015-2017 Microchip Technology Inc.
+ * Copyright (c) 2015-2018 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2014 Micrel, Inc.
@@ -42,6 +42,7 @@ enum {
 	DEV_INFO_EXIT,
 	DEV_INFO_QUIT,
 	DEV_INFO_NOTIFY,
+	DEV_INFO_PORT,
 
 	DEV_INFO_LAST
 };

@@ -121,11 +121,13 @@ struct mrp_attr {
 	enum mrp_applicant_state	state;
 	enum mrp_applicant_state	new_state;
 	enum mrp_tx_action		action;
+	enum mrp_registrar_state	fix_state;
 	enum mrp_registrar_state	reg_state;
 	enum mrp_notification		notify;
 	u8				aging;
 	u8				type;
 	u8				len;
+	u8				changed;
 	unsigned char			value[];
 };
 
@@ -176,21 +178,31 @@ struct mrp_applicant {
 	} timer_arm;
 	u8 p2p_mac:1;
 	u8 rx:1;
+	u8 dry_run:1;
 	struct rb_node		*last_node;
 	void *parent;
 	u8 lva_type;
+	u8 msg_cnt;
 	u8 port;
+	int ver_diff;
 	unsigned long rla_jiffies;
+	u16 normal;
+	u8 *group_address;
+	u8 src_addr[ETH_ALEN];
+
 	void (*attrval_inc)(void *value, u8 len);
 	int (*attr_chk)(u8 attrtype, u8 attrlen);
 	int (*attr_cmp)(const struct mrp_attr *attr, const void *value,
 		u8 len, u8 type);
+	int (*attr_valid)(u8 attrtype, const void *value);
+	u8 (*attr_size)(u8 attrtype, u8 attrlen);
 	u8 (*attr_len)(u8 attrtype, u8 attrlen);
 	u8 (*attr_type)(struct mrp_attr *attr);
-	void (*attr_upd)(const void *value, struct mrp_attr *attr);
+	int (*attr_upd)(const void *value, struct mrp_attr *attr, int tx);
 	int (*rxpdu)(struct mrp_applicant *app, u8 *data, int len);
 	int (*txpdu)(struct mrp_applicant *app);
 	void (*acton)(struct mrp_applicant *app, struct mrp_attr *attr);
+	void (*cleanup)(struct mrp_applicant *app);
 
 	spinlock_t		lock;
 	struct sk_buff_head	queue;

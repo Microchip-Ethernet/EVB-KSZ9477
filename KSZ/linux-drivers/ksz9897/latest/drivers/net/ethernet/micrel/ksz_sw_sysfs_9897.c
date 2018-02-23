@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common sysfs code
  *
- * Copyright (c) 2015-2017 Microchip Technology Inc.
+ * Copyright (c) 2015-2018 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2011-2014 Micrel, Inc.
@@ -64,8 +64,8 @@ static ssize_t netlan_show(struct device *d, struct device_attribute *attr,
 		goto netlan_show_done;
 #endif
 
-#ifdef CONFIG_KSZ_MSRP
-	len = sw->ops->sysfs_msrp_read(sw, proc_num, len, buf);
+#ifdef CONFIG_KSZ_MRP
+	len = sw->ops->sysfs_mrp_read(sw, proc_num, len, buf);
 	if (len)
 		goto netlan_show_done;
 #endif
@@ -115,8 +115,8 @@ static ssize_t netlan_store(struct device *d, struct device_attribute *attr,
 		goto netlan_store_done;
 #endif
 
-#ifdef CONFIG_KSZ_MSRP
-	if (sw->ops->sysfs_msrp_write(sw, proc_num, num, buf))
+#ifdef CONFIG_KSZ_MRP
+	if (sw->ops->sysfs_mrp_write(sw, proc_num, num, buf))
 		goto netlan_store_done;
 #endif
 
@@ -141,7 +141,7 @@ static ssize_t netsw_show(struct device *d, struct device_attribute *attr,
 	struct semaphore *proc_sem;
 	ssize_t len = -EINVAL;
 	int num;
-	int port;
+	uint port;
 
 	if (attr->attr.name[1] != '_')
 		return len;
@@ -169,8 +169,8 @@ static ssize_t netsw_show(struct device *d, struct device_attribute *attr,
 		goto netsw_show_done;
 #endif
 
-#ifdef CONFIG_KSZ_MSRP
-	len = sw->ops->sysfs_msrp_port_read(sw, num, port, len, buf);
+#ifdef CONFIG_KSZ_MRP
+	len = sw->ops->sysfs_mrp_port_read(sw, num, port, len, buf);
 	if (len)
 		goto netsw_show_done;
 #endif
@@ -192,7 +192,7 @@ static ssize_t netsw_store(struct device *d, struct device_attribute *attr,
 	struct semaphore *proc_sem;
 	ssize_t ret = -EINVAL;
 	int num;
-	int port;
+	uint port;
 	int proc_num;
 
 	if (attr->attr.name[1] != '_')
@@ -216,8 +216,8 @@ static ssize_t netsw_store(struct device *d, struct device_attribute *attr,
 		goto netsw_store_done;
 #endif
 
-#ifdef CONFIG_KSZ_MSRP
-	if (sw->ops->sysfs_msrp_port_write(sw, proc_num, port, num, buf))
+#ifdef CONFIG_KSZ_MRP
+	if (sw->ops->sysfs_mrp_port_write(sw, proc_num, port, num, buf))
 		goto netsw_store_done;
 #endif
 
@@ -404,8 +404,14 @@ NETLAN_WR_ENTRY(stp_mstp_name);
 #endif
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+NETLAN_WR_ENTRY(mrp_src_addr);
+
 #ifdef CONFIG_KSZ_MSRP
-NETLAN_RD_ENTRY(msrp_info);
+NETLAN_WR_ENTRY(msrp_info);
+NETLAN_WR_ENTRY(msrpEnabled);
+NETLAN_WR_ENTRY(msrp_sr_a);
+#endif
 #endif
 
 #ifdef CONFIG_KSZ_HSR
@@ -584,6 +590,9 @@ NETSW_RD_ENTRY(tx_flow_ctrl);
 
 NETSW_WR_ENTRY(duplex);
 NETSW_WR_ENTRY(speed);
+NETSW_WR_ENTRY(mac_oper);
+NETSW_WR_ENTRY(vlan_restricted);
+NETSW_WR_ENTRY(vlan_untagged);
 
 #ifdef CONFIG_KSZ_STP
 NETSW_RD_ENTRY(stp_info);
@@ -600,7 +609,18 @@ NETSW_WR_ENTRY(stp_auto_isolate);
 #endif
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+NETSW_WR_ENTRY(mmrpEnabled);
+NETSW_WR_ENTRY(mmrp_mac);
+NETSW_WR_ENTRY(mmrp_svc);
+NETSW_WR_ENTRY(mmrp_reg);
+NETSW_WR_ENTRY(mvrpEnabled);
+NETSW_WR_ENTRY(mvrp_vid);
+NETSW_WR_ENTRY(mvrp_reg);
+
 #ifdef CONFIG_KSZ_MSRP
+NETSW_WR_ENTRY(asCapable);
+NETSW_WR_ENTRY(msrpEnabled);
 NETSW_WR_ENTRY(q_delta);
 NETSW_WR_ENTRY(q_admin_slope);
 NETSW_RD_ENTRY(q_oper_slope);
@@ -611,6 +631,7 @@ NETSW_RD_ENTRY(sr_0_boundary);
 NETSW_RD_ENTRY(sr_1_rx_prio);
 NETSW_WR_ENTRY(sr_1_tx_prio);
 NETSW_RD_ENTRY(sr_1_boundary);
+#endif
 #endif
 
 NETSW_WR_ENTRY(linkmd);
@@ -738,8 +759,14 @@ static struct attribute *lan_attrs[] = {
 #endif
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+	&lan_attr_mrp_src_addr.attr,
+
 #ifdef CONFIG_KSZ_MSRP
 	&lan_attr_msrp_info.attr,
+	&lan_attr_msrpEnabled.attr,
+	&lan_attr_msrp_sr_a.attr,
+#endif
 #endif
 
 #ifdef CONFIG_KSZ_HSR
@@ -925,6 +952,9 @@ static struct attribute *sw_attrs[] = {
 
 	&sw_attr_duplex.attr,
 	&sw_attr_speed.attr,
+	&sw_attr_mac_oper.attr,
+	&sw_attr_vlan_restricted.attr,
+	&sw_attr_vlan_untagged.attr,
 
 #ifdef CONFIG_KSZ_STP
 	&sw_attr_stp_info.attr,
@@ -941,7 +971,18 @@ static struct attribute *sw_attrs[] = {
 #endif
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+	&sw_attr_mmrpEnabled.attr,
+	&sw_attr_mmrp_mac.attr,
+	&sw_attr_mmrp_svc.attr,
+	&sw_attr_mmrp_reg.attr,
+	&sw_attr_mvrpEnabled.attr,
+	&sw_attr_mvrp_vid.attr,
+	&sw_attr_mvrp_reg.attr,
+
 #ifdef CONFIG_KSZ_MSRP
+	&sw_attr_asCapable.attr,
+	&sw_attr_msrpEnabled.attr,
 	&sw_attr_q_delta.attr,
 	&sw_attr_q_admin_slope.attr,
 	&sw_attr_q_oper_slope.attr,
@@ -952,6 +993,7 @@ static struct attribute *sw_attrs[] = {
 	&sw_attr_sr_1_rx_prio.attr,
 	&sw_attr_sr_1_tx_prio.attr,
 	&sw_attr_sr_1_boundary.attr,
+#endif
 #endif
 
 	&sw_attr_linkmd.attr,

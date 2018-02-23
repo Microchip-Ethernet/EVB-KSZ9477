@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 switch common header
  *
- * Copyright (c) 2015-2017 Microchip Technology Inc.
+ * Copyright (c) 2015-2018 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -61,6 +61,8 @@ struct sw_dev_info {
 };
 
 
+struct ksz_vlan_table;
+
 #include "ksz_sw_api.h"
 #ifdef CONFIG_KSZ_MSTP
 #include "ksz_mstp.h"
@@ -112,17 +114,17 @@ struct ksz_mac_table {
 	u8 override:1;
 	u8 use_fid:1;
 	u8 valid:1;
-	u8 ignore_use_fid:1;
 	u8 dirty:1;
 };
 
-#define FWD_HOST_OVERRIDE		(1 << 0)
-#define FWD_HOST			(1 << 1)
-#define FWD_STP_DEV			(1 << 2)
-#define FWD_MAIN_DEV			(1 << 3)
-#define FWD_VLAN_DEV			(1 << 4)
-#define FWD_MCAST			(1 << 5)
-#define FWD_UCAST			(1 << 6)
+#define FWD_HOST_OVERRIDE		BIT(0)
+#define FWD_HOST			BIT(1)
+#define FWD_STP_DEV			BIT(2)
+#define FWD_MAIN_DEV			BIT(3)
+#define FWD_VLAN_DEV			BIT(4)
+#define FWD_MCAST			BIT(5)
+#define FWD_UCAST			BIT(6)
+#define FWD_KNOWN			BIT(7)
 
 struct ksz_alu_table {
 	u16 index;
@@ -136,6 +138,7 @@ struct ksz_alu_table {
 #define VID_IN_DATA			32
 #define FID_ENTRIES			128
 #define FID_IN_DATA			32
+#define NUM_OF_VID			4094
 #define NUM_OF_MSTI			8
 
 /**
@@ -295,6 +298,7 @@ struct ksz_port_cfg {
 	u32 tx_rate[PRIO_QUEUES];
 	u32 color_map[DIFFSERV_ENTRIES / 16];
 	u32 tc_map[PRIO_802_1P_ENTRIES / 8];
+	u32 untagged[VLAN_TABLE_ENTRIES / VID_IN_DATA];
 	u8 p_index;
 	u8 q_index;
 	u8 port_prio;
@@ -314,7 +318,13 @@ struct ksz_port_cfg {
 	u16 mmd_reg;
 
 	u32 enabled:1;
+	u32 ptp_enabled:1;
 	u32 asCapable:1;
+	u32 asCapable_set:1;
+	u32 avb_a:1;
+	u32 avb_b:1;
+	u32 restricted:1;
+	u32 freeze:1;
 
 	u16 phy_ctrl;
 	u16 phy_adv;
@@ -483,10 +493,10 @@ struct ksz_sw_reg_ops {
 		struct ksz_mac_table *mac);
 	int (*r_vlan_hw)(struct ksz_sw *sw, u32 data[], int num);
 	int (*w_vlan_hw)(struct ksz_sw *sw, u32 data[], int num);
-	int (*r_mib_cnt_hw)(struct ksz_sw *sw, int port, u32 addr[],
+	int (*r_mib_cnt_hw)(struct ksz_sw *sw, uint port, u32 addr[],
 		int num, u32 data[]);
-	int (*r_acl_hw)(struct ksz_sw *sw, int port, u16 addr, u8 data[]);
-	int (*w_acl_hw)(struct ksz_sw *sw, int port, u16 addr, u8 data[]);
+	int (*r_acl_hw)(struct ksz_sw *sw, uint port, u16 addr, u8 data[]);
+	int (*w_acl_hw)(struct ksz_sw *sw, uint port, u16 addr, u8 data[]);
 
 #ifdef CONFIG_KSZ_HSR
 	int (*r_hsr_hw)(struct ksz_sw *sw, u16 addr,
@@ -503,8 +513,8 @@ struct ksz_sw_net_ops {
 	void (*setup_special)(struct ksz_sw *sw, int *port_cnt,
 		int *mib_port_cnt, int *dev_cnt);
 	int (*setup_dev)(struct ksz_sw *sw, struct net_device *dev,
-		char *dev_name, struct ksz_port *port, int i, int port_cnt,
-		int mib_port_cnt);
+		char *dev_name, struct ksz_port *port, int i, uint port_cnt,
+		uint mib_port_cnt);
 	void (*leave_dev)(struct ksz_sw *sw);
 	u8 (*get_state)(struct net_device *dev);
 	void (*set_state)(struct net_device *dev, u8 state);
@@ -527,15 +537,15 @@ struct ksz_sw_net_ops {
 	void (*netdev_open_port)(struct ksz_sw *sw, struct net_device *dev);
 
 	u8 (*set_mac_addr)(struct ksz_sw *sw, struct net_device *dev,
-		u8 promiscuous, int port);
+		u8 promiscuous, uint port);
 
 	int (*get_mtu)(struct ksz_sw *sw);
-	int (*get_tx_len)(struct ksz_sw *sw, struct sk_buff *skb, int port,
+	int (*get_tx_len)(struct ksz_sw *sw, struct sk_buff *skb, uint port,
 		int *header);
-	void (*add_tail_tag)(struct ksz_sw *sw, struct sk_buff *skb, int ports);
+	void (*add_tail_tag)(struct ksz_sw *sw, struct sk_buff *skb, uint ports);
 	int (*get_tail_tag)(u8 *trailer, int *port);
-	int (*get_phys_port)(struct ksz_sw *sw, int port);
-	int (*get_virt_port)(struct ksz_sw *sw, int port);
+	int (*get_phys_port)(struct ksz_sw *sw, uint port);
+	int (*get_virt_port)(struct ksz_sw *sw, uint port);
 	void (*add_vid)(struct ksz_sw *sw, u16 vid);
 	void (*kill_vid)(struct ksz_sw *sw, u16 vid);
 	struct sk_buff *(*check_tx)(struct ksz_sw *sw, struct net_device *dev,
@@ -547,7 +557,7 @@ struct ksz_sw_net_ops {
 		int (*get_multi)(void *ptr), struct sk_buff *skb,
 		u8 h_promiscuous);
 	struct net_device *(*parent_rx)(struct ksz_sw *sw,
-		struct net_device *dev, struct sk_buff *skb, int forward,
+		struct net_device *dev, struct sk_buff *skb, int *forward,
 		struct net_device **parent_dev, struct sk_buff **parent_skb);
 	int (*port_vlan_rx)(struct ksz_sw *sw, struct net_device *dev,
 		struct net_device *parent_dev, struct sk_buff *skb,
@@ -556,7 +566,7 @@ struct ksz_sw_net_ops {
 	int (*drop_icmp)(struct sk_buff *skb, int extra_skb);
 	struct sk_buff *(*final_skb)(struct ksz_sw *sw, struct sk_buff *skb,
 		struct net_device *dev, struct ksz_port *port);
-	int (*drv_rx)(struct ksz_sw *sw, struct sk_buff *skb, int port);
+	int (*drv_rx)(struct ksz_sw *sw, struct sk_buff *skb, uint port);
 	void (*set_multi)(struct ksz_sw *sw, struct net_device *dev,
 		struct ksz_port *priv);
 
@@ -574,13 +584,13 @@ struct ksz_sw_ops {
 	void (*release)(struct ksz_sw *sw);
 
 	int (*chk)(struct ksz_sw *sw, u32 addr, SW_D bits);
-	void (*cfg)(struct ksz_sw *sw, u32 addr, SW_D bits, int set);
+	void (*cfg)(struct ksz_sw *sw, u32 addr, SW_D bits, bool set);
 
 	int (*port_get_link_speed)(struct ksz_port *port);
 	void (*port_set_link_speed)(struct ksz_port *port);
 	void (*port_force_link_speed)(struct ksz_port *port);
 
-	int (*port_r_cnt)(struct ksz_sw *sw, int port);
+	int (*port_r_cnt)(struct ksz_sw *sw, uint port);
 	void (*get_mib_counters)(struct ksz_sw *sw, int first, int cnt,
 		u64 *counter);
 
@@ -590,11 +600,11 @@ struct ksz_sw_ops {
 		char *buf);
 	int (*sysfs_write)(struct ksz_sw *sw, int proc_num,
 		struct ksz_port *port, int num, const char *buf);
-	ssize_t (*sysfs_port_read)(struct ksz_sw *sw, int proc_num, int port,
+	ssize_t (*sysfs_port_read)(struct ksz_sw *sw, int proc_num, uint port,
 		ssize_t len, char *buf);
 	ssize_t (*sysfs_port_read_hw)(struct ksz_sw *sw, int proc_num,
-		int port, ssize_t len, char *buf);
-	int (*sysfs_port_write)(struct ksz_sw *sw, int proc_num, int port,
+		uint port, ssize_t len, char *buf);
+	int (*sysfs_port_write)(struct ksz_sw *sw, int proc_num, uint port,
 		int num, const char *buf);
 	ssize_t (*sysfs_mac_read)(struct ksz_sw *sw, int proc_num, ssize_t len,
 		char *buf);
@@ -610,19 +620,19 @@ struct ksz_sw_ops {
 	int (*sysfs_stp_write)(struct ksz_sw *sw, int proc_num, int num,
 		const char *buf);
 	ssize_t (*sysfs_stp_port_read)(struct ksz_sw *sw, int proc_num,
-		int port, ssize_t len, char *buf);
-	int (*sysfs_stp_port_write)(struct ksz_sw *sw, int proc_num, int port,
+		uint port, ssize_t len, char *buf);
+	int (*sysfs_stp_port_write)(struct ksz_sw *sw, int proc_num, uint port,
 		int num, const char *buf);
 #endif
 
-#ifdef CONFIG_KSZ_MSRP
-	ssize_t (*sysfs_msrp_read)(struct ksz_sw *sw, int proc_num, ssize_t len,
+#ifdef CONFIG_KSZ_MRP
+	ssize_t (*sysfs_mrp_read)(struct ksz_sw *sw, int proc_num, ssize_t len,
 		char *buf);
-	int (*sysfs_msrp_write)(struct ksz_sw *sw, int proc_num, int num,
+	int (*sysfs_mrp_write)(struct ksz_sw *sw, int proc_num, int num,
 		const char *buf);
-	ssize_t (*sysfs_msrp_port_read)(struct ksz_sw *sw, int proc_num,
-		int port, ssize_t len, char *buf);
-	int (*sysfs_msrp_port_write)(struct ksz_sw *sw, int proc_num, int port,
+	ssize_t (*sysfs_mrp_port_read)(struct ksz_sw *sw, int proc_num,
+		uint port, ssize_t len, char *buf);
+	int (*sysfs_mrp_port_write)(struct ksz_sw *sw, int proc_num, uint port,
 		int num, const char *buf);
 #endif
 
@@ -633,12 +643,12 @@ struct ksz_sw_ops {
 		const char *buf);
 #endif
 
-	ssize_t (*sysfs_acl_read)(struct ksz_sw *sw, int proc_num, int port,
+	ssize_t (*sysfs_acl_read)(struct ksz_sw *sw, int proc_num, uint port,
 		ssize_t len, char *buf);
-	int (*sysfs_acl_write)(struct ksz_sw *sw, int proc_num, int port,
+	int (*sysfs_acl_write)(struct ksz_sw *sw, int proc_num, uint port,
 		int num, const char *buf);
 
-	void (*cfg_mac)(struct ksz_sw *sw, u8 index, u8 *dest, u32 ports,
+	void (*cfg_mac)(struct ksz_sw *sw, u8 index, const u8 *dest, u32 ports,
 		int override, int use_fid, u16 fid);
 	void (*cfg_vlan)(struct ksz_sw *sw, u8 index, u16 vid, u16 fid,
 		u32 ports);
@@ -649,18 +659,28 @@ struct ksz_sw_ops {
 	u16 (*alloc_fid)(struct ksz_sw *sw, u16 vid);
 	void (*free_fid)(struct ksz_sw *sw, u16 fid);
 
-	int (*get_id)(struct ksz_sw *sw, u8 *id1, u8 *id2, char *name);
-	void (*cfg_tail_tag)(struct ksz_sw *sw, int enable);
-	void (*cfg_each_port)(struct ksz_sw *sw, int p, int cpu);
-	int (*port_to_phy_addr)(struct ksz_sw *sw, int p);
-	void (*set_port_addr)(struct ksz_sw *sw, int p, u8 *addr);
+	const u8 *(*get_br_id)(struct ksz_sw *sw);
+	void (*from_backup)(struct ksz_sw *sw, uint p);
+	void (*to_backup)(struct ksz_sw *sw, uint p);
+	void (*from_designated)(struct ksz_sw *sw, uint p, bool alt);
+	void (*to_designated)(struct ksz_sw *sw, uint p);
+	void (*tc_detected)(struct ksz_sw *sw, uint p);
+	int (*get_tcDetected)(struct ksz_sw *sw, uint p);
 
-	void (*cfg_src_filter)(struct ksz_sw *sw, int set);
-	void (*flush_table)(struct ksz_sw *sw, int port);
-	void (*fwd_unk_mcast)(struct ksz_sw *sw);
+	int (*get_id)(struct ksz_sw *sw, u8 *id1, u8 *id2, char *name);
+	void (*cfg_tail_tag)(struct ksz_sw *sw, bool enable);
+	void (*cfg_each_port)(struct ksz_sw *sw, uint p, bool cpu);
+	int (*port_to_phy_addr)(struct ksz_sw *sw, uint p);
+	void (*set_port_addr)(struct ksz_sw *sw, uint p, u8 *addr);
+
+	void (*cfg_src_filter)(struct ksz_sw *sw, bool set);
+	void (*flush_table)(struct ksz_sw *sw, uint port);
+	void (*fwd_unk_mcast)(struct ksz_sw *sw, bool set);
 	void (*fwd_unk_ucast)(struct ksz_sw *sw);
 	void (*fwd_unk_vid)(struct ksz_sw *sw);
 
+	void (*port_freeze_mib)(struct ksz_sw *sw, uint port, bool freeze);
+	void (*freeze_mib)(struct ksz_sw *sw, bool freeze);
 };
 
 struct ksz_sw_tx_tag {
@@ -690,6 +710,7 @@ struct ksz_sw_cached_regs {
 #define SETUP_PHY			(1 << 16)
 #define NEW_XMII			(1 << 17)
 #define USE_FEWER_PORTS			(1 << 18)
+#define GIGABIT_SUPPORT			(1 << 19)
 #define IBA_SUPPORT			(1 << 20)
 #define NEW_CAP				(1 << 21)
 #define AVB_SUPPORT			(1 << 22)
@@ -708,6 +729,7 @@ struct ksz_sw_cached_regs {
 #define MCAST_FILTER			(1 << 2)
 #define HAVE_MORE_THAN_2_PORTS		(1 << 3)
 #define DLR_FORWARD			(1 << 4)
+#define UNK_MCAST_BLOCK			(1 << 5)
 
 #define BAD_SPI				(1 << 15)
 #define IBA_TEST			(1 << 16)
@@ -780,6 +802,7 @@ struct ksz_sw {
 	phy_interface_t interface;
 	u32 msg_enable;
 	wait_queue_head_t queue;
+	struct sk_buff_head txq;
 	struct mutex *hwlock;
 	struct mutex *reglock;
 	struct mutex acllock;
@@ -819,6 +842,7 @@ struct ksz_sw {
 	struct delayed_work set_ops;
 	struct delayed_work set_mrp;
 	struct work_struct set_addr;
+	struct work_struct tx_fwd;
 
 	int HOST_PORT;
 	u16 HOST_MASK;
@@ -828,6 +852,8 @@ struct ksz_sw {
 	u32 intr_mask;
 	u32 port_intr_mask;
 	u32 phy_intr;
+	u16 dev_ports;
+	u16 link_ports;
 	u16 live_ports;
 	u16 on_ports;
 	u16 open_ports;
@@ -1040,8 +1066,14 @@ struct lan_attributes {
 #endif
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+	int mrp_src_addr;
+
 #ifdef CONFIG_KSZ_MSRP
 	int msrp_info;
+	int msrpEnabled;
+	int msrp_sr_a;
+#endif
 #endif
 
 #ifdef CONFIG_KSZ_HSR
@@ -1224,6 +1256,9 @@ struct sw_attributes {
 
 	int duplex;
 	int speed;
+	int mac_oper;
+	int vlan_restricted;
+	int vlan_untagged;
 
 #ifdef CONFIG_KSZ_STP
 	int stp_info;
@@ -1238,7 +1273,18 @@ struct sw_attributes {
 	int stp_auto_isolate;
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+	int mmrpEnabled;
+	int mmrp_mac;
+	int mmrp_svc;
+	int mmrp_reg;
+	int mvrpEnabled;
+	int mvrp_vid;
+	int mvrp_reg;
+
 #ifdef CONFIG_KSZ_MSRP
+	int asCapable;
+	int msrpEnabled;
 	int q_delta;
 	int q_admin_slope;
 	int q_oper_slope;
@@ -1249,6 +1295,7 @@ struct sw_attributes {
 	int sr_1_rx_prio;
 	int sr_1_tx_prio;
 	int sr_1_boundary;
+#endif
 #endif
 
 	int linkmd;

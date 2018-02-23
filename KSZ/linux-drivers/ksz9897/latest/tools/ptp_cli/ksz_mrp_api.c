@@ -1,8 +1,8 @@
 /**
  * Micrel MRP driver API code
  *
- * Copyright (c) 2014-2016 Microchip Technology Inc.
- *	Tristram Ha <Tristram.Ha@micrel.com>
+ * Copyright (c) 2014-2017 Microchip Technology Inc.
+ *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2014 Micrel, Inc.
  *
@@ -113,7 +113,8 @@ static void mrp_init_req(void *ptr,
 }  /* mrp_init_req */
 
 static void set_mrp_req(void *ptr,
-	int cmd, int type, int action, int port, void *mrp, size_t mrp_size)
+	int cmd, int type, int action, int new_decl, int port, void *mrp,
+	size_t mrp_size)
 {
 	struct ksz_request *req = ptr;
 	struct mrp_cfg_options *param = (struct mrp_cfg_options *)
@@ -128,7 +129,7 @@ static void set_mrp_req(void *ptr,
 	param->action = action;
 	param->type = type;
 	param->port = port;
-	param->reserved = 0;
+	param->new_decl = new_decl;
 	if (mrp)
 		memcpy(&param->data, mrp, mrp_size);
 }  /* set_mrp_req */
@@ -170,7 +171,7 @@ int set_mac_lv(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_LV, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_LV, 0, port,
 		mac, sizeof(struct MRP_mac));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -179,13 +180,13 @@ int set_mac_lv(void *fd,
 }  /* set_mac_lv */
 
 int set_mac_rx(void *fd,
-	int port, struct MRP_mac *mac)
+	int port, struct MRP_mac *mac, int new_decl)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_RX, port,
-		mac, sizeof(struct MRP_mac));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_RX, new_decl,
+		port, mac, sizeof(struct MRP_mac));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -198,7 +199,7 @@ int set_mac_on(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_ON, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_ON, 0, port,
 		mac, sizeof(struct MRP_mac));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -212,7 +213,7 @@ int set_mac_off(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_OFF, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_OFF, 0, port,
 		mac, sizeof(struct MRP_mac));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -221,13 +222,13 @@ int set_mac_off(void *fd,
 }  /* set_mac_off */
 
 int set_mac_decl(void *fd,
-	int port, struct MRP_mac *mac)
+	int port, struct MRP_mac *mac, int new_decl)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_DECL, port,
-		mac, sizeof(struct MRP_mac));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_DECL,
+		new_decl, port, mac, sizeof(struct MRP_mac));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -240,7 +241,7 @@ int set_mac_drop(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_DROP, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_MAC, MRP_ACTION_DROP, 0, port,
 		mac, sizeof(struct MRP_mac));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -254,7 +255,7 @@ int set_vlan_lv(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_LV, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_LV, 0, port,
 		vlan, sizeof(struct MRP_vlan));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -263,13 +264,13 @@ int set_vlan_lv(void *fd,
 }  /* set_vlan_lv */
 
 int set_vlan_rx(void *fd,
-	int port, struct MRP_vlan *vlan)
+	int port, struct MRP_vlan *vlan, int new_decl)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_RX, port,
-		vlan, sizeof(struct MRP_vlan));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_RX, new_decl,
+		port, vlan, sizeof(struct MRP_vlan));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -282,7 +283,7 @@ int set_vlan_on(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_ON, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_ON, 0, port,
 		vlan, sizeof(struct MRP_vlan));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -296,7 +297,7 @@ int set_vlan_off(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_OFF, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_OFF, 0, port,
 		vlan, sizeof(struct MRP_vlan));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -305,13 +306,13 @@ int set_vlan_off(void *fd,
 }  /* set_vlan_off */
 
 int set_vlan_decl(void *fd,
-	int port, struct MRP_vlan *vlan)
+	int port, struct MRP_vlan *vlan, int new_decl)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_DECL, port,
-		vlan, sizeof(struct MRP_vlan));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_DECL,
+		new_decl, port, vlan, sizeof(struct MRP_vlan));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -324,7 +325,7 @@ int set_vlan_drop(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_DROP, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_VLAN, MRP_ACTION_DROP, 0, port,
 		vlan, sizeof(struct MRP_vlan));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -338,7 +339,7 @@ int set_domain_lv(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_DOMAIN, MRP_ACTION_LV, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_DOMAIN, MRP_ACTION_LV, 0, port,
 		domain, sizeof(struct SRP_domain_class));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -352,7 +353,7 @@ int set_domain_rx(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_DOMAIN, MRP_ACTION_RX, port,
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_DOMAIN, MRP_ACTION_RX, 0, port,
 		domain, sizeof(struct SRP_domain_class));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -366,8 +367,8 @@ int set_domain_decl(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_DOMAIN, MRP_ACTION_DECL, port,
-		domain, sizeof(struct SRP_domain_class));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_DOMAIN, MRP_ACTION_DECL, 0,
+		port, domain, sizeof(struct SRP_domain_class));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -380,8 +381,8 @@ int set_domain_drop(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_DOMAIN, MRP_ACTION_DROP, port,
-		domain, sizeof(struct SRP_domain_class));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_DOMAIN, MRP_ACTION_DROP, 0,
+		port, domain, sizeof(struct SRP_domain_class));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -394,8 +395,8 @@ int set_listener_lv(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_LV, port,
-		listener, sizeof(struct SRP_listener));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_LV, 0,
+		port, listener, sizeof(struct SRP_listener));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -403,13 +404,13 @@ int set_listener_lv(void *fd,
 }  /* set_listener_lv */
 
 int set_listener_rx(void *fd,
-	int port, struct SRP_listener *listener)
+	int port, struct SRP_listener *listener, int new_decl)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_RX, port,
-		listener, sizeof(struct SRP_listener));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_RX,
+		new_decl, port, listener, sizeof(struct SRP_listener));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -422,8 +423,8 @@ int set_listener_on(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_ON, port,
-		listener, sizeof(struct SRP_listener));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_ON, 0,
+		port, listener, sizeof(struct SRP_listener));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -436,8 +437,8 @@ int set_listener_off(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_OFF, port,
-		listener, sizeof(struct SRP_listener));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_OFF, 0,
+		port, listener, sizeof(struct SRP_listener));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -445,13 +446,13 @@ int set_listener_off(void *fd,
 }  /* set_listener_off */
 
 int set_listener_decl(void *fd,
-	int port, struct SRP_listener *listener)
+	int port, struct SRP_listener *listener, int new_decl)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_DECL, port,
-		listener, sizeof(struct SRP_listener));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_DECL,
+		new_decl, port, listener, sizeof(struct SRP_listener));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -464,8 +465,8 @@ int set_listener_drop(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_DROP, port,
-		listener, sizeof(struct SRP_listener));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_LISTENER, MRP_ACTION_DROP, 0,
+		port, listener, sizeof(struct SRP_listener));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -479,7 +480,7 @@ int get_attribute(void *fd,
 	int rc;
 	size_t req_size;
 
-	set_mrp_req(&req, DEV_CMD_GET, MRP_TYPE_UNKNOWN, MRP_ACTION_TX, 0,
+	set_mrp_req(&req, DEV_CMD_GET, MRP_TYPE_UNKNOWN, MRP_ACTION_TX, 0, 0,
 		NULL, sizeof(struct SRP_talker));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
@@ -524,8 +525,8 @@ int set_talker_lv(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_LV, port,
-		talker, sizeof(struct SRP_talker));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_LV, 0,
+		port, talker, sizeof(struct SRP_talker));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -533,13 +534,13 @@ int set_talker_lv(void *fd,
 }  /* set_talker_lv */
 
 int set_talker_rx(void *fd,
-	int port, struct SRP_talker *talker)
+	int port, struct SRP_talker *talker, int new_decl)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_RX, port,
-		talker, sizeof(struct SRP_talker));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_RX,
+		new_decl, port, talker, sizeof(struct SRP_talker));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -552,8 +553,8 @@ int set_talker_on(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_ON, port,
-		talker, sizeof(struct SRP_talker));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_ON, 0,
+		port, talker, sizeof(struct SRP_talker));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -566,8 +567,8 @@ int set_talker_off(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_OFF, port,
-		talker, sizeof(struct SRP_talker));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_OFF, 0,
+		port, talker, sizeof(struct SRP_talker));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -575,13 +576,13 @@ int set_talker_off(void *fd,
 }  /* set_talker_off */
 
 int set_talker_decl(void *fd,
-	int port, struct SRP_talker *talker)
+	int port, struct SRP_talker *talker, int new_decl)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_DECL, port,
-		talker, sizeof(struct SRP_talker));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_DECL,
+		new_decl, port, talker, sizeof(struct SRP_talker));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -594,8 +595,8 @@ int set_talker_drop(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_DROP, port,
-		talker, sizeof(struct SRP_talker));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_DROP, 0,
+		port, talker, sizeof(struct SRP_talker));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -608,8 +609,8 @@ int set_talker_dbg(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_DBG, port,
-		talker, sizeof(struct SRP_talker));
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_TALKER, MRP_ACTION_DBG, 0,
+		port, talker, sizeof(struct SRP_talker));
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -622,7 +623,7 @@ int get_port_speed(void *fd,
 	struct ksz_request_actual req;
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_GET, MRP_TYPE_PORT, MRP_ACTION_SPEED,
+	set_mrp_req(&req, DEV_CMD_GET, MRP_TYPE_PORT, MRP_ACTION_SPEED, 0,
 		port, NULL, 0);
 	rc = mrp_ioctl(fd, &req);
 	if (!rc) {
@@ -636,16 +637,35 @@ int set_port_speed(void *fd,
 	int port, int speed)
 {
 	struct ksz_request_actual req;
+	u32 data[4];
 	int rc;
 
-	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_PORT, MRP_ACTION_SPEED,
-		port, NULL, 0);
+	data[0] = speed;
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_PORT, MRP_ACTION_SPEED, 0,
+		port, data, sizeof(data));
 	req.output = speed;
 	rc = mrp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
 	return rc;
 }  /* set_port_speed */
+
+int set_port_delta(void *fd,
+	int port, int a, int b)
+{
+	struct ksz_request_actual req;
+	u32 data[4];
+	int rc;
+
+	data[0] = a;
+	data[1] = b;
+	set_mrp_req(&req, DEV_CMD_PUT, MRP_TYPE_PORT, MRP_ACTION_DELTA, 0,
+		port, data, sizeof(data));
+	rc = mrp_ioctl(fd, &req);
+	if (!rc)
+		rc = req.result;
+	return rc;
+}  /* set_port_delta */
 
 char *get_failure_code(int code)
 {

@@ -587,7 +587,7 @@ void irig(u32 num, u32 cycle)
 	u8 pulse[40];
 	u16 pattern;
 	int *fd = &dev[1].fd;
-	
+
 	hi = (num >> 4) & 0xff;
 	lo = num & 0xff;
 	pulse[0] = 8;
@@ -1451,8 +1451,10 @@ void get_cmd(FILE *fp)
 			if (count >= 2) {
 				set_utc_offset(fd, num[0]);
 			} else {
-				get_utc_offset(fd, &num[0]);
-				printf("UTC offset = %d\n", num[0]);
+				int utc;
+
+				get_utc_offset(fd, &utc);
+				printf("UTC offset = %d\n", utc);
 			}
 		} else if (!strcmp(cmd, "irig")) {
 			if (hcount >= 2)
@@ -1974,7 +1976,7 @@ void get_cmd(FILE *fp)
 				print_err(rc);
 				rc = tx_event(fd, 1, 1, TRIG_POS_EDGE,
 					tx_pulse, tx_cycle,
-					tx_cnt, 0, tx_sec, 
+					tx_cnt, 0, tx_sec,
 					tx_nsec + tx_cycle + cascade_gap,
 					tx_flags, NULL);
 				print_err(rc);

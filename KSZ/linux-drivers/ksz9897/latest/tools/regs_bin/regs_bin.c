@@ -227,6 +227,7 @@ void get_cmd(FILE *fp)
 					}
 				}
 				count *= size;
+				data[0] = 0;
 				do {
 					rc = get_regs(num[0], count, data);
 					if (rc > 0) {

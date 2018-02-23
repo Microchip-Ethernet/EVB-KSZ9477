@@ -1,7 +1,7 @@
 /*
  *	IEEE 802.1Qat Multiple Stream Registration Protocol (MSRP)
  *
- *	Copyright (c) 2016 Microchip Technology Inc.
+ *	Copyright (c) 2016-2017 Microchip Technology Inc.
  *
  *	Copyright (c) 2012 Massachusetts Institute of Technology
  *
@@ -120,11 +120,18 @@ else
 dbg_msg(" %s ?\n", __func__);
 }
 
+/* XMOS uses same stream id and a different destination address for sync? */
+#if 0
+#define TALKER_DEST_ADDR_LEN	6
+#else
+#define TALKER_DEST_ADDR_LEN	0
+#endif
+
 static int msrp_attrvalue_cmp(const void *value, const void *attr, u8 len)
 {
 	if (sizeof(struct srp_talker) == len ||
 	    sizeof(struct srp_talker_failed) == len)
-		return memcmp(value, attr, 8 + 6);
+		return memcmp(value, attr, 8 + TALKER_DEST_ADDR_LEN);
 	else if (sizeof(struct srp_listener) == len)
 		return memcmp(value, attr, 8);
 	else if (sizeof(struct srp_domain) == len)
@@ -157,7 +164,21 @@ static int msrp_attr_chk(u8 attrtype, u8 attrlen)
 	    (MSRP_ATTR_DOMAIN == attrtype &&
 	    sizeof(struct srp_domain) == attrlen))
 		return 0;
+	if (MSRP_ATTR_LISTENER != attrtype &&
+	    MSRP_ATTR_TALKER != attrtype &&
+	    MSRP_ATTR_TALKER_FAILED != attrtype &&
+	    MSRP_ATTR_DOMAIN != attrtype)
+		return 1;
 	return -1;
+}
+
+static u8 msrp_attr_size(u8 attrtype, u8 attrlen)
+{
+	if (attrtype == MSRP_ATTR_LISTENER ||
+	    attrtype == MSRP_ATTR_TALKER ||
+	    attrtype == MSRP_ATTR_TALKER_FAILED)
+		return attrlen * 2;
+	return attrlen;
 }
 
 static u8 msrp_attr_len(u8 attrtype, u8 attrlen)
@@ -187,17 +208,81 @@ static u8 msrp_attr_type(struct mrp_attr *attr)
 	return type;
 }
 
-static void msrp_attr_upd(const void *value, struct mrp_attr *attr)
+static int msrp_attr_upd(const void *value, struct mrp_attr *attr, int tx)
 {
-	const u8 *data = value;
+	int ret = false;
 
 	/* Update talker failure code. */
-	if (MSRP_ATTR_TALKER_FAILED == attr->type)
-		memcpy(&attr->value[25], &data[25], 34 - 25);
+	if (MSRP_ATTR_TALKER_FAILED == attr->type) {
+		struct srp_talker_failed *old;
+		struct srp_talker_failed *old_rx = (struct srp_talker_failed *)
+			attr->value;
+		struct srp_talker_failed *old_tx = old_rx + 1;
+		const struct srp_talker_failed *new =
+			(struct srp_talker_failed *) value;
+
+		/* Initialize the second half after creation. */
+		if (memcmp(old_tx, old_rx, 8))
+			memcpy(old_tx, old_rx,
+				sizeof(struct srp_talker_failed));
+		old = tx ? old_tx : old_rx;
+		if (memcmp(old->dest, new->dest,
+			sizeof(struct srp_talker_failed) - 8)) {
+#if 0
+u8 *src = (u8 *) old->dest;
+u8 *dst = (u8 *) new->dest;
+int n = sizeof(struct srp_talker_failed) - 8;
+int i;
+for (i = 0; i < n; i++) {
+dbg_msg("%02x:%02x ", src[i], dst[i]);
+if ((i % 10) == 9)
+dbg_msg("\n");
+}
+dbg_msg("\n %p %d\n", value, n);
+#endif
+			if (attr->state == MRP_APPLICANT_QA)
+				attr->state = MRP_APPLICANT_AA;
+			memcpy(old->dest, new->dest,
+				sizeof(struct srp_talker_failed) - 8);
+			ret = true;
+		}
 
 	/* Update listener substate. */
-	else if (MSRP_ATTR_LISTENER == attr->type)
-		attr->value[8] = data[8];
+	} else if (MSRP_ATTR_LISTENER == attr->type) {
+		struct srp_listener *old;
+		struct srp_listener *old_rx = (struct srp_listener *)
+			attr->value;
+		struct srp_listener *old_tx = old_rx + 1;
+		const struct srp_listener *new = (struct srp_listener *)
+			value;
+
+		/* Initialize the second half after creation. */
+		if (memcmp(old_tx, old_rx, 8))
+			memcpy(old_tx, old_rx,
+				sizeof(struct srp_listener));
+		old = tx ? old_tx : old_rx;
+		if (old->substate != new->substate) {
+
+			/* Does changing require a NEW indication? */
+			if (attr->state == MRP_APPLICANT_QA)
+				attr->state = MRP_APPLICANT_AA;
+			old->substate = new->substate;
+			ret = true;
+		}
+
+	/* Update domain VID. */
+	} else if (MSRP_ATTR_DOMAIN == attr->type ) {
+		struct srp_domain *old = (struct srp_domain *) attr->value;
+		const struct srp_domain *new = (struct srp_domain *) value;
+
+		if (old->class_vid != new->class_vid) {
+			if (attr->state == MRP_APPLICANT_QA)
+				attr->state = MRP_APPLICANT_AA;
+			old->class_vid = new->class_vid;
+			ret = true;
+		}
+	}
+	return ret;
 }
 
 static int chk_listen_id(u8 *first, u8 *next)
@@ -255,6 +340,7 @@ static void msrp_prepare_tx(struct mrp_applicant *app, u8 attrtype,
 	u8 firstval[40];
 	int firstval_cnt = 0;
 	int firstval_opt = 0;
+	int opt_cnt = 0;
 	int listen_cnt = 0;
 	struct rb_node *node, *next;
 	struct rb_node *opt = NULL;
@@ -266,6 +352,7 @@ static void msrp_prepare_tx(struct mrp_applicant *app, u8 attrtype,
 	u8 attr_type = attrtype;
 	u8 attr_len;
 	struct srp_listener *listener;
+	void *value;
 
 	/* MSRP_ATTR_TALKER_FAILED type is used internally in storage. */
 	if (MSRP_ATTR_TALKER == attrtype)
@@ -278,35 +365,47 @@ static void msrp_prepare_tx(struct mrp_applicant *app, u8 attrtype,
 		if (attr_type != attr->type)
 			continue;
 		attr_len = attr->len;
+		value = attr->value;
 		if (MSRP_ATTR_TALKER_FAILED == attr_type) {
 			struct srp_talker_failed *talker =
 				(struct srp_talker_failed *) attr->value;
 
+			talker++;
 			if ((MSRP_ATTR_TALKER == attrtype &&
 			    talker->failure_code) ||
 			    (MSRP_ATTR_TALKER_FAILED == attrtype &&
 			    !talker->failure_code))
 				continue;
+			value = talker;
 		}
+		if (mrp_10_5_1_hack && attr->action == MRP_TX_ACTION_S_LV) {
+dbg_msg(" no Lv sent\n");
+			attr->action = MRP_TX_ACTION_NONE;
+		}
+		if (MRP_TX_ACTION_NONE == attr->action)
+{
+dbg_msg(" no send %d\n", app->port);
+			continue;
+}
 
 		/* Used only for listener. */
 		listener = NULL;
 		if (MSRP_ATTR_LISTENER == attr_type) {
 			listener = (struct srp_listener *) attr->value;
 
+			listener++;
+			value = listener;
+
 			/* Actual attribute length. */
 			attr_len = 8;
 			listener->nextval = 0;
 		}
-		if (MRP_TX_ACTION_NONE == attr->action)
-{
-dbg_msg(" no send\n");
-			continue;
-}
 
 		/* At least one attribute that is trying to send something. */
 		if (last) {
 			last = attr;
+
+			/* Rememeber action so that it can be restored. */
 			last_action = attr->action;
 		}
 		if (firstval_cnt) {
@@ -314,10 +413,10 @@ dbg_msg(" no send\n");
 			int diff = 0;
 
 			if (MSRP_ATTR_LISTENER == attrtype)
-				diff = chk_listen_id(firstval, attr->value);
+				diff = chk_listen_id(firstval, value);
 
 			app->attrval_inc(firstval, attr->len);
-			if (memcmp(firstval, attr->value, attr_len))
+			if (memcmp(firstval, value, attr_len))
 				firstval_next = 0;
 
 			if (MSRP_ATTR_LISTENER == attrtype) {
@@ -327,11 +426,12 @@ dbg_msg(" no send\n");
 					max = find_largest_cnt(listen_cnt);
 					if (diff <= max) {
 						listen_cnt += diff;
-						listener->nextval = diff - 1;
+						listener->nextval = diff;
 						opt = NULL;
+						opt_cnt = 0;
 						firstval_opt = 0;
 						first = attr;
-						memcpy(firstval, attr->value,
+						memcpy(firstval, value,
 							attr_len);
 						firstval_cnt = 1;
 						continue;
@@ -349,35 +449,44 @@ dbg_msg(" no send\n");
 				    attr->action) {
 					if (!opt) {
 						opt = node;
-						firstval_opt = firstval_cnt % 3;
+						opt_cnt = 1;
+						firstval_opt =
+							firstval_cnt % 3;
 						if (!firstval_opt)
 							firstval_opt = 3;
-					} else
+					} else {
+						++opt_cnt;
 						++firstval_opt;
+					}
+
+					/* Exceed allowed encoding. */
 					if (firstval_opt >= firstval_max)
 						first = NULL;
 				} else {
 					opt = NULL;
+					opt_cnt = 0;
 					firstval_opt = 0;
 				}
 			}
 		}
 		if (!first) {
-			while (firstval_opt) {
+			while (opt_cnt) {
 				first = rb_entry(opt, struct mrp_attr, node);
 				first->action = MRP_TX_ACTION_NONE;
 				opt = rb_next(opt);
-				--firstval_opt;
+				--opt_cnt;
 			}
 			opt = NULL;
 			firstval_opt = 0;
+
+			/* Skip if not needed to send. */
 			if (MRP_TX_ACTION_S_JOIN_IN_OPTIONAL == attr->action ||
 			    MRP_TX_ACTION_S_IN_OPTIONAL == attr->action) {
 				attr->action = MRP_TX_ACTION_NONE;
 				continue;
 			}
 			first = attr;
-			memcpy(firstval, attr->value, attr_len);
+			memcpy(firstval, value, attr_len);
 			firstval_cnt = 1;
 			if (MSRP_ATTR_LISTENER == attrtype)
 				listen_cnt = 1;
@@ -407,6 +516,16 @@ dbg_msg(" no send\n");
 #define MSRP_LISTENER_OPT_MAX		\
 	((((2 + 8) + 2) * 2 - (2 + 8)) / 2 * 3)
 
+static u8 *msrp_encode_substate(u8 *msg_ptr, u8 *list_decl, int len)
+{
+	int j;
+
+	memset(&list_decl[len], 0, len & 3);
+	for (j = 0; j < len; j += 4)
+		*msg_ptr++ = mrp_4pack_encode(&list_decl[j]);
+	return msg_ptr;
+}
+
 static int msrp_tx(struct mrp_applicant *app, u8 *msg_buf, u8 *msg_eof,
 	int *bytes, u8 attrtype, u8 attrlen, u8 attrmax, u8 msg_min)
 {
@@ -425,6 +544,7 @@ static int msrp_tx(struct mrp_applicant *app, u8 *msg_buf, u8 *msg_eof,
 	u8 attr_type = attrtype;
 	int nextval;
 	u8 *list_decl;
+	void *value;
 
 	/* MSRP_ATTR_TALKER_FAILED type is used internally in storage. */
 	if (MSRP_ATTR_TALKER == attrtype)
@@ -434,7 +554,6 @@ static int msrp_tx(struct mrp_applicant *app, u8 *msg_buf, u8 *msg_eof,
 	/* Check if previous attribute types are all sent. */
 	node = app->last_node;
 	if (node) {
-dbg_msg("%s 3\n", __func__);
 		attr = rb_entry(node, struct mrp_attr, node);
 		if (attr_type != attr->type)
 			return 0;
@@ -469,24 +588,28 @@ dbg_msg("%s 3\n", __func__);
 	     node = next) {
 
 		/* Check if there is enough space for all required data. */
-		if (!len && msg_ptr > (msg_eof - msg_min))
-{
+		if (!len && msg_ptr > (msg_eof - msg_min)) {
 dbg_msg(" no space\n");
+			node_break = true;
 			break;
-}
+		}
 
 		attr = rb_entry(node, struct mrp_attr, node);
 		if (attr_type != attr->type)
 			continue;
+
+		value = attr->value;
 		if (MSRP_ATTR_TALKER_FAILED == attr_type) {
 			struct srp_talker_failed *talker =
 				(struct srp_talker_failed *) attr->value;
 
+			talker++;
 			if ((MSRP_ATTR_TALKER == attrtype &&
 			    talker->failure_code) ||
 			    (MSRP_ATTR_TALKER_FAILED == attrtype &&
 			    !talker->failure_code))
 				continue;
+			value = talker;
 		}
 
 		/* See if next value is close enough for efficient encoding. */
@@ -495,10 +618,10 @@ dbg_msg(" no space\n");
 			struct srp_listener *listener =
 				(struct srp_listener *) attr->value;
 
+			listener++;
+			value = listener;
 			nextval = listener->nextval;
 		}
-		if (!nextval)
-			--nextval;
 
 		if (MRP_TX_ACTION_NONE == attr->action) {
 			if (mrp_applicant_chk(attr))
@@ -509,135 +632,119 @@ if (i)
 dbg_msg(" no snd\n");
 #endif
 			/* In case there are events waiting. */
-			i += 2;
+			if (i)
+				i += 2;
 			goto val_end;
 		}
 
 		do {
-#if 0
-dbg_msg(" %d; %d  ", len, nextval);
-#endif
-		if (nextval > 0) {
-
-			/* Fill in dummy attribute. */
-			app->attrval_inc(firstval, attr->len);
-#if 0
-dbg_msg(" iinc [%02x] [%02x] ", firstval[7], firstval[6]);
-#endif
-			vectevt[i] = MRP_VECATTR_EVENT_NEW;
-			list_decl[len] = MSRP_LISTENER_IGNORE;
-			--nextval;
-		} else {
-		if (len) {
-			--nextval;
-			app->attrval_inc(firstval, attr->len);
-#if 0
-dbg_msg(" ne [%02x] [%02x] ", firstval[7], firstval[6]);
-#endif
-			if (memcmp(firstval, attr->value, attrlen)) {
-#if 0
-dbg_msg(" diff [%02x] [%02x] ", firstval[7], attr->value[7]);
-#endif
-				/* Process with current node. */
-				next = node;
-				num_break = true;
-				i = 3;
-				goto val_end;
+			if (!len) {
+				memcpy(firstval, value, attrlen);
+				memcpy(vah->firstattrvalue, firstval, attrlen);
+				msg_ptr += attrlen;
+			} else {
+				app->attrval_inc(firstval, attr->len);
 			}
-		}
-		if (!len) {
-			memcpy(firstval, attr->value, attrlen);
-			memcpy(vah->firstattrvalue, firstval, attrlen);
-			msg_ptr += attrlen;
-		}
-		switch (attr->action) {
-		case MRP_TX_ACTION_S_JOIN_IN:
-		case MRP_TX_ACTION_S_JOIN_IN_OPTIONAL:
-			vectevt[i] = MRP_REGISTRAR_IN == attr->reg_state ?
-				MRP_VECATTR_EVENT_JOIN_IN :
-				MRP_VECATTR_EVENT_JOIN_MT;
-			break;
-		case MRP_TX_ACTION_S_IN:
-		case MRP_TX_ACTION_S_IN_OPTIONAL:
-			vectevt[i] = MRP_REGISTRAR_IN == attr->reg_state ?
-				MRP_VECATTR_EVENT_IN :
-				MRP_VECATTR_EVENT_MT;
-			break;
-		case MRP_TX_ACTION_S_NEW:
-			vectevt[i] = MRP_VECATTR_EVENT_NEW;
-			break;
-		case MRP_TX_ACTION_S_LV:
-			vectevt[i] = MRP_VECATTR_EVENT_LV;
-			break;
-		default:
-			break;
-		}
-		if (MSRP_ATTR_LISTENER == attrtype) {
-			struct srp_listener *listener =
-				(struct srp_listener *) attr->value;
+			if (nextval)
+				--nextval;
 
-			list_decl[len] = listener->substate;
-		}
-		if (mrp_applicant_chk(attr))
-			mrp_attr_destroy(app, attr);
-		}
+			/* Special case for listener. */
+			if (nextval > 0) {
+				/* Fill in dummy attribute. */
+				vectevt[i] = MRP_VECATTR_EVENT_NEW;
+				list_decl[len] = MSRP_LISTENER_IGNORE;
+#if 0
+dbg_msg(" iinc [%02x:%02x] ", firstval[6], firstval[7]);
+#endif
+			} else {
+#if 0
+if (MSRP_ATTR_LISTENER == attr_type)
+dbg_msg(" ne [%02x:%02x] ", firstval[6], firstval[7]);
+#endif
+				if (len && memcmp(firstval, value, attrlen)) {
+					/* Process with current node. */
+					next = node;
+					num_break = true;
+					if (i)
+						i += 2;
+					goto val_end;
+				}
+				mrp_encode_action(attr, &vectevt[i]);
+				if (MSRP_ATTR_LISTENER == attrtype) {
+					struct srp_listener *listener =
+						(struct srp_listener *) value;
 
-		++i;
-		++len;
+					list_decl[len] = listener->substate;
+				}
+				if (mrp_applicant_chk(attr))
+					mrp_attr_destroy(app, attr);
+			}
+
+			++i;
+			++len;
 
 val_end:
-		if (i >= 3) {
+			if (len && i >= 3) {
+				int left = (1 + 4);
+
+				if (MSRP_ATTR_LISTENER == attrtype)
+					left = (1 + (len + 3) / 4 + 4);
 #if 0
 dbg_msg(" vect:%d ", nextval);
 #endif
-			*msg_ptr++ = mrp_3pack_encode(vectevt, &i);
-			if (msg_ptr > msg_eof - (1 + (len + 3) / 4 + 4)) {
-				num_break = true;
-				node_break = true;
-				nextval = -1;
+				*msg_ptr++ = mrp_3pack_encode(vectevt, &i);
+				if (msg_ptr > msg_eof - left) {
+dbg_msg(" node break\n");
+					num_break = true;
+					node_break = true;
+					nextval = -1;
+				}
 			}
-		}
-		if (num_break) {
+			if (num_break) {
 #if 0
 dbg_msg(" num: %d ", nextval);
 #endif
-			put_unaligned(cpu_to_be16(len), &vah->lenflags);
-			if (app->lva.tx & (1 << (attrtype - 1)))
-				vah->lenflags |= MRP_VECATTR_HDR_FLAG_LA;
-			if (MSRP_ATTR_LISTENER == attrtype) {
-				int j;
+				if (MSRP_ATTR_LISTENER == attrtype)
+					msg_ptr =
+						msrp_encode_substate(msg_ptr,
+								     list_decl,
+								     len);
+				put_unaligned(cpu_to_be16(len), &vah->lenflags);
+				if (app->lva.tx & (1 << (attrtype - 1)))
+					vah->lenflags |= MRP_VECATTR_HDR_FLAG_LA;
+				len = 0;
+				num_break = false;
 
-				memset(&list_decl[len], 0, len & 3);
-				for (j = 0; j < len; j += 4)
-					*msg_ptr++ =
-						mrp_4pack_encode(&list_decl[j]);
-			}
-			len = 0;
-			num_break = false;
+				if (msg_ptr > (msg_eof - msg_min)) {
+					node_break = true;
+					break;
+				}
 
-			vah = (struct mrp_vecattr_hdr *) msg_ptr;
-			msg_ptr += sizeof(struct mrp_vecattr_hdr);
-if (nextval >= 0)
-dbg_msg(" ?? ");
+				vah = (struct mrp_vecattr_hdr *) msg_ptr;
+				msg_ptr += sizeof(struct mrp_vecattr_hdr);
+if (nextval > 0)
+dbg_msg(" ?? next");
 nextval = -1;
-		}
-		} while (nextval >= 0);
+			}
+		} while (nextval > 0);
 		if (node_break)
 			break;
 	}
 	if (len) {
 		if (i)
 			*msg_ptr++ = mrp_3pack_encode(vectevt, &i);
+		if (MSRP_ATTR_LISTENER == attrtype)
+			msg_ptr = msrp_encode_substate(msg_ptr, list_decl, len);
 		put_unaligned(cpu_to_be16(len), &vah->lenflags);
 		if (app->lva.tx & (1 << (attrtype - 1)))
 			vah->lenflags |= MRP_VECATTR_HDR_FLAG_LA;
-		if (MSRP_ATTR_LISTENER == attrtype) {
-			int j;
 
-			memset(&list_decl[len], 0, len & 3);
-			for (j = 0; j < len; j += 4)
-				*msg_ptr++ = mrp_4pack_encode(&list_decl[j]);
-		}
+	/* Need to send LeaveAll with zero number of attributes. */
+	} else if (app->lva.tx & (1 << (attrtype - 1)) && !node_break) {
+		memset(vah->firstattrvalue, 0, attrlen);
+		msg_ptr += attrlen;
+		put_unaligned(0, &vah->lenflags);
+		vah->lenflags |= MRP_VECATTR_HDR_FLAG_LA;
 	}
 	app->last_node = node;
 	kfree(list_decl);
@@ -677,17 +784,37 @@ static int msrp_parse_events(struct mrp_applicant *app,
 
 	vah = (struct mrp_vecattr_hdr *) *msg_ptr;
 	valen = get_unaligned(&vah->lenflags);
-	LA = valen & MRP_VECATTR_HDR_FLAG_LA;
+	LA = valen & ~MRP_VECATTR_HDR_LEN_MASK;
+
+	/* Only LeaveAll is understood in this version. */
+	if (app->ver_diff <= 0 && LA && LA != MRP_VECATTR_HDR_FLAG_LA)
+		return -1;
+#if 0
+if (app->port < 3)
+dbg_msg("  rx: %d=%d %x %lu\n", app->port, attrtype, LA, jiffies);
+#endif
+
+	LA &= MRP_VECATTR_HDR_FLAG_LA;
 	valen &= MRP_VECATTR_HDR_LEN_MASK;
 	valen = be16_to_cpu(valen);
 
-	/* Zero length is allowed in new MSRP spec. */
-
 	*msg_ptr += sizeof(struct mrp_vecattr_hdr);
 
+	if (MSRP_ATTR_LISTENER == attrtype)
+		add_len = (valen + 3) / 4;
+
+	/* Listener storage has extra stuff. */
+	if (attrlen < sizeof(struct srp_talker_failed))
+		memset(firstval, 0, sizeof(struct srp_talker_failed));
+	memcpy(firstval, vah->firstattrvalue, attrlen);
+	*msg_ptr += attrlen;
+
+	if (*msg_ptr + (valen + 2) / 3 + add_len > msg_eof)
+		return -1;
+
 	/* Do it once for each attribute type. */
-	if (LA && !(app->lva.rx & (1 << attrtype))) {
-#if 1
+	if (!app->dry_run && LA && !(app->lva.rx & (1 << attrtype))) {
+#if 0
 app->rla_jiffies = jiffies;
 #endif
 		app->lva_type = attrtype;
@@ -696,30 +823,18 @@ app->rla_jiffies = jiffies;
 		app->lva.rx |= (1 << attrtype);
 	}
 
-	/* Listener storage has extra stuff. */
-	if (attrlen < sizeof(struct srp_talker_failed))
-		memset(firstval, 0, sizeof(struct srp_talker_failed));
-	memcpy(firstval, vah->firstattrvalue, attrlen);
-	*msg_ptr += attrlen;
-
 	if (!valen)
 		return 0;
 
 	if (MSRP_ATTR_LISTENER == attrtype) {
 		/* For substate. */
 		attrlen += 2;
-		add_len = (valen + 3) / 4;
 		decl_ptr = *msg_ptr + (valen + 2) / 3;
 	} else if (MSRP_ATTR_TALKER == attrtype) {
 		attrtype = MSRP_ATTR_TALKER_FAILED;
 		memset(&firstval[25], 0, 34 - 25);
 		attrlen = 34;
 	}
-	if (*msg_ptr + (valen + 2) / 3 + add_len > msg_eof)
-{
-dbg_msg(" not enough %p %d %d %p\n", *msg_ptr, valen, add_len, msg_eof);
-		return -1;
-}
 
 	/* In a VectorAttribute, the Vector contains events which are packed
 	 * three to a byte. We process one byte of the Vector at a time.
@@ -733,7 +848,7 @@ dbg_msg(" not enough %p %d %d %p\n", *msg_ptr, valen, add_len, msg_eof);
 				      __MRP_VECATTR_EVENT_MAX);
 		if (vaevent >= __MRP_VECATTR_EVENT_MAX) {
 			/* The byte is malformed; stop processing. */
-			return -1;
+			return -2;
 		}
 		ignore = false;
 		if (decl_ptr) {
@@ -743,7 +858,7 @@ dbg_msg(" not enough %p %d %d %p\n", *msg_ptr, valen, add_len, msg_eof);
 				ignore = true;
 			firstval[8] = decl[i++];
 		}
-		if (!ignore)
+		if (!app->dry_run && !ignore)
 			mrp_update_attr(app, firstval, attrlen, attrtype,
 				vaevent);
 
@@ -762,7 +877,7 @@ dbg_msg(" not enough %p %d %d %p\n", *msg_ptr, valen, add_len, msg_eof);
 				ignore = true;
 			firstval[8] = decl[i++];
 		}
-		if (!ignore)
+		if (!app->dry_run && !ignore)
 			mrp_update_attr(app, firstval, attrlen, attrtype,
 				vaevent);
 
@@ -780,7 +895,7 @@ dbg_msg(" not enough %p %d %d %p\n", *msg_ptr, valen, add_len, msg_eof);
 				ignore = true;
 			firstval[8] = decl[i++];
 		}
-		if (!ignore)
+		if (!app->dry_run && !ignore)
 			mrp_update_attr(app, firstval, attrlen, attrtype,
 				vaevent);
 		app->attrval_inc(firstval, attrlen);
@@ -816,6 +931,10 @@ static int msrp_parse_msg(struct mrp_applicant *app, u8 **msg_ptr, u8 *msg_eof)
 	if (rc < 0)
 		return -1;
 
+	/* Attribute not understood but not in future protocol. */
+	if (rc && (app->ver_diff <= 0 || !app->msg_cnt))
+		return -1;
+
 	if (MSRP_ATTR_LISTENER == mh->attrtype)
 		add_len++;
 
@@ -845,14 +964,22 @@ dbg_msg(" bad attrlist: %d %d\n", ntohs(*attr_list), mh->attrlen);
 		rc = mrp_parse_end_mark(msg_ptr, msg_eof);
 		if (rc <= 0) {
 			u16 len = *msg_ptr - (u8 *) attr_list;
+			u16 list_len = ntohs(*attr_list) + 2;
 
-			if (len - 2 != ntohs(*attr_list))
-dbg_msg("attrlist %u %u\n", ntohs(*attr_list), len - 2);
+			if (len != list_len) {
+if (app->dry_run)
+dbg_msg("attrlist %d:%u %u %d\n", app->port, list_len, len, rc);
+				if (len < list_len)
+					*msg_ptr += list_len - len;
+			}
 		}
 
 		/* End mark terminates the vector list. */
-		if (rc <= 0)
+		if (rc <= 0) {
+			if (app->dry_run)
+				rc = 0;
 			return rc;
+		}
 	}
 	return 0;
 }
@@ -865,8 +992,8 @@ static int msrp_rx(struct mrp_applicant *app, u8 *data, int len)
 	int rc;
 
 	ph = (struct mrp_pdu_hdr *) data;
-	if (ph->version != app->app->version)
-		return -1;
+	app->ver_diff = ph->version - app->app->version;
+	app->msg_cnt = 0;
 
 	app->lva.rx = 0;
 
@@ -875,19 +1002,35 @@ static int msrp_rx(struct mrp_applicant *app, u8 *data, int len)
 
 	while (msg_ptr <= (msg_eof - (2 + 2))) {
 		rc = msrp_parse_msg(app, &msg_ptr, msg_eof);
-		if (rc < 0)
+		if (rc < 0) {
+			if (app->dry_run && rc == -2)
+				rc = 0;
 			return rc;
+		}
+		app->msg_cnt++;
 
 		/* End mark terminates the frame. */
 		rc = mrp_parse_end_mark(&msg_ptr, msg_eof);
-		if (rc <= 0)
+		if (rc <= 0) {
+			if (app->dry_run)
+				rc = 0;
 			return rc;
+		}
 	}
 	return 0;
 }
 
 static int msrp_rxpdu(struct mrp_applicant *app, u8 *data, int len)
 {
+	int rc;
+
+	app->dry_run = 1;
+	rc = msrp_rx(app, data, len);
+
+	/* Discard entire PDU if malformed. */
+	if (rc < 0)
+		return rc;
+	app->dry_run = 0;
 	return msrp_rx(app, data, len);
 }
 
@@ -898,6 +1041,13 @@ static int msrp_txpdu(struct mrp_applicant *app)
 	u8 *msg_buf;
 	u8 *msg_eof;
 	u8 *msg_ptr;
+#if 1
+	int tx_0 = 0;
+	int tx_1 = 0;
+#endif
+
+	if (!app->normal)
+		return 0;
 
 	err = mrp_pdu_init(app);
 	if (err < 0)
@@ -908,124 +1058,169 @@ static int msrp_txpdu(struct mrp_applicant *app)
 	msg_buf++;
 	msg_ptr = msg_buf;
 
-	err = msrp_tx(app, msg_ptr, msg_eof, &bytes,
-		MSRP_ATTR_TALKER, sizeof(struct srp_talker),
-		MSRP_TALKER_OPT_MAX, MSRP_TALKER_MIN);
+	if (app->normal & (1 << MSRP_ATTR_TALKER)) {
+		err = msrp_tx(app, msg_ptr, msg_eof, &bytes,
+			      MSRP_ATTR_TALKER, sizeof(struct srp_talker),
+			      MSRP_TALKER_OPT_MAX, MSRP_TALKER_MIN);
 
-	/* LeaveAll for MAC attribute type sent. */
-	if (bytes) {
-		msg_ptr += bytes;
-		app->lva.tx &= ~(1 << (MSRP_ATTR_TALKER - 1));
+		/* LeaveAll for MAC attribute type sent. */
+		if (bytes) {
+			msg_ptr += bytes;
+			app->lva.tx &= ~(1 << (MSRP_ATTR_TALKER - 1));
+#if 1
+			tx_0 = 1;
+#endif
 
-		/* No more space. */
-		if (-1 == err)
-			goto send;
+			/* No more space. */
+			if (-1 == err)
+				goto send;
+		}
 	}
 
-	err = msrp_tx(app, msg_ptr, msg_eof, &bytes,
-		MSRP_ATTR_TALKER_FAILED, sizeof(struct srp_talker_failed),
-		MSRP_TALKER_FAILED_OPT_MAX, MSRP_TALKER_FAILED_MIN);
+	if (app->normal & (1 << MSRP_ATTR_TALKER_FAILED)) {
+		err = msrp_tx(app, msg_ptr, msg_eof, &bytes,
+			      MSRP_ATTR_TALKER_FAILED,
+			      sizeof(struct srp_talker_failed),
+			      MSRP_TALKER_FAILED_OPT_MAX,
+			      MSRP_TALKER_FAILED_MIN);
 
-	/* LeaveAll for MAC attribute type sent. */
-	if (bytes) {
-		msg_ptr += bytes;
-		app->lva.tx &= ~(1 << (MSRP_ATTR_TALKER_FAILED - 1));
+		/* LeaveAll for MAC attribute type sent. */
+		if (bytes) {
+			msg_ptr += bytes;
+			app->lva.tx &= ~(1 << (MSRP_ATTR_TALKER_FAILED - 1));
+#if 1
+			tx_1 = 1;
+#endif
 
-		/* No more space. */
-		if (-1 == err)
-			goto send;
+			/* No more space. */
+			if (-1 == err)
+				goto send;
+		}
 	}
 
-	err = msrp_tx(app, msg_ptr, msg_eof, &bytes,
-		MSRP_ATTR_LISTENER, sizeof(struct srp_listener) - 2,
-		MSRP_LISTENER_OPT_MAX, MSRP_LISTENER_MIN);
+	if (app->normal & (1 << MSRP_ATTR_LISTENER)) {
+		err = msrp_tx(app, msg_ptr, msg_eof, &bytes,
+			      MSRP_ATTR_LISTENER,
+			      sizeof(struct srp_listener) - 2,
+			      MSRP_LISTENER_OPT_MAX, MSRP_LISTENER_MIN);
 
-	/* LeaveAll for SVC attribute type sent. */
-	if (bytes) {
-		msg_ptr += bytes;
-		app->lva.tx &= ~(1 << (MSRP_ATTR_LISTENER - 1));
+		/* LeaveAll for SVC attribute type sent. */
+		if (bytes) {
+			msg_ptr += bytes;
+			app->lva.tx &= ~(1 << (MSRP_ATTR_LISTENER - 1));
 
-		/* No more space. */
-		if (-1 == err)
-			goto send;
+			/* No more space. */
+			if (-1 == err)
+				goto send;
+		}
 	}
+#if 0
+if (tx_0 && !tx_1)
+goto send;
+#endif
+#if 1
+	if (mrp_10_5_1d_hack && !tx_0 && tx_1)
+		goto send;
+#endif
 
-	err = msrp_tx(app, msg_ptr, msg_eof, &bytes,
-		MSRP_ATTR_DOMAIN, sizeof(struct srp_domain),
-		MSRP_DOMAIN_OPT_MAX, MSRP_DOMAIN_MIN);
+	if (app->normal & (1 << MSRP_ATTR_DOMAIN)) {
+		err = msrp_tx(app, msg_ptr, msg_eof, &bytes,
+			      MSRP_ATTR_DOMAIN, sizeof(struct srp_domain),
+			      MSRP_DOMAIN_OPT_MAX, MSRP_DOMAIN_MIN);
 
-	/* LeaveAll for SVC attribute type sent. */
-	if (bytes) {
-		msg_ptr += bytes;
-		app->lva.tx &= ~(1 << (MSRP_ATTR_DOMAIN - 1));
+		/* LeaveAll for SVC attribute type sent. */
+		if (bytes) {
+			msg_ptr += bytes;
+			app->lva.tx &= ~(1 << (MSRP_ATTR_DOMAIN - 1));
 
-		/* No more space. */
-		if (-1 == err)
-			goto send;
+			/* No more space. */
+			if (-1 == err)
+				goto send;
+		}
 	}
+	app->lva.tx = 0;
 
 send:
 
-	return mrp_txpdu(app, msg_buf, msg_ptr, msg_eof, err);
+	return mrp_txpdu(app, msg_buf, msg_ptr, msg_eof);
 }
 
 static int msrp_req_join_domain(struct mrp_applicant *app,
-	struct srp_domain *domain)
+	struct srp_domain *domain, u8 new_decl)
 {
+	if (new_decl)
+		new_decl = MRP_EVENT_NEW;
+	else
+		new_decl = MRP_EVENT_JOIN;
 	return mrp_req_new(app, domain, sizeof(struct srp_domain),
-		MSRP_ATTR_DOMAIN, MRP_EVENT_JOIN);
+		MSRP_ATTR_DOMAIN, new_decl);
 }
 
 static int msrp_req_new_listener(struct mrp_applicant *app,
-	struct srp_listener *listener)
+	struct srp_listener *listener, u8 new_decl)
 {
+	if (new_decl)
+		new_decl = MRP_EVENT_NEW;
+	else
+		new_decl = MRP_EVENT_JOIN;
 	listener->nextval = 0;
 	return mrp_req_new(app, listener, sizeof(struct srp_listener),
-		MSRP_ATTR_LISTENER, MRP_EVENT_NEW);
+		MSRP_ATTR_LISTENER, new_decl);
 }
 
 static int msrp_req_new_talker(struct mrp_applicant *app,
-	struct srp_talker_failed *talker)
+	struct srp_talker_failed *talker, u8 new_decl)
 {
+	if (new_decl)
+		new_decl = MRP_EVENT_NEW;
+	else
+		new_decl = MRP_EVENT_JOIN;
 	return mrp_req_new(app, talker, sizeof(struct srp_talker_failed),
-		MSRP_ATTR_TALKER_FAILED, MRP_EVENT_NEW);
+		MSRP_ATTR_TALKER_FAILED, new_decl);
 }
 
-static void msrp_req_leave_domain(struct mrp_applicant *app,
+static int msrp_req_leave_domain(struct mrp_applicant *app,
 	struct srp_domain *domain)
 {
-	mrp_req_leave(app, domain, sizeof(struct srp_domain),
+	return mrp_req_leave(app, domain, sizeof(struct srp_domain),
 		MSRP_ATTR_DOMAIN);
 }
 
-static void msrp_req_leave_listener(struct mrp_applicant *app,
+static int msrp_req_leave_listener(struct mrp_applicant *app,
 	struct srp_listener *listener)
 {
 	listener->nextval = 0;
-	mrp_req_leave(app, listener, sizeof(struct srp_listener),
+	return mrp_req_leave(app, listener, sizeof(struct srp_listener),
 		MSRP_ATTR_LISTENER);
 }
 
-static void msrp_req_leave_talker(struct mrp_applicant *app,
+static int msrp_req_leave_talker(struct mrp_applicant *app,
 	struct srp_talker_failed *talker)
 {
-	mrp_req_leave(app, talker, sizeof(struct srp_talker_failed),
+	return mrp_req_leave(app, talker, sizeof(struct srp_talker_failed),
 		MSRP_ATTR_TALKER_FAILED);
 }
 
-static void msrp_init_application(struct mrp_applicant *app, void *mrp, u8 port,
-	void (*acton)(struct mrp_applicant *app, struct mrp_attr *attr))
+static void msrp_init_application(struct mrp_applicant *app,
+				  void (*acton)(struct mrp_applicant *app,
+				  struct mrp_attr *attr),
+				  void (*cleanup)(struct mrp_applicant *app))
 {
-	app->parent = mrp;
-	app->port = port;
 	app->attrval_inc = msrp_attrvalue_inc;
 	app->attr_chk = msrp_attr_chk;
 	app->attr_cmp = msrp_attr_cmp;
+	app->attr_valid = mrp_attr_valid;
+	app->attr_size = msrp_attr_size;
 	app->attr_len = msrp_attr_len;
 	app->attr_type = msrp_attr_type;
 	app->attr_upd = msrp_attr_upd;
 	app->rxpdu = msrp_rxpdu;
 	app->txpdu = msrp_txpdu;
 	app->acton = acton;
+	app->cleanup = cleanup;
+	app->normal = (1 << MSRP_ATTR_TALKER) |
+		      (1 << MSRP_ATTR_TALKER_FAILED) |
+		      (1 << MSRP_ATTR_LISTENER) |
+		      (1 << MSRP_ATTR_DOMAIN);
 }
 

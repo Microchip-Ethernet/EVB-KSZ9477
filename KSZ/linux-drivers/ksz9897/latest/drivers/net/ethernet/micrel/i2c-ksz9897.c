@@ -583,8 +583,6 @@ static int ksz9897_probe(struct i2c_client *i2c,
 	hw_priv->i2cdev = i2c;
 
 	ks->dev = &i2c->dev;
-	if (i2c->irq <= 0)
-		i2c->irq = get_irq(ks, i2c->irq);
 
 	ks->intr_mode = intr_mode ? IRQF_TRIGGER_FALLING :
 		IRQF_TRIGGER_LOW;
@@ -708,10 +706,6 @@ MODULE_PARM_DESC(iba, "IBA support");
 module_param(intr_mode, int, 0);
 MODULE_PARM_DESC(intr_mode,
 	"Configure which interrupt mode to use(0=level low, 1=falling)");
-
-module_param(need_link_up, int, 0);
-MODULE_PARM_DESC(need_link_up,
-	"Configure whether to always indicate link is up");
 
 module_param(sw_host_port, int, 0);
 MODULE_PARM_DESC(sw_host_port,

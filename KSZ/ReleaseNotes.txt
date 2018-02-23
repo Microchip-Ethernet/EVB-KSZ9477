@@ -1,4 +1,4 @@
-KSZ9xxx/KSZ85xx Ethernet Switch Software - Version: 1.1.2
+KSZ9xxx/KSZ85xx Ethernet Switch Software - Version: 1.1.9
 =========================================================
 
 Contenets:
@@ -8,6 +8,7 @@ Contenets:
 3. Software description
 4. Release History
 5. Known Issues
+6. New Features Added
 
 1. Platform and Kernel versions 
 -------------------------------
@@ -25,6 +26,32 @@ Contenets:
  
 4. Release History
 ------------------
+
+V1.1.9 : 02/12/2018
+	1. Fix Linux PTP stack problems running in E2E/P2P as eth0.100 devices
+	   are used.
+	2. Fix some MRP/MSRP/gPTP test failures.
+	3. Rely on MVRP only to program VLAN table for MSRP operation.
+
+V1.1.8 : 12/15/2017
+	1. Support KSZ9563 and KSZ8563 connected to UNG8087_B.
+	2. Fix RSTP disable/enable problem.
+
+V1.1.7 : 11/28/2017
+	1. Fix FQTSS credit shaper problems.
+
+V1.1.6 : 11/07/2017
+	1. Enable STP by default as multiple devices mode 3 requires that.
+	2. Fix MSRP encoding problem.
+
+V1.1.5 : 11/02/2017
+	1. Use eth0.100 devices for 802.1AS instead of VLAN devices.
+
+V1.1.4 : 10/19/2017
+	1. Fix some MRP/MSRP problems.  Allow manual bandwidth configuration.
+
+V1.1.3 : 09/28/2017
+	1. Fix some MRP/MSRP test failures.
 
 V1.1.2 : 07/19/2017
 	1. Linux PTP utilities are updated to better support the PTP stack.
@@ -57,4 +84,203 @@ V1.0 : 12/23/2016
 
 5. Known Issues:
 ---------------
-  None.
+
+It is expected RSTP is turned on when the multiple devices mode 3 is used.
+Without RSTP the ports will stay partitioned so there is no forwarding in the
+switch until it is manually configured.
+
+6. New Features Added:
+---------------------
+
+A.
+
+MAC_Operational can be turned off.
+
+echo 0 > sw#/#_mac_oper
+
+An alternate way is to use ifconfig command to disable the port:
+
+ifconfig eth0.10# down
+
+To enable the port again it requires using the ifconfig command:
+
+ifconfig eth0.10# up
+
+If the #_mac_oper command is used it is required to use the ifconfig command to
+disable the port first:
+
+ifconfig eth0.10# down
+ifconfig eth0.10# up
+
+
+B.
+
+MMRP/MVRP can set Non-Participant, which means the applicant does not declare
+anything.  The applicant is type based, so it is simple to just turn on/off
+the attribute type supported.
+
+echo 0 > sw#/#_mmrp_mac
+echo 0 > sw#/#_mvrp_vid
+
+
+C.
+
+MMRP/MVRP can set Fixed Registration, which means the registration state is
+always IN.  The registration is value based, so a value needs to be entered
+first to select Fixed Registration:
+
+echo 01:02:03:04:05:06 > sw/alu_addr
+echo 1 > sw#/#_mmrp_reg
+
+echo 2 > sw/vlan_index
+echo 1 > sw#/#_mvrp_reg
+
+
+D.
+
+MMRP/MVRP can set Forbidden Registration, which means the registration state
+is always MT.  The registration is value based, so a value needs to be entered
+first to select Forbidden Registration:
+
+echo 01:02:03:04:05:06 > sw/alu_addr
+echo 2 > sw#/#_mmrp_reg
+
+echo 2 > sw/vlan_index
+echo 2 > sw#/#_mvrp_reg
+
+
+Normal Registration is set by writing 0:
+
+echo 01:02:03:04:05:06 > sw/alu_addr
+echo 0 > sw#/#_mmrp_reg
+
+echo 2 > sw/vlan_index
+echo 0 > sw#/#_mvrp_reg
+
+
+E.
+
+MVRP can set Restricted_VLAN_Registration, which means the VLAN will not be
+registered when an entry is not already in the VLAN table.
+
+echo 2 > sw/vlan_index
+echo 1 > sw#/#_vlan_restricted
+
+
+F.
+
+MSRP can be disabled globablly.
+
+echo 0 > sw/msrpEnabled
+
+
+G.
+
+MSRP can be disabled by port.
+
+echo 0 > sw#/#_msrpEnabled
+
+
+H.
+
+MSRP deltaBandwidth can be set.
+
+echo 3 > sw#/#_q_index
+echo 75 > sw#/#_q_delta
+echo 2 > sw#/#_q_index
+echo 0 > sw#/#_q_delta
+
+It is required to write the SR Class B deltaBandwidth last to set both
+deltaBandwidths.
+
+
+I.
+
+MSRP adminIdleSlope can be set.
+
+echo 3 > sw#/#_q_index
+echo 7500 > sw#/#_q_admin_slope
+
+The number 7500 means 75.00%.
+
+
+J.
+
+MSRP SR Class A can be disabled.
+
+echo 0 > sw/msrp_sr_a
+
+
+K.
+
+Following workarounds can be used to pass AVnu tests.  They are meant to show
+the tests can be passed by modifying the test procedures or their
+expectations.  These test cases will be reviewed to decide whether anything
+should be fixed or not.
+
+For MRP.c.10.1.2f:
+
+echo mrp_10.1.2f > sw/msrp_info
+
+
+For MRP.c.10.5.1c:
+
+echo mrp_10.5.1c > sw/msrp_info
+
+
+For MRP.c.10.5.1d:
+
+echo mrp_10.5.1d > sw/msrp_info
+
+
+For MSRP.c.35.1.5e:
+
+echo regeneration > sw/msrp_info
+
+This does not have any real effect on the correctness of the operation.
+
+
+For FQTSS.c.34.2.3a:
+
+echo fqtss_34.2.3 > sw/msrp_info
+
+This just allows the test to really analyze the traffic rather than failing
+for talker/listener disconnection.
+
+
+For FQTSS.c.34.2.5b:
+
+echo fqtss_34.2.5b > sw/msrp_info
+
+This does not pass the test but allow the capture to be manually inspected to
+calculate the supposed number of frames received.
+
+
+For FQTSS.c.34.2.9b:
+
+echo fqtss_34.2.9b > sw/msrp_info
+
+This just shows that using the length 100 for calculation matches the
+expectation of the test.
+
+
+For FQTSS.c.34.2.9c:
+
+echo fqtss_34.2.3 > sw/msrp_info
+
+Occasionally the talker declaration is not sent after a LeaveAll request,
+causing the reservation to be dropped and resulting in more frames received.
+
+
+For BA:
+
+echo ba > sw/msrp_info
+
+This allows the tests to detect receiving the Announce messages it wants so
+that there is no delay waiting for them.
+
+
+The following command is used to reset all workarounds:
+
+echo reset > sw/msrp_info
+

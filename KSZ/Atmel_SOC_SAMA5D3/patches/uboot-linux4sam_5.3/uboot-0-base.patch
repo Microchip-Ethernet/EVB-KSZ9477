@@ -1,7 +1,7 @@
 diff -purN uboot-linux4sam_5.3.orig/board/atmel/sama5d3_xplained/sama5d3_xplained.c uboot-linux4sam_5.3/board/atmel/sama5d3_xplained/sama5d3_xplained.c
 --- uboot-linux4sam_5.3.orig/board/atmel/sama5d3_xplained/sama5d3_xplained.c	2016-04-13 18:26:28.000000000 -0700
-+++ uboot-linux4sam_5.3/board/atmel/sama5d3_xplained/sama5d3_xplained.c	2016-09-09 13:23:48.935549395 -0700
-@@ -16,12 +16,44 @@
++++ uboot-linux4sam_5.3/board/atmel/sama5d3_xplained/sama5d3_xplained.c	2017-10-13 14:16:27.465565223 -0700
+@@ -16,12 +16,65 @@
  #include <atmel_mci.h>
  #include <net.h>
  #include <netdev.h>
@@ -20,12 +20,33 @@ diff -purN uboot-linux4sam_5.3.orig/board/atmel/sama5d3_xplained/sama5d3_xplaine
 +
 +void spi_cs_activate(struct spi_slave *slave)
 +{
++#ifdef CONFIG_ATMEL_SPI1
 +	at91_set_pio_output(AT91_PIO_PORTC, 25, 0);
++#endif
++	at91_set_pio_output(AT91_PIO_PORTD, 13, 0);
 +}
 +
 +void spi_cs_deactivate(struct spi_slave *slave)
 +{
++#ifdef CONFIG_ATMEL_SPI1
 +	at91_set_pio_output(AT91_PIO_PORTC, 25, 1);
++#endif
++	at91_set_pio_output(AT91_PIO_PORTD, 13, 1);
++}
++#endif
++
++#ifdef CONFIG_ATMEL_SPI
++static void board_spi0_hw_init(void)
++{
++	at91_set_a_periph(AT91_PIO_PORTD, 10, 0);	/* SPI0_MISO */
++	at91_set_a_periph(AT91_PIO_PORTD, 11, 0);	/* SPI0_MOSI */
++	at91_set_a_periph(AT91_PIO_PORTD, 12, 0);	/* SPI0_SPCK */
++
++	at91_set_pio_output(AT91_PIO_PORTD, 13, 1);	/* SPI0_CS0 */
++	at91_set_pio_output(AT91_PIO_PORTD, 16, 1);	/* SPI0_CS0 */
++
++	/* Enable clock */
++	at91_periph_clk_enable(ATMEL_ID_SPI0);
 +}
 +#endif
 +
@@ -46,17 +67,20 @@ diff -purN uboot-linux4sam_5.3.orig/board/atmel/sama5d3_xplained/sama5d3_xplaine
  #ifdef CONFIG_NAND_ATMEL
  void sama5d3_xplained_nand_hw_init(void)
  {
-@@ -89,6 +121,9 @@ int board_init(void)
+@@ -89,6 +142,12 @@ int board_init(void)
  	/* adress of boot parameters */
  	gd->bd->bi_boot_params = CONFIG_SYS_SDRAM_BASE + 0x100;
  
++#ifdef CONFIG_ATMEL_SPI
++	board_spi0_hw_init();
++#endif
 +#ifdef CONFIG_ATMEL_SPI1
 +	board_spi1_hw_init();
 +#endif
  #ifdef CONFIG_NAND_ATMEL
  	sama5d3_xplained_nand_hw_init();
  #endif
-@@ -117,8 +152,10 @@ int board_eth_init(bd_t *bis)
+@@ -117,8 +176,10 @@ int board_eth_init(bd_t *bis)
  {
  #ifdef CONFIG_MACB
  	macb_eth_initialize(0, (void *)ATMEL_BASE_GMAC, 0x00);

@@ -14,7 +14,6 @@
 #elif defined( _MSC_VER )
 #include <winsock2.h>
 
-#pragma message( "support snprintf" )
 #define HAVE_SNPRINTF
 #define HAVE_VSNPRINTF
 
@@ -72,7 +71,7 @@ SocketInit (
 #endif
 
 #else
-    if ( WSAStartup( 0x101, &wsaData ) ) {
+    if ( WSAStartup( 0x202, &wsaData ) ) {
         fprintf( stderr, "Could not initialize WinSock\n" );
         if ( logfp ) {
             fprintf( logfp, "Could not initialize WinSock\n" );
@@ -81,7 +80,7 @@ SocketInit (
         }
         exit( 1 );
     }
-    if ( 0x101 != wsaData.wVersion ) {
+    if ( 0x202 != wsaData.wVersion ) {
         fprintf( stderr, "Version %x not supported\n", wsaData.wVersion );
         if ( logfp ) {
             fprintf( logfp, "Version %x not supported\n", wsaData.wVersion );
@@ -231,7 +230,7 @@ err_doit (
 
 #ifdef HAVE_VSNPRINTF
     /* this is safe */
-    _vsnprintf( buf, sizeof( buf ), fmt, ap );
+    vsnprintf( buf, sizeof( buf ), fmt, ap );
 
 #else
     /* this is not safe */
@@ -247,7 +246,7 @@ err_doit (
         if ( errstr ) {
 
 #ifdef HAVE_SNPRINTF
-            _snprintf( buf + n, sizeof( buf ) - n, ": %s", errstr );
+            snprintf( buf + n, sizeof( buf ) - n, ": %s", errstr );
 
 #else
             sprintf( buf + n, ": %s", errstr );
@@ -256,7 +255,7 @@ err_doit (
         else
 
 #ifdef HAVE_SNPRINTF
-            _snprintf( buf + n, sizeof( buf ) - n, ": %x", errno_save );
+            snprintf( buf + n, sizeof( buf ) - n, ": %x", errno_save );
 
 #else
             sprintf( buf + n, ": %x", errno_save );

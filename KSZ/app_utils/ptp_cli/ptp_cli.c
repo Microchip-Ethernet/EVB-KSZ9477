@@ -1746,10 +1746,17 @@ void get_cmd(FILE *fp)
 			case 'z':
 				if (count < 2)
 					break;
-				rc = tx_event(fd, 11, 0, 0, tx_pulse,
+				if (12 == ptp_tsi_units)
+					num[1] = 1;
+				else
+					num[1] = 2;
+				if (num[1] < 0)
+					num[1] = 0;
+				rc = tx_event(fd, num[1], 0, 0, tx_pulse,
 					tx_cycle, tx_cnt, 0, tx_sec, tx_nsec,
 					PTP_CMD_CANCEL_OPER, NULL);
-				rc = tx_event(fd, 11, num[0], TRIG_POS_PERIOD,
+				rc = tx_event(fd, num[1], num[0],
+					TRIG_POS_PERIOD,
 					20000000 / 8, 1000000000, 0,
 					0, 1, 0, PTP_CMD_REL_TIME, NULL);
 				print_err(rc);

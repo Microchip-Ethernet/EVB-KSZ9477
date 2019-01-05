@@ -25,6 +25,7 @@ int main(int argc, char **argv)
 		err_quit("invalid <address-family>");
 	doaliases = atoi(argv[2]);
 
+	SocketInit(0);
 	ifihead = get_ifi_info(family, doaliases);
 	for (ifi = ifihead; ifi != NULL; ifi = ifi->ifi_next) {
 		printf("%s=%d: <", ifi->ifi_name, ifi->ifi_index);
@@ -51,7 +52,11 @@ int main(int argc, char **argv)
 			printf("LOOP");
 			notfirst = 1;
 		}
+#if defined( _MSC_VER )
+		if (ifi->ifi_flags & IFF_POINTTOPOINT) {
+#else
 		if (ifi->ifi_flags & IFF_POINTOPOINT) {
+#endif
 			if (notfirst)
 				printf(" ");
 			printf("P2P");
@@ -81,7 +86,13 @@ int main(int argc, char **argv)
 		if ((sa = ifi->ifi_dstaddr) != NULL)
 			printf("  destination addr: %s\n",
 				sock_ntop_host(sa, sizeof(*sa), addr, len));
+#if defined( _MSC_VER )
+		if ((sa = ifi->ifi_subnet) != NULL)
+			printf("  subnet: %s\n",
+				sock_ntop_host(sa, sizeof(*sa), addr, len));
+#endif
 	}
 	free_ifi_info(ifihead);
+	SocketExit();
 	return 0;
 }

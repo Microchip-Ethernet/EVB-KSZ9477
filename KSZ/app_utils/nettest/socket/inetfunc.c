@@ -418,7 +418,7 @@ inet_pton6 (
  *  Paul Vixie, 1996.
  */
 int
-inet_pton (
+_inet_pton (
     int        af,
     const char *src,
     void       *dst )
@@ -447,7 +447,7 @@ Inet_pton (
 {
     int n;
 
-    if ( ( n = inet_pton( family, strptr, addrptr )) < 0 )
+    if ( ( n = _inet_pton( family, strptr, addrptr )) < 0 )
 
         /* errno set */
         err_sys( "inet_pton error for %s", strptr );

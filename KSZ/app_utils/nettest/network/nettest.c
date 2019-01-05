@@ -121,12 +121,13 @@ int ptp_alternate = 0;
 int ptp_unicast = 0;
 int vlan = 0;
 int vlan_prio = 2;
+int no_len = 0;
 
 #ifdef _SYS_SOCKET_H
 struct sockaddr_ll eth_bpdu_addr[NUM_OF_PORTS];
 u8 *eth_bpdu_buf[NUM_OF_PORTS];
 
-u8 eth_bpdu[] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x10 };
+u8 eth_bpdu[] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x11 };
 
 u8 hw_addr[ETH_ALEN];
 
@@ -286,11 +287,17 @@ void send_data(int p, u8 data[], int len)
 		tag |= vlan_prio << 13;
 		*ptr++ = htons(ETH_P_8021Q);
 		*ptr++ = htons(tag);
-		*ptr++ = htons(0x22f0);
+		if (no_len)
+			*ptr++ = 0xffff;
+		else
+			*ptr++ = htons(0x22f0);
 		len -= 0;
 		hdr_len += 4;
 	} else {
-		*ptr++ = htons(len);
+		if (no_len)
+			*ptr++ = 0xffff;
+		else
+			*ptr++ = htons(len);
 	}
 	memcpy(ptr, data, len);
 	len += hdr_len;
@@ -724,7 +731,7 @@ int main(int argc, char *argv[])
 	if (argc < 2) {
 		printf("usage: %s <local_if>",
 			argv[0]);
-		printf("\t[-p<#>] [-v]\n");
+		printf("\t[-p<#>] [-v] [-x #][-y #][-l]\n");
 		return 1;
 	}
 	family = AF_PACKET;
@@ -765,6 +772,9 @@ int main(int argc, char *argv[])
 					vlan_prio = atoi(argv[i]);
 					if (vlan_prio > 7)
 						vlan_prio = 7;
+					break;
+				case 'l':
+					no_len = 1;
 					break;
 				}
 			}

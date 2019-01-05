@@ -1168,11 +1168,14 @@ static void send_access_req(struct auth_info *info)
 
 static void prep_access_accept_simple_rsp(struct radius_info *info)
 {
+	char buf[90];
+
 	info->name_len = strlen((char *) info->name);
 
 	info->password_len = 0;
 
-	sprintf((char *) info->msg, "Hello, %s", info->name);
+	snprintf(buf, 90, "Hello, %s", info->name);
+	memcpy(info->msg, buf, info->name_len + 8);
 	info->msg_len = strlen((char *) info->msg);
 
 	info->state_len = 0;
@@ -1185,13 +1188,16 @@ static void prep_access_accept_simple_rsp(struct radius_info *info)
 
 static void prep_access_accept_rsp(struct radius_info *info)
 {
+	char buf[90];
+
 	struct eap_frame *eap = (struct eap_frame *) info->eap;
 
 	info->name_len = strlen((char *) info->name);
 
 	info->password_len = 0;
 
-	sprintf((char *) info->msg, "Hello, %s", info->name);
+	snprintf(buf, 90, "Hello, %s", info->name);
+	memcpy(info->msg, buf, info->name_len + 8);
 	info->msg_len = strlen((char *) info->msg);
 
 	info->state_len = 0;

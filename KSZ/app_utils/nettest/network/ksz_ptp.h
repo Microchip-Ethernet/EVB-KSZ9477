@@ -461,6 +461,7 @@ struct ptp_msg {
 } __packed;
 
 
+#ifdef _SYS_SOCKET_H
 struct ptp_id {
 	u16 seq;
 	struct ptp_clock_identity clock;
@@ -747,6 +748,7 @@ int ptp_ioctl(void *fd, void *req)
 	dev.ifr_data = (char *) req;
 	return ioctl(info->sock, SIOCDEVPRIVATE + 15, &dev);
 }
+#endif
 #endif
 
 #endif

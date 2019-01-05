@@ -7,14 +7,16 @@
 
 #elif defined( _MSC_VER )
 #include <winsock2.h>
+#include <ws2ipdef.h>
+#include <ws2tcpip.h>
 
-#pragma message( "support snprintf" )
 #define HAVE_SNPRINTF
 #define HAVE_VSNPRINTF
 
 #elif defined( __GNUC__ )
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <stdint.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <stdlib.h>
@@ -39,6 +41,9 @@ typedef unsigned long  uint32_t;
 typedef char           int8_t;
 typedef short          int16_t;
 typedef long           int32_t;
+
+typedef long long int int64_t;
+typedef unsigned long long int uint64_t;
 
 typedef int            socklen_t;
 typedef int            ssize_t;

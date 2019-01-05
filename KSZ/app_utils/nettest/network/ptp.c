@@ -51,7 +51,7 @@ typedef int64_t s64;
 typedef uint64_t u64;
 
 #include <packon.h>
-#define __packed;
+#define __packed
 #endif
 
 #if defined(__GNUC__)
@@ -133,7 +133,6 @@ SOCKET eth_fd;
 
 SOCKET *sockptr;
 char devname[20];
-struct dev_info ptpdev;
 
 int event_msgs[] = {
 	SYNC_MSG,
@@ -179,6 +178,7 @@ u8 eth_others[] = { 0x01, 0x00, 0x5A, 0x7F, 0xFF, 0xFA };
 
 u8 hw_addr[ETH_ALEN];
 
+struct dev_info ptpdev;
 int ptp_hw;
 
 pthread_mutex_t disp_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -204,6 +204,7 @@ struct ptp_clock_identity selfClockIdentity;
 struct ptp_clock_identity masterClockIdentity;
 static int ptp_correction;
 static int ptp_count = 1;
+static int ptp_num;
 static int ptp_domain;
 static int ptp_dst_port;
 static int ptp_src_port;
@@ -229,6 +230,12 @@ static u16 seqid_pdelay_req;
 static u16 seqid_management;
 static u16 seqid_signaling;
 static u16 seqid_announce;
+static u16 seqid_sync_rx;
+static u16 seqid_delay_req_rx;
+static u16 seqid_pdelay_req_rx;
+static u16 seqid_management_rx;
+static u16 seqid_signaling_rx;
+static u16 seqid_announce_rx;
 static u32 sync_sec;
 
 static u16 seqid_hsr;
@@ -265,8 +272,10 @@ void prepare_hdr(struct ptp_msg_hdr *hdr, int message, int len, int seqid,
 	hdr->messageLength = htons(len);
 	hdr->domainNumber = ptp_domain;
 	hdr->reserved2 = 0;
+#ifdef _SYS_SOCKET_H
 	if (ptp_version < 2)
 		hdr->reserved2 = ptp_dst_port;
+#endif
 	hdr->flagField.data = 0;
 	if (ptp_alternate && (SYNC_MSG == message ||
 			FOLLOW_UP_MSG == message ||
@@ -822,6 +831,15 @@ void send_msg(struct ptp_msg *msg, int family, int len)
 				len = prp_len;
 			}
 		}
+#if 0
+	if (len < 60) {
+		memset(&buf[len], 0, 60 - len);
+		len = 60;
+	}
+	memset(&buf[len], 0, 7);
+	buf[len + 4] = 0x30;
+	len += 7;
+#endif
 	} else
 #endif
 	switch (msg->hdr.messageType) {
@@ -1022,6 +1040,7 @@ int disp_tlv(void *msg, int left)
 
 static int get_rx_timestamp(struct ptp_msg_hdr *hdr)
 {
+#ifdef _SYS_SOCKET_H
 	u32 port;
 	u32 sec;
 	u32 nsec;
@@ -1055,6 +1074,9 @@ static int get_rx_timestamp(struct ptp_msg_hdr *hdr)
 		}
 	}
 	return rc;
+#else
+        return 0;
+#endif
 }
 
 #if 0
@@ -1110,8 +1132,10 @@ void disp_msg(struct ptp_msg *req, int len)
 	if (AF_INET6 == ip_family)
 		len -= 2;
 	if (msglen != len) {
+#ifdef _SYS_SOCKET_H
 		if (AF_PACKET != ip_family && dbg_rcv >= 4)
 			printf("  \nlen %d != %d\n", msglen, len);
+#endif
 		if (msglen > len)
 			msglen = len;
 	}
@@ -1125,6 +1149,12 @@ void disp_msg(struct ptp_msg *req, int len)
 	switch (req->hdr.messageType) {
 	case SYNC_MSG:
 		if (dbg_rcv < 2)
+			return;
+		if (seqid_sync_rx + 1 != seqid)
+			printf(" ! %x=%04x %04x\n", req->hdr.messageType,
+				seqid_sync_rx, seqid);
+		seqid_sync_rx = seqid;
+		if (dbg_rcv < 4)
 			return;
 		if (dbg_rcv >= 4)
 			printf("\n");
@@ -1150,6 +1180,12 @@ void disp_msg(struct ptp_msg *req, int len)
 		}
 		break;
 	case DELAY_REQ_MSG:
+		if (seqid_delay_req_rx + 1 != seqid)
+			printf(" ! %x=%04x %04x\n", req->hdr.messageType,
+				seqid_delay_req_rx, seqid);
+		seqid_delay_req_rx = seqid;
+		if (dbg_rcv < 4)
+			return;
 		if (dbg_rcv >= 4)
 			printf("\n");
 		printf("delay_req:\t\t");
@@ -1165,6 +1201,12 @@ void disp_msg(struct ptp_msg *req, int len)
 			requestingPortIdentity);
 		break;
 	case PDELAY_REQ_MSG:
+		if (seqid_pdelay_req_rx + 1 != seqid)
+			printf(" ! %x=%04x %04x\n", req->hdr.messageType,
+				seqid_pdelay_req_rx, seqid);
+		seqid_pdelay_req_rx = seqid;
+		if (dbg_rcv < 4)
+			return;
 		if (dbg_rcv >= 4)
 			printf("\n");
 		printf("pdelay_req:\t\t");
@@ -1177,7 +1219,7 @@ void disp_msg(struct ptp_msg *req, int len)
 			requestReceiptTimestamp.sec.lo);
 		pdresp.nsec = ntohl(req->data.pdelay_resp.
 			requestReceiptTimestamp.nsec);
-		pdresp.nsec += nsec;
+		pdresp.nsec += (u32)nsec;
 		while (pdresp.nsec >= 1000000000) {
 			pdresp.nsec -= 1000000000;
 			pdresp.sec++;	
@@ -1206,6 +1248,12 @@ void disp_msg(struct ptp_msg *req, int len)
 		break;
 	case ANNOUNCE_MSG:
 		if (dbg_rcv < 2)
+			return;
+		if (seqid_announce_rx + 1 != seqid)
+			printf(" ! %x=%04x %04x\n", req->hdr.messageType,
+				seqid_announce_rx, seqid);
+		seqid_announce_rx = seqid;
+		if (dbg_rcv < 4)
 			return;
 		if (dbg_rcv >= 4)
 			printf("\n");
@@ -1236,12 +1284,24 @@ void disp_msg(struct ptp_msg *req, int len)
 	case MANAGEMENT_MSG:
 		if (dbg_rcv < 2)
 			return;
+		if (seqid_management_rx + 1 != seqid)
+			printf(" ! %x=%04x %04x\n", req->hdr.messageType,
+				seqid_management_rx, seqid);
+		seqid_management_rx = seqid;
+		if (dbg_rcv < 4)
+			return;
 		if (dbg_rcv >= 4)
 			printf("\n");
 		printf("management:\t");
 		break;
 	case SIGNALING_MSG:
 		if (dbg_rcv < 2)
+			return;
+		if (seqid_signaling_rx + 1 != seqid)
+			printf(" ! %x=%04x %04x\n", req->hdr.messageType,
+				seqid_signaling_rx, seqid);
+		seqid_signaling_rx = seqid;
+		if (dbg_rcv < 4)
 			return;
 		if (dbg_rcv >= 4)
 			printf("\n");
@@ -1252,6 +1312,7 @@ void disp_msg(struct ptp_msg *req, int len)
 		break;
 	}
 	printf("\n");
+#ifdef _SYS_SOCKET_H
 	if (ptp_version >= 2) {
 		if (ptp_rx_port)
 			printf("r=%x %x:%9u\n", ptp_rx_port,
@@ -1259,6 +1320,7 @@ void disp_msg(struct ptp_msg *req, int len)
 	} else
 		printf("r=%x %04x\n",
 			req->hdr.reserved2, ntohl(req->hdr.reserved3));
+#endif
 	printf("d=%x", req->hdr.domainNumber);
 	printf("  ");
 	printf("f=%04x", htons(req->hdr.flagField.data));
@@ -1278,6 +1340,7 @@ void disp_msg(struct ptp_msg *req, int len)
 
 static void disp_tx_timestamp(struct ptp_msg_hdr *hdr)
 {
+#ifdef _SYS_SOCKET_H
 	u32 port;
 	u32 sec;
 	u32 nsec;
@@ -1318,6 +1381,7 @@ static void disp_tx_timestamp(struct ptp_msg_hdr *hdr)
 		if (timeout-- < 1)
 			break;
 	} while (tx);
+#endif
 }  /* disp_tx_timestamp */
 
 void resp_msg(struct ptp_msg *req, int family)
@@ -1436,9 +1500,11 @@ void resp_msg(struct ptp_msg *req, int family)
 
 			prepare_hdr(&resp->hdr, message, len, seqid, ctrl,
 				logInterval, clock);
+#ifdef _SYS_SOCKET_H
 			if (ptp_version >= 2)
 				set_msg_info(&ptpdev, &resp->hdr, dst_port,
 					tx_sec, tx_nsec);
+#endif
 			send_msg(resp, family, 0);
 			tx_sec = tx_nsec = 0;
 			dbg_rcv = 0;
@@ -1479,8 +1545,10 @@ void resp_msg(struct ptp_msg *req, int family)
 	prepare_hdr(&resp->hdr, message, len, seqid, ctrl, logInterval,
 		clock);
 	ptp_correction = correction;
+#ifdef _SYS_SOCKET_H
 	if (ptp_version >= 2)
 		set_msg_info(&ptpdev, &resp->hdr, dst_port, tx_sec, tx_nsec);
+#endif
 	send_msg(resp, family, 0);
 }  /* resp_msg */
 
@@ -1517,9 +1585,11 @@ int get_cmd(FILE *fp)
 {
 	int count;
 	int hcount;
+	int send_cnt;
 	unsigned int num[8];
 	unsigned int hex[8];
 	int len = 0;
+	int msg_len = 0;
 	int cont = 1;
 	char cmd[80];
 	char line[80];
@@ -1596,9 +1666,11 @@ int get_cmd(FILE *fp)
 				ptp_len);
 			send_msg(msg, ip_family, len);
 
+#ifdef _SYS_SOCKET_H
 			/* Cannot break message into fragments. */
 			if (AF_PACKET == ip_family)
 				continue;
+#endif
 
 			msg = management_msg(M_NULL_MANAGEMENT, M_NO_SUCH_ID,
 				1500);
@@ -1626,19 +1698,35 @@ int get_cmd(FILE *fp)
 		} else
 		switch (line[0]) {
 		case 'l':
-			if (count >= 2)
+			if (count >= 2) {
 				len = num[0];
-			else
+				msg_len = len;
+			} else
 				printf("%d\n", len);
 			break;
 		case 'm':
 			if (hcount >= 2)
 				seqid_sync += hex[0];
-			prepare_msg(msg, SYNC_MSG);
-			if (ptp_version >= 2)
-				set_msg_info(&ptpdev, &msg->hdr, ptp_dst_port,
-					0, 0);
-			send_msg(msg, ip_family, len);
+			len = msg_len;
+			send_cnt = 0;
+			do {
+				prepare_msg(msg, SYNC_MSG);
+#ifdef _SYS_SOCKET_H
+				if (ptp_version >= 2)
+					set_msg_info(&ptpdev, &msg->hdr,
+						     ptp_dst_port, 0, 0);
+#endif
+				send_msg(msg, ip_family, len);
+#ifdef _SYS_SOCKET_H
+				if (ptp_num > 1)
+					usleep(10);
+#endif
+				if (msg_len && !(msg_len & 1)) {
+					++len;
+					if (len >= msg_len + 8)
+						len = msg_len;
+				}
+			} while (++send_cnt < ptp_num);
 			if (msg->hdr.flagField.flag.twoStepFlag)
 				disp_tx_timestamp(&msg->hdr);
 			break;
@@ -1651,11 +1739,20 @@ int get_cmd(FILE *fp)
 		case 'a':
 			if (hcount >= 2)
 				seqid_delay_req += hex[0];
-			prepare_msg(msg, DELAY_REQ_MSG);
-			if (ptp_version >= 2)
-				set_msg_info(&ptpdev, &msg->hdr, ptp_dst_port,
-					0, 0);
-			send_msg(msg, ip_family, len);
+			send_cnt = 0;
+			do {
+				prepare_msg(msg, DELAY_REQ_MSG);
+#ifdef _SYS_SOCKET_H
+				if (ptp_version >= 2)
+					set_msg_info(&ptpdev, &msg->hdr,
+						     ptp_dst_port, 0, 0);
+#endif
+				send_msg(msg, ip_family, len);
+#ifdef _SYS_SOCKET_H
+				if (ptp_num > 1)
+					usleep(10);
+#endif
+			} while (++send_cnt < ptp_num);
 			disp_tx_timestamp(&msg->hdr);
 			break;
 		case 'b':
@@ -1667,20 +1764,31 @@ int get_cmd(FILE *fp)
 		case 'x':
 			if (hcount >= 2)
 				seqid_pdelay_req += hex[0];
-			prepare_msg(msg, PDELAY_REQ_MSG);
-			if (ptp_version >= 2)
-				set_msg_info(&ptpdev, &msg->hdr, ptp_dst_port,
-					0, 0);
-			send_msg(msg, ip_family, len);
+			send_cnt = 0;
+			do {
+				prepare_msg(msg, PDELAY_REQ_MSG);
+#ifdef _SYS_SOCKET_H
+				if (ptp_version >= 2)
+					set_msg_info(&ptpdev, &msg->hdr,
+						     ptp_dst_port, 0, 0);
+#endif
+				send_msg(msg, ip_family, len);
+#ifdef _SYS_SOCKET_H
+				if (ptp_num > 1)
+					usleep(10);
+#endif
+			} while (++send_cnt < ptp_num);
 			disp_tx_timestamp(&msg->hdr);
 			break;
 		case 'y':
 			if (hcount >= 2)
 				seqid_pdelay_req += hex[0];
 			prepare_msg(msg, PDELAY_RESP_MSG);
+#ifdef _SYS_SOCKET_H
 			if (ptp_version >= 2)
 				set_msg_info(&ptpdev, &msg->hdr, ptp_dst_port,
 					0, 0);
+#endif
 			send_msg(msg, ip_family, len);
 			if (msg->hdr.flagField.flag.twoStepFlag)
 				disp_tx_timestamp(&msg->hdr);
@@ -1694,8 +1802,15 @@ int get_cmd(FILE *fp)
 		case 'e':
 			if (hcount >= 2)
 				seqid_announce += hex[0];
-			prepare_msg(msg, ANNOUNCE_MSG);
-			send_msg(msg, ip_family, len);
+			send_cnt = 0;
+			do {
+				prepare_msg(msg, ANNOUNCE_MSG);
+				send_msg(msg, ip_family, len);
+#ifdef _SYS_SOCKET_H
+				if (ptp_num > 1)
+					usleep(10);
+#endif
+			} while (++send_cnt < ptp_num);
 			break;
 		case 'c':
 			if (count >= 2)
@@ -1718,6 +1833,7 @@ int get_cmd(FILE *fp)
 		case 'p':
 			if (hcount >= 2) {
 				ptp_dst_port = hex[0];
+#ifdef _SYS_SOCKET_H
 				if (ptp_version >= 2) {
 					int rc;
 
@@ -1727,6 +1843,7 @@ int get_cmd(FILE *fp)
 					if (rc)
 						print_err(rc);
 				}
+#endif
 			} else
 				printf("%x\n", ptp_dst_port);
 			break;
@@ -1749,6 +1866,13 @@ int get_cmd(FILE *fp)
 				printf("2-step=%d\n", ptp_2step);
 			break;
 		case 'u':
+			if (line[1] == 'u') {
+				if (count >= 2)
+					ptp_num = num[0];
+				else
+					printf("%d\n", ptp_num);
+				break;
+			}
 			if (count >= 2)
 				ptp_count = num[0];
 			else
@@ -1780,6 +1904,7 @@ int get_cmd(FILE *fp)
 	return 0;
 }  /* get_cmd */
 
+#ifdef _SYS_SOCKET_H
 static void print_hw_help(void)
 {
 	printf("\tgc\n");
@@ -2153,6 +2278,7 @@ int get_hw_cmd(FILE *fp)
 	} while (cont);
 	return 0;
 }  /* get_hw_cmd */
+#endif
 
 static SOCKET create_sock(char *devname, char *ptp_ip, char *p2p_ip,
 	char *local_ip, int port, int multi_loop)
@@ -2258,7 +2384,11 @@ static SOCKET create_sock(char *devname, char *ptp_ip, char *p2p_ip,
 			return -1;
 		}
 	} else {
+#ifdef _SYS_SOCKET_H
 		struct ip_mreqn mreq;
+#else
+		struct ip_mreq mreq;
+#endif
 		u_char hop;
 		u_char loop;
 		int tos;
@@ -2277,25 +2407,39 @@ static SOCKET create_sock(char *devname, char *ptp_ip, char *p2p_ip,
 		if (!ptp_ip)
 			return sockfd;
 
-		mreq.imr_multiaddr.s_addr = inet_addr(ptp_ip);
-		mreq.imr_address.s_addr = inet_addr(local_ip);
+		inet_pton(family, ptp_ip, &mreq.imr_multiaddr.s_addr);
+#ifdef _SYS_SOCKET_H
+		inet_pton(family, local_ip, &mreq.imr_address.s_addr);
+#else
+		inet_pton(family, local_ip, &mreq.imr_interface.s_addr);
+#endif
+#ifdef _SYS_SOCKET_H
 		mreq.imr_ifindex = ipv6_interface;
+#endif
 		sockopt = (char *) &mreq;
 		if (setsockopt(sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, sockopt,
 				sizeof(mreq)) < 0) {
 			err_ret("add member");
 			return -1;
 		}
-		mreq.imr_multiaddr.s_addr = inet_addr(p2p_ip);
-		mreq.imr_address.s_addr = inet_addr(local_ip);
+		inet_pton(family, p2p_ip, &mreq.imr_multiaddr.s_addr);
+#ifdef _SYS_SOCKET_H
+		inet_pton(family, local_ip, &mreq.imr_address.s_addr);
+#else
+		inet_pton(family, local_ip, &mreq.imr_interface.s_addr);
+#endif
+#ifdef _SYS_SOCKET_H
 		mreq.imr_ifindex = ipv6_interface;
+#endif
 		sockopt = (char *) &mreq;
 		if (setsockopt(sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, sockopt,
 				sizeof(mreq)) < 0) {
 			err_ret("add member to p2p");
 			return -1;
 		}
+#ifdef _SYS_SOCKET_H
 		mreq.imr_ifindex = ipv6_interface;
+#endif
 		sockopt = (char *) &mreq;
 		if (setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, sockopt,
 				sizeof(mreq)) < 0) {
@@ -2318,11 +2462,13 @@ static SOCKET create_sock(char *devname, char *ptp_ip, char *p2p_ip,
 			err_ret("loop");
 			return -1;
 		}
+#ifdef _SYS_SOCKET_H
 		if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE,
 		    devname, strlen(devname))) {
 			err_ret("bindtodev");
 			return -1;
 		}
+#endif
 	}
 	return sockfd;
 }  /* create_sock */
@@ -2490,8 +2636,10 @@ ReceiveTask(void *param)
 					addr->sll_ifindex);
 #endif
 			}
+#ifdef _SYS_SOCKET_H
 			if (dbg_rcv)
 				Pthread_mutex_lock(&disp_mutex);
+#endif
 			if (dbg_rcv >= 4)
 				printf("r: %d=%d %d=%s\n", sockfd,
 					buf[cur].len, len, in_addr);
@@ -2506,8 +2654,10 @@ ReceiveTask(void *param)
 			if (msg->hdr.versionPTP < 2) {
 				if (dbg_rcv >= 4)
 					printf("PTPv1 not supported\n");
+#ifdef _SYS_SOCKET_H
 				if (dbg_rcv)
 					Pthread_mutex_unlock(&disp_mutex);
+#endif
 				continue;
 			}
 			looped = check_loop(buf[cur].from, len);
@@ -2520,17 +2670,21 @@ ReceiveTask(void *param)
 				if (ignored) {
 					if (dbg_rcv >= 4)
 						printf("(ignored)\n");
+#ifdef _SYS_SOCKET_H
 					if (dbg_rcv)
 						Pthread_mutex_unlock(
 							&disp_mutex);
+#endif
 					continue;
 				}
 			}
 			if (check_dup(&buf[cur], &buf[last], len)) {
 				if (dbg_rcv >= 4)
 					printf("(dup)\n");
+#ifdef _SYS_SOCKET_H
 				if (dbg_rcv)
 					Pthread_mutex_unlock(&disp_mutex);
+#endif
 				continue;
 			} else {
 				if (looped && dbg_rcv >= 4)
@@ -2538,6 +2692,7 @@ ReceiveTask(void *param)
 				cur = !cur;
 				last = !last;
 			}
+#ifdef _SYS_SOCKET_H
 			if (ptp_version >= 2) {
 				int rc;
 
@@ -2546,10 +2701,13 @@ ReceiveTask(void *param)
 				if (rc && dbg_rcv > 5)
 					print_err(rc);
 			}
+#endif
 			if (dbg_rcv)
 				disp_msg(msg, msglen);
+#ifdef _SYS_SOCKET_H
 			if (dbg_rcv)
 				Pthread_mutex_unlock(&disp_mutex);
+#endif
 			if (ptp_count > 0 &&
 					(DELAY_REQ_MSG ==
 					msg->hdr.messageType ||
@@ -2928,8 +3086,6 @@ int main(int argc, char *argv[])
 	int unicast_sock = 0;
 	int vlan = 0;
 
-	SocketInit(0);
-
 	if (argc < 2) {
 		printf("usage: %s <local_if> [-6[0..f]] [-p]",
 			argv[0]);
@@ -2938,6 +3094,8 @@ int main(int argc, char *argv[])
 		printf("\t[-r[#] (redundancy)] [-v reserved]\n");
 		return 1;
 	}
+	SocketInit(0);
+
 	family = AF_INET;
 	dest_ip[0] = '\0';
 	strcpy(PTP_ip_addr6, PTP_ip_addr6_const);
@@ -2996,11 +3154,15 @@ int main(int argc, char *argv[])
 					break;
 				case 'u':
 					++i;
+					if (i >= argc)
+						break;
 					strcpy(dest_ip, argv[i]);
 					ptp_unicast = 1;
 					break;
 				case 'v':
 					++i;
+					if (i >= argc)
+						break;
 					reserved3 = atoi(argv[i]);
 					break;
 				case 't':
@@ -3015,7 +3177,9 @@ int main(int argc, char *argv[])
 	host_ip = strchr(devname, '.');
 	if (host_ip != NULL)
 		*host_ip = 0;
+#ifdef _SYS_SOCKET_H
 	strncpy(ptpdev.name, devname, sizeof(ptpdev.name));
+#endif
 	if (host_ip != NULL) {
 		++host_ip;
 		vlan = atoi(host_ip);
@@ -3126,18 +3290,25 @@ int main(int argc, char *argv[])
 		p2p_general_addr.sin_family = family;
 		p2p_general_addr.sin_port = htons(PTP_GENERAL_PORT);
 		if (ptp_unicast && AF_INET == ip_family) {
-			event_addr.sin_addr.s_addr = inet_addr(dest_ip);
-			general_addr.sin_addr.s_addr = inet_addr(dest_ip);
-			p2p_event_addr.sin_addr.s_addr = inet_addr(dest_ip);
-			p2p_general_addr.sin_addr.s_addr = inet_addr(dest_ip);
+			inet_pton(family, dest_ip,
+				&event_addr.sin_addr.s_addr);
+			inet_pton(family, dest_ip,
+				&general_addr.sin_addr.s_addr);
+			inet_pton(family, dest_ip,
+				&p2p_event_addr.sin_addr.s_addr);
+			inet_pton(family, dest_ip,
+				&p2p_general_addr.sin_addr.s_addr);
 		} else {
 			ptp_ip = PTP_ip_addr;
 			p2p_ip = P2P_ip_addr;
 
-			event_addr.sin_addr.s_addr = inet_addr(ptp_ip);
-			general_addr.sin_addr.s_addr = inet_addr(ptp_ip);
-			p2p_event_addr.sin_addr.s_addr = inet_addr(p2p_ip);
-			p2p_general_addr.sin_addr.s_addr = inet_addr(p2p_ip);
+			inet_pton(family, ptp_ip, &event_addr.sin_addr.s_addr);
+			inet_pton(family, ptp_ip,
+				&general_addr.sin_addr.s_addr);
+			inet_pton(family, p2p_ip,
+				&p2p_event_addr.sin_addr.s_addr);
+			inet_pton(family, p2p_ip,
+				&p2p_general_addr.sin_addr.s_addr);
 		}
 	}
 	management_addr.sin_family = AF_INET;
@@ -3187,9 +3358,10 @@ int main(int argc, char *argv[])
 		}
 	}
 	sockptr = &event_fd;
-	ptpdev.sock = event_fd;
 
 #ifdef _SYS_SOCKET_H
+	ptpdev.sock = event_fd;
+
 	eth_fd = -1;
 	if (AF_PACKET == ip_family) {
 		eth_fd = create_raw(&info, dest_ip);
@@ -3248,12 +3420,13 @@ int main(int argc, char *argv[])
 	}
 
 	if ( !param[0].fTaskStop ) {
-		int capability;
 		int rc;
+
+#ifdef _SYS_SOCKET_H
+		int capability;
 
 		ptp_hw = 0;
 
-#ifdef _SYS_SOCKET_H
 		capability = PTP_KNOW_ABOUT_MULT_PORTS;
 		if (strcmp(devname, argv[1]) && get_vlan_dev(devname, vlan)) {
 			capability |= PTP_HAVE_MULT_DEVICES;
@@ -3271,9 +3444,11 @@ int main(int argc, char *argv[])
 			switch (rc) {
 			case 1:
 				rc = 2;
+#ifdef _SYS_SOCKET_H
 				if (!ptp_hw)
 					break;
 				rc = get_hw_cmd(stdin);
+#endif
 				break;
 			default:
 				rc = get_cmd(stdin);

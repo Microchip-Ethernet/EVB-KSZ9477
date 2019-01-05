@@ -64,23 +64,59 @@ static struct ipv6_info *found_ipv6(char *name, struct ipv6_info *head)
 }
 #endif
 
+#if defined( _MSC_VER )
+char *ipv6_scope(int scope)
+{
+	char *str;
+
+	{
+		str = "Unknown";
+	}
+	return str;
+}
+
+static int foundAddr(LPSOCKET_ADDRESS_LIST list, struct sockaddr *addr)
+{
+	struct sockaddr_in *sinptr;
+	int i;
+
+	if (!list)
+		return -1;
+	for (i = 0; i < list->iAddressCount; i++) {
+		sinptr = (struct sockaddr_in *)	list->Address[i].lpSockaddr;
+		if (!memcmp(sinptr, addr, sizeof(struct sockaddr_in)))
+			return list->iAddressCount - i - 1;
+	}
+	return -1;
+}
+#endif
+
 struct ifi_info *get_ifi_info(int family, int doaliases)
 {
 	struct ifi_info *ifi;
 	struct ifi_info *ifihead;
 	struct ifi_info **ifipnext;
 	int sockfd;
-	int len;
 	int lastlen;
 	int flags;
 	int myflags;
-	char *ptr;
 	char *buf;
-	char lastname[IFNAMSIZ];
+#if defined( _MSC_VER )
+	int rc;
+	DWORD cnt;
+	DWORD len;
+	char *addrlist;
+	LPINTERFACE_INFO ptr;
+	LPSOCKET_ADDRESS_LIST list;
+#else
+	int len;
 	char *cptr;
+	char *ptr;
+	char lastname[IFNAMSIZ];
 	struct ifconf ifc;
 	struct ifreq *ifr;
 	struct ifreq ifrcopy;
+#endif
 	struct sockaddr_in *sinptr;
 	struct sockaddr_in6 *sin6ptr;
 
@@ -128,12 +164,35 @@ create_sock:
 	lastlen = 0;
 
 	/* initial buffer size guess */
+#if defined( _MSC_VER )
+	len = sizeof(SOCKET_ADDRESS_LIST) + sizeof(SOCKET_ADDRESS) * 10;
+	addrlist = malloc(len);
+	list = NULL;
+	rc = WSAIoctl(sockfd, SIO_ADDRESS_LIST_QUERY,
+		NULL, 0, addrlist, len, &cnt, NULL, NULL);
+	if (!rc) {
+		list = (LPSOCKET_ADDRESS_LIST) addrlist;
+	}
+	len = 10 * sizeof(INTERFACE_INFO);
+#else
 	len = 10 * sizeof(struct ifreq);
+#endif
 	lastlen = len;
 	for (;;) {
 		buf = malloc(len);
 		if (!buf)
 			err_quit("out of memory: %u", len);
+#if defined( _MSC_VER )
+		if (rc = WSAIoctl(sockfd, SIO_GET_INTERFACE_LIST,
+				NULL, 0, buf, len, &cnt, NULL, NULL)) {
+printf("ioctl: %d\n", rc);
+			if (rc == WSAEINVAL)
+				err_sys("ioctl error");
+		} else {
+			if (cnt <= len)
+				break;
+		}
+#else
 		ifc.ifc_len = len;
 		ifc.ifc_buf = buf;
 		if (ioctl(sockfd, SIOCGIFCONF, &ifc) < 0) {
@@ -145,10 +204,110 @@ create_sock:
 			lastlen = ifc.ifc_len;
 		}
 		len += 10 * sizeof(struct ifreq);
+#endif
 		free(buf);
 	}
 	ifihead = NULL;
 	ifipnext = &ifihead;
+#if defined( _MSC_VER )
+	ptr = (LPINTERFACE_INFO) buf;
+	for (; cnt > 0; cnt -= sizeof(INTERFACE_INFO)) {
+		switch (ptr->iiAddress.Address.sa_family) {
+		case AF_INET6:
+			len = sizeof(struct sockaddr_in6);
+			break;
+		case AF_INET:
+		default:
+			len = sizeof(struct sockaddr);
+			break;
+		}
+		if (ptr->iiAddress.Address.sa_family != family)
+			continue;
+
+		myflags = 0;
+		flags = ptr->iiFlags;
+		if ((flags & IFF_UP) == 0)
+			continue;
+
+		ifi = calloc(1, sizeof(struct ifi_info));
+		if (!ifi)
+			err_quit("out of memory");
+		*ifipnext = ifi;
+		ifipnext = &ifi->ifi_next;
+
+		ifi->ifi_flags = flags;
+		ifi->ifi_myflags = myflags;
+#if 0
+		memcpy(ifi->ifi_name, ifr->ifr_name, IFI_NAME);
+		ifi->ifi_name[IFI_NAME - 1] = '\0';
+#endif
+		switch (ptr->iiAddress.Address.sa_family) {
+		case AF_INET:
+			sinptr = (struct sockaddr_in *)
+				&ptr->iiAddress.AddressIn;
+			if (ifi->ifi_addr == NULL) {
+				ifi->ifi_addr = calloc(1,
+					sizeof(struct sockaddr_in));
+				if (!ifi->ifi_addr)
+					err_quit("out of memory");
+				memcpy(ifi->ifi_addr, sinptr,
+					sizeof(struct sockaddr_in));
+				sinptr = (struct sockaddr_in *)
+					&ptr->iiNetmask.AddressIn;
+				ifi->ifi_subnet = calloc(1,
+					sizeof(struct sockaddr_in));
+				if (!ifi->ifi_subnet)
+					err_quit("out of memory");
+				memcpy(ifi->ifi_subnet, sinptr,
+					sizeof(struct sockaddr_in));
+
+				if (flags & IFF_BROADCAST) {
+					sinptr = (struct sockaddr_in *)
+						&ptr->iiBroadcastAddress.
+						AddressIn;
+					ifi->ifi_brdaddr = calloc(1,
+						sizeof(struct sockaddr_in));
+					if (!ifi->ifi_brdaddr)
+						err_quit("out of memory");
+					memcpy(ifi->ifi_brdaddr, sinptr,
+						sizeof(struct sockaddr_in));
+				}
+				if (flags & IFF_POINTTOPOINT) {
+					sinptr = (struct sockaddr_in *)
+						&ptr->iiBroadcastAddress.
+						AddressIn;
+					ifi->ifi_dstaddr = calloc(1,
+						sizeof(struct sockaddr_in));
+					if (!ifi->ifi_dstaddr)
+						err_quit("out of memory");
+					memcpy(ifi->ifi_dstaddr, sinptr,
+						sizeof(struct sockaddr_in));
+				}
+				rc = foundAddr(list, ifi->ifi_addr);
+				if (rc >= 0)
+					sprintf(ifi->ifi_name, "eth%d", rc);
+				else if (flags & IFF_LOOPBACK)
+					strcpy(ifi->ifi_name, "lo");
+			}
+			break;
+		case AF_INET6:
+			sin6ptr = (struct sockaddr_in6 *)
+				&ptr->iiAddress.AddressIn6;
+			if (ifi->ifi_addr == NULL) {
+				ifi->ifi_addr = calloc(1,
+					sizeof(struct sockaddr_in6));
+				if (!ifi->ifi_addr)
+					err_quit("out of memory");
+				memcpy(ifi->ifi_addr, sin6ptr,
+					sizeof(struct sockaddr_in6));
+			}
+			break;
+		default:
+			break;
+		}
+		ptr++;
+	}
+#else
 	lastname[0] = 0;
 	for (ptr = buf; ptr < buf + ifc.ifc_len; ) {
 		ifr = (struct ifreq *)(void *) ptr;
@@ -280,13 +439,19 @@ create_sock:
 		if (ioctl(sockfd, SIOCGIFINDEX, &ifrcopy) >= 0)
 			ifi->ifi_index = ifrcopy.ifr_ifindex;
 	}
+#endif
 
 #ifdef _SYS_SOCKET_H
 	if (ipv6head)
 		free(ipv6head);
 #endif
 	free(buf);
+#if defined( _MSC_VER )
+	free(addrlist);
+	closesocket(sockfd);
+#else
 	close(sockfd);
+#endif
 	return ifihead;
 }
 
@@ -302,6 +467,10 @@ void free_ifi_info(struct ifi_info *ifihead)
 			free(ifi->ifi_brdaddr);
 		if (ifi->ifi_dstaddr != NULL)
 			free(ifi->ifi_dstaddr);
+#if defined( _MSC_VER )
+		if (ifi->ifi_subnet != NULL)
+			free(ifi->ifi_subnet);
+#endif
 		ifinext = ifi->ifi_next;
 		free(ifi);
 	}

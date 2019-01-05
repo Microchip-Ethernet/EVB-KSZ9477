@@ -2,7 +2,12 @@
 #define __unp_ifi_h
 
 #include "wnp.h"
+#if !defined( _MSC_VER )
 #include <net/if.h>
+#endif
+#ifdef _SYS_SOCKET_H
+#include <arpa/inet.h>
+#endif
 
 /* same as IFNAMSIZ in <net/if.h> */
 #define IFI_NAME	16
@@ -30,6 +35,9 @@ struct ifi_info {
 	struct sockaddr *ifi_brdaddr;
 	/* destination address */
 	struct sockaddr *ifi_dstaddr;
+#if defined( _MSC_VER )
+	struct sockaddr *ifi_subnet;
+#endif
 	/* next of these structures */
 	struct ifi_info *ifi_next;
 };

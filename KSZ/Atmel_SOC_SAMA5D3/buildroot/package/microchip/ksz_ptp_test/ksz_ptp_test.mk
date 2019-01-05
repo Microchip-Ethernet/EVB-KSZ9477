@@ -27,6 +27,8 @@ define KSZ_PTP_TEST_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/sbin/kszsw
 	$(INSTALL) -D -m 755 $(@D)/network/dlr_daemon \
 		$(TARGET_DIR)/usr/sbin/dlr_daemon
+	$(INSTALL) -D -m 755 $(@D)/network/nettest \
+		$(TARGET_DIR)/usr/sbin/nettest
 endef
 
 $(eval $(generic-package))

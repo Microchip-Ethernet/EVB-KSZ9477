@@ -24,8 +24,8 @@
 #define DBG_STP_STATE_RX
 #define DBG_STP_STATE_PROTO
 #define DBG_STP_STATE_INFO
-#define DBG_STP_STATE_TX
 #define DBG_STP_STATE_ROLE_TR
+#define DBG_STP_STATE_TX
 #define DBG_STP_STATE_TR
 #define DBG_STP_STATE_TOPOLOGY
 #endif
@@ -259,7 +259,11 @@ static struct bpdu *chk_bpdu(u8 *data, u16 *size)
 #define rcvdInfoWhile		(p->vars.timers[5])
 #define rrWhile			(p->vars.timers[6])
 #define tcWhile			(p->vars.timers[7])
-#define tcPropWhile		(p->vars.timers[8])
+
+/* For MRP. */
+#define tcDetected		(p->vars.timers[8])
+
+#define tcPropWhile		(p->vars.timers[9])
 
 #define AdminEdgePort		(p->vars.admin_var.AdminEdgePort_)
 #define AdminPortPathCost	(p->vars.admin_var.adminPortPathCost_)
@@ -675,7 +679,7 @@ static int checkParameters(int hello_time, int max_age, int fwd_delay)
 	return TRUE;
 }  /* checkParameters */
 
-static void sw_cfg_forwarding(struct ksz_sw *sw, int port, int open)
+static void sw_cfg_forwarding(struct ksz_sw *sw, uint port, bool open)
 {
 	struct ksz_sw_info *info = sw->info;
 	u8 member = info->member[0];
@@ -685,9 +689,10 @@ static void sw_cfg_forwarding(struct ksz_sw *sw, int port, int open)
 	else
 		member &= ~(1 << port);
 	if (member != info->member[0]) {
+#if 0
 		int cnt = 0;
 
-#ifdef CONFIG_HAVE_KSZ9897
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 		for (port = 0; port < sw->mib_port_cnt; port++) {
 			if (skip_host_port(sw, port))
 				continue;
@@ -697,9 +702,17 @@ static void sw_cfg_forwarding(struct ksz_sw *sw, int port, int open)
 			if (member & (1 << port))
 				cnt++;
 		}
+#endif
 
 		info->member[0] = member;
 		bridge_change(sw);
+#ifdef CONFIG_KSZ_MRP
+		if (open && (sw->features & MRP_SUPPORT)) {
+			struct mrp_info *mrp = &sw->mrp;
+
+			mrp_open_port(mrp, port);
+		}
+#endif
 	}
 }  /* sw_cfg_forwarding */
 
@@ -779,7 +792,7 @@ static void stp_chk_flush(struct ksz_stp_port *p)
 #ifdef DBG_STP_PORT_FLUSH
 	struct ksz_stp_port *q;
 	struct ksz_stp_bridge *br = p->br;
-	int i;
+	uint i;
 	struct ksz_stp_dbg_times *x = &p->dbg_times[0];
 	struct ksz_stp_dbg_times *y;
 
@@ -993,6 +1006,26 @@ static void enableLearning_(struct ksz_stp_port *p)
 
 #define enableLearning()		enableLearning_(p)
 
+static void newTcDetected_(struct ksz_stp_port *p)
+{
+	if (tcDetected)
+		return;
+	if (sendRSTP) {
+		tcDetected = to_stp_timer(portTimes.hello_time + 1);
+	} else {
+		tcDetected = rootTimes.max_age + rootTimes.forward_delay;
+		tcDetected = to_stp_timer(tcDetected);
+	}
+	do {
+		struct ksz_stp_info *stp = p->br->parent;
+		struct ksz_sw *sw = stp->sw_dev;
+
+		sw->ops->tc_detected(sw, p->port_index);
+	} while (0);
+}
+
+#define newTcDetected()			newTcDetected_(p)
+
 static void newTcWhile_(struct ksz_stp_port *p)
 {
 	if (tcWhile)
@@ -1182,7 +1215,7 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 	u8 *frame = stp->tx_frame;
 	struct ksz_sw *sw = stp->sw_dev;
 	int len = stp->len;
-	int ports;
+	uint ports;
 	const struct net_device_ops *ops = stp->dev->netdev_ops;
 	struct llc *llc = (struct llc *) &frame[12];
 	struct ksz_port_info *info = &sw->port_info[port];
@@ -1363,7 +1396,7 @@ static u32 add_path_cost(u32 x, u32 y)
 static void updtRolesTree_(struct ksz_stp_bridge *br)
 {
 	int better;
-	int i;
+	uint i;
 	int id;
 	int prio;
 	int time;
@@ -1530,7 +1563,7 @@ p->dbg_tx = 3;
 #endif
 			break;
 		default:
-dbg_msg("unknonw\n");
+dbg_msg("unknown\n");
 		}
 #ifdef DBG_STP_ROLE
 if (!p->off)
@@ -2951,13 +2984,33 @@ static void stp_role_tr_root_p_init(struct ksz_stp_port *p)
 	if (role != ROLE_ROOT)
 		dbg_stp(p, __func__, false);
 #endif
+	do {
+		struct ksz_stp_info *stp = p->br->parent;
+		struct ksz_sw *sw = stp->sw_dev;
+
+		if (DesignatedPort)
+			sw->ops->from_designated(sw, p->port_index, false);
+		else if (!RootPort)
+			sw->ops->from_backup(sw, p->port_index);
+	} while (0);
 	role = ROLE_ROOT;
 	rrWhile = FwdDelay;
+#ifdef CONFIG_KSZ_MRP
+	if (mrp_10_1_8a_hack)
+		rrWhile = to_stp_timer(4);
+#endif
 }  /* stp_role_tr_root_p_init */
 
 static void stp_role_tr_root_p_next(struct ksz_stp_port *p,
 	struct ksz_stp_state *state)
 {
+	int delay = FwdDelay;
+
+#ifdef CONFIG_KSZ_MRP
+	if (mrp_10_1_8a_hack)
+		delay = to_stp_timer(4);
+#endif
+
 	stp_change_state(state,
 		((proposed && !agree) && canChange),
 		STP_PortRoleTrans_ROOT_PROPOSED);
@@ -2982,7 +3035,7 @@ static void stp_role_tr_root_p_next(struct ksz_stp_port *p,
 		rstpVersion)) && learn && !forward) && canChange),
 		STP_PortRoleTrans_ROOT_FORWARD);
 	stp_change_state(state,
-		(NEQ(rrWhile, FwdDelay) && canChange),
+		(NEQ(rrWhile, delay) && canChange),
 		STP_PortRoleTrans_ROOT_PORT);
 }  /* stp_role_tr_root_p_next */
 
@@ -3125,6 +3178,18 @@ do {
 if (x->block_jiffies && role != ROLE_DESIGNATED)
 dbg_msg(" b: %ld %d %s\n", jiffies - x->block_jiffies, fdWhile, __func__);
 } while (0);
+	if (RootPort || AlternatePort) {
+		struct ksz_stp_info *stp = p->br->parent;
+		struct ksz_sw *sw = stp->sw_dev;
+
+		sw->ops->to_designated(sw, p->port_index);
+	}
+	if (BackupPort) {
+		struct ksz_stp_info *stp = p->br->parent;
+		struct ksz_sw *sw = stp->sw_dev;
+
+		sw->ops->from_backup(sw, p->port_index);
+	}
 	role = ROLE_DESIGNATED;
 }  /* stp_role_tr_desg_p_init */
 
@@ -3163,6 +3228,15 @@ static void stp_role_tr_block_init(struct ksz_stp_port *p)
 #ifdef DBG_STP_STATE
 	dbg_stp(p, __func__, false);
 #endif
+	do {
+		struct ksz_stp_info *stp = p->br->parent;
+		struct ksz_sw *sw = stp->sw_dev;
+
+		if (DesignatedPort && selectedRole == ROLE_ALTERNATE)
+			sw->ops->from_designated(sw, p->port_index, true);
+		else
+			sw->ops->to_backup(sw, p->port_index);
+	} while (0);
 	role = selectedRole;
 	learn = forward = FALSE;
 }  /* stp_role_tr_block_init */
@@ -3544,6 +3618,7 @@ static void stp_top_inactive_init(struct ksz_stp_port *p)
 	doFlush();
 
 	/* Stop sending topology change. */
+	tcDetected = 0;
 	tcWhile = 0;
 	tcPropWhile = 0;
 	tcAck = FALSE;
@@ -3593,6 +3668,7 @@ static void stp_top_det_init(struct ksz_stp_port *p)
 #endif
 	newTcWhile();
 	setTcPropTree();
+	newTcDetected();
 	newInfo = TRUE;
 }  /* stp_top_det_init */
 
@@ -3801,7 +3877,7 @@ static void stp_state_machines(struct ksz_stp_bridge *br)
 	int changed;
 	int update;
 	int i;
-	int p;
+	uint p;
 	struct ksz_stp_port *port;
 
 	do {
@@ -3913,7 +3989,7 @@ static void stp_port_init(struct ksz_stp_port *p)
 	AdminPortPathCost = 0;
 	AdminEdge = FALSE;
 	AutoEdge = FALSE;
-#if 0
+#if 1
 	AutoEdge = TRUE;
 #endif
 }  /* stp_port_init */
@@ -3921,7 +3997,7 @@ static void stp_port_init(struct ksz_stp_port *p)
 static void stp_state_init(struct ksz_stp_bridge *br)
 {
 	int i;
-	int port;
+	uint port;
 	struct ksz_stp_port *p;
 	struct ksz_stp_info *stp = br->parent;
 
@@ -3978,6 +4054,30 @@ x->block_jiffies = jiffies;
 	return change;
 }  /* stp_cfg_port */
 
+static void stp_disable_port(struct ksz_stp_info *stp, uint port)
+{
+	struct ksz_stp_bridge *br = &stp->br;
+	struct ksz_stp_port *p = &br->ports[port];
+
+	portEnabled = FALSE;
+	p->link = 0;
+}  /* stp_disable_port */
+
+static void stp_enable_port(struct ksz_stp_info *stp, uint port, u8 *state)
+{
+	struct ksz_stp_bridge *br = &stp->br;
+	struct ksz_stp_port *p = &br->ports[port];
+
+	if (br->bridgeEnabled && !p->off)
+		*state = STP_STATE_DISABLED;
+}  /* stp_enable_port */
+
+#if 0
+static u8 wrong_root[] = {
+	0x10, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66
+};
+#endif
+
 static void stp_proc_rx(struct ksz_stp_port *p, struct bpdu *bpdu, u16 len)
 {
 	u16 size;
@@ -4025,6 +4125,12 @@ dbg_msg("[R] %d: ", p->port_index);
 		bpduFlags = bpdu->flags &
 			(TOPOLOGY_CHANGE_ACK | TOPOLOGY_CHANGE);
 	if (BPDU_TYPE_TCN != bpdu->type) {
+#if 0
+if (!memcmp(&bpdu->root, wrong_root, 8)) {
+dbg_msg(" wrong root\n");
+bpdu->root.prio = 0;
+}
+#endif
 		COPY(bpduPriority, bpdu->root);
 		bpduTimes.message_age = get_bpdu_time(bpdu->message_age);
 		bpduTimes.max_age = get_bpdu_time(bpdu->max_age);
@@ -4043,7 +4149,7 @@ dbg_msg("[R] %d: ", p->port_index);
 
 static void stp_proc_tick(struct ksz_stp_bridge *br)
 {
-	int i;
+	uint i;
 	struct ksz_stp_port *p;
 
 	for (i = 0; i < br->port_cnt; i++) {
@@ -4061,7 +4167,7 @@ static void proc_rx(struct work_struct *work)
 		container_of(work, struct ksz_stp_info, rx_proc);
 	struct ksz_stp_bridge *br = &stp->br;
 	struct ksz_stp_port *p;
-	int i;
+	uint i;
 	bool not_empty;
 	bool last;
 	struct sk_buff *skb;
@@ -4081,7 +4187,7 @@ static void proc_rx(struct work_struct *work)
 			skb = skb_dequeue(&p->rxq);
 			last = skb_queue_empty(&p->rxq);
 			if (skb) {
-				int port;
+				uint port;
 				struct bpdu *bpdu;
 				u16 len = 0;
 
@@ -4103,7 +4209,7 @@ static void proc_rx(struct work_struct *work)
 	}
 }  /* proc_rx */
 
-static int stp_rcv(struct ksz_stp_info *stp, struct sk_buff *skb, int port)
+static int stp_rcv(struct ksz_stp_info *stp, struct sk_buff *skb, uint port)
 {
 	struct bpdu *bpdu;
 	u16 len = 0;
@@ -4152,6 +4258,11 @@ static void reselectAll(struct ksz_stp_bridge *br)
 	)
 }
 
+static const u8 *stp_br_id(struct ksz_stp_info *stp)
+{
+	return (u8 *) &stp->br.vars.br_id_;
+}
+
 static int stp_change_addr(struct ksz_stp_info *stp, u8 *addr)
 {
 	int diff;
@@ -4174,10 +4285,18 @@ static int stp_change_addr(struct ksz_stp_info *stp, u8 *addr)
 	return diff;
 }  /* stp_change_addr */
 
+static void stp_set_addr(struct ksz_stp_info *stp, u8 *addr)
+{
+	struct ksz_stp_bridge *br = &stp->br;
+	struct ksz_stp_port *p = &br->ports[0];
+
+	memcpy(BridgeIdentifier.addr, addr, ETH_ALEN);
+}  /* stp_set_addr */
+
 static void stp_link_change(struct ksz_stp_info *stp, int update)
 {
-	int i;
-	int j;
+	uint i;
+	uint j;
 	int duplex;
 	int speed;
 	u8 state;
@@ -4191,10 +4310,12 @@ static void stp_link_change(struct ksz_stp_info *stp, int update)
 		return;
 	mutex_lock(&br->lock);
 	for (i = 0; i < br->port_cnt; i++) {
-#ifdef CONFIG_HAVE_KSZ9897
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 		if (skip_host_port(sw, i))
 			continue;
 #endif
+		if (!(sw->dev_ports & (1 << i)))
+			continue;
 		p = &br->ports[i];
 		if (p->off)
 			continue;
@@ -4206,6 +4327,13 @@ static void stp_link_change(struct ksz_stp_info *stp, int update)
 				state = STP_STATE_BLOCKED;
 			else
 				state = STP_STATE_DISABLED;
+#ifdef CONFIG_KSZ_MRP
+			if (!p->link && (sw->features & MRP_SUPPORT)) {
+				struct mrp_info *mrp = &sw->mrp;
+
+				mrp_close_port(mrp, j);
+			}
+#endif
 			sw->ops->acquire(sw);
 			port_set_stp_state(sw, j, state);
 			sw->ops->release(sw);
@@ -4219,16 +4347,25 @@ static void stp_link_change(struct ksz_stp_info *stp, int update)
 		invoke_state_machines(br);
 }  /* stp_link_change */
 
+static int stp_get_tcDetected(struct ksz_stp_info *stp, int i)
+{
+	struct ksz_stp_port *p;
+	struct ksz_stp_bridge *br = &stp->br;
+
+	p = &br->ports[i];
+	return tcDetected != 0;
+}  /* stp_get_tcDetected */
+
 static void stp_start(struct ksz_stp_info *stp)
 {
-	int i;
+	uint i;
 	struct ksz_stp_port *p;
 	struct ksz_sw *sw = stp->sw_dev;
 	struct ksz_stp_bridge *br = &stp->br;
 
 	stp->dev = sw->main_dev;
 	sw->ops->acquire(sw);
-#ifdef CONFIG_HAVE_KSZ9897
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 	for (i = 0; i < sw->mib_port_cnt; i++) {
 		if (skip_host_port(sw, i))
 			continue;
@@ -4250,14 +4387,14 @@ static void stp_start(struct ksz_stp_info *stp)
 
 static void stp_stop(struct ksz_stp_info *stp, int hw_access)
 {
-	int i;
+	uint i;
 	struct ksz_stp_port *p;
 	struct ksz_sw *sw = stp->sw_dev;
 	struct ksz_stp_bridge *br = &stp->br;
 
 	if (hw_access) {
 		sw->ops->acquire(sw);
-#ifdef CONFIG_HAVE_KSZ9897
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 		for (i = 0; i < sw->mib_port_cnt; i++) {
 			if (skip_host_port(sw, i))
 				continue;
@@ -4271,8 +4408,10 @@ static void stp_stop(struct ksz_stp_info *stp, int hw_access)
 		}
 		sw->ops->release(sw);
 	}
+#ifdef CONFIG_KSZ_IBA_ONLY
 	sw->features &= ~(STP_SUPPORT);
 	stp->br.bridgeEnabled = FALSE;
+#endif
 	ksz_stop_timer(&stp->port_timer_info);
 	stp->timer_tick = 0;
 	flush_work(&stp->rx_proc);
@@ -4288,7 +4427,7 @@ static void stp_stop(struct ksz_stp_info *stp, int hw_access)
 
 static void stp_br_test_setup(struct ksz_stp_bridge *br)
 {
-	int i;
+	uint i;
 	struct ksz_stp_port *p;
 
 	p = &br->ports[0];
@@ -4474,7 +4613,7 @@ static int sysfs_stp_write(struct ksz_sw *sw, int proc_num, int num,
 	struct ksz_stp_info *stp = &sw->info->rstp;
 	struct ksz_stp_bridge *br = &stp->br;
 	struct ksz_stp_port *p;
-	int i;
+	uint i;
 	int set;
 	int change = 0;
 	int processed = true;
@@ -4488,9 +4627,11 @@ static int sysfs_stp_write(struct ksz_sw *sw, int proc_num, int num,
 		set = !!num;
 		if (set != br->bridgeEnabled) {
 			br->bridgeEnabled = set;
-			if (br->bridgeEnabled)
+			if (br->bridgeEnabled) {
+				mutex_unlock(&stp->br.lock);
 				stp_start(stp);
-			else
+				mutex_lock(&stp->br.lock);
+			} else
 				stp_stop(stp, true);
 		}
 		break;
@@ -4577,7 +4718,7 @@ static int sysfs_stp_write(struct ksz_sw *sw, int proc_num, int num,
 	return processed;
 }  /* sysfs_stp_write */
 
-static ssize_t sysfs_stp_port_read(struct ksz_sw *sw, int proc_num, int port,
+static ssize_t sysfs_stp_port_read(struct ksz_sw *sw, int proc_num, uint port,
 	ssize_t len, char *buf)
 {
 	struct ksz_stp_info *stp = &sw->info->rstp;
@@ -4698,7 +4839,7 @@ static ssize_t sysfs_stp_port_read(struct ksz_sw *sw, int proc_num, int port,
 	return sysfs_show(len, buf, type, chk, note, sw->verbose);
 }  /* sysfs_stp_port_read */
 
-static int sysfs_stp_port_write(struct ksz_sw *sw, int proc_num, int port,
+static int sysfs_stp_port_write(struct ksz_sw *sw, int proc_num, uint port,
 	int num, const char *buf)
 {
 	struct ksz_stp_info *stp = &sw->info->rstp;
@@ -4812,6 +4953,8 @@ static void leave_stp(struct ksz_stp_info *stp)
 static struct stp_ops stp_ops = {
 	.change_addr		= stp_change_addr,
 	.link_change		= stp_link_change,
+
+	.get_tcDetected		= stp_get_tcDetected,
 };
 
 static void ksz_stp_exit(struct ksz_stp_info *stp)
@@ -4824,7 +4967,7 @@ static void ksz_stp_init(struct ksz_stp_info *stp, struct ksz_sw *sw)
 {
 	struct ksz_stp_bridge *br;
 	struct ksz_stp_port *p;
-	int i;
+	uint i;
 	int num;
 	struct llc *llc;
 #ifdef DBG_STP_PORT_FLUSH
@@ -4892,6 +5035,13 @@ static void ksz_stp_init(struct ksz_stp_info *stp, struct ksz_sw *sw)
 	p = &br->ports[0];
 	ZERO(BridgePriority);
 	stp_br_init(p);
+
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
+	sw->info->vid2fid[0] = sw->info->vid2fid[NUM_OF_VID + 1] = 0;
+	for (i = 1; i < NUM_OF_VID; i++) {
+		sw->info->vid2fid[i] = ((i - 1) % (FID_ENTRIES - 1)) + 1;
+	}
+#endif
 }  /* ksz_stp_init */
 
 

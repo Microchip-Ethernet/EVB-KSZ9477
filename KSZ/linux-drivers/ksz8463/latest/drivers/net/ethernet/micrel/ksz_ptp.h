@@ -761,7 +761,7 @@ struct ptp_ops {
 		const char *buf);
 
 	int (*drop_pkt)(struct ptp_info *ptp, struct sk_buff *skb, u32 vlan_id,
-		int *tag, int *ptp_tag);
+		int *tag, int *ptp_tag, int *forward);
 };
 
 #define DEFAULT_GPS_GPI			6

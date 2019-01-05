@@ -2296,7 +2296,7 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr)
 }
 
 static int ptp_drop_pkt(struct ptp_info *ptp, struct sk_buff *skb, u32 vlan_id,
-	int *tag, int *ptp_tag)
+	int *tag, int *ptp_tag, int *forward)
 {
 	ptp->rx_msg_parsed = false;
 	ptp->rx_msg = NULL;
@@ -2354,6 +2354,7 @@ static int ptp_drop_pkt(struct ptp_info *ptp, struct sk_buff *skb, u32 vlan_id,
 				ptp->ops->get_rx_tstamp(ptp, skb);
 		}
 	}
+	*forward = FWD_MAIN_DEV | FWD_VLAN_DEV;
 	return false;
 }  /* ptp_drop_pkt */
 

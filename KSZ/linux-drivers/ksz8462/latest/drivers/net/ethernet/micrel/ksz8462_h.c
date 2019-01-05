@@ -2133,19 +2133,17 @@ static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 #ifdef CONFIG_1588_PTP
 	ptr = ptp;
 	if ((sw->features & PTP_HW)) {
-		if (ptp->ops->drop_pkt(ptp, skb, sw->vlan_id, &tag, &ptp_tag)) {
+		if (ptp->ops->drop_pkt(ptp, skb, sw->vlan_id, &tag, &ptp_tag,
+				       &forward)) {
 			dev_kfree_skb_irq(skb);
 			return 0;
 		}
-		if (ptp_tag) {
+		if (ptp_tag)
 			rx_tstamp = ptp->ops->get_rx_tstamp;
-			if (!forward)
-				forward = FWD_VLAN_DEV | FWD_MAIN_DEV;
-		}
 	}
 #endif
 	if (sw_is_switch(sw))
-		dev = sw->net_ops->parent_rx(sw, dev, skb, forward,
+		dev = sw->net_ops->parent_rx(sw, dev, skb, &forward,
 			&parent_dev, &parent_skb);
 	extra_skb = (parent_skb != NULL);
 

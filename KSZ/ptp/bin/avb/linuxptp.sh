@@ -33,6 +33,15 @@ if [ $VLAN -eq 0 ] && [ -e "/sys/class/net/eth$ETH/sw/vlan_start" ]; then
     fi
 fi
 
+AVB=0
+if [ -e "/sys/class/net/eth$ETH/sw/avb" ]; then
+    AVB=$(cat /sys/class/net/eth$ETH/sw/avb)
+fi
+
+if [ $AVB -eq 2 ]; then
+    START="-f gPTP_auto.cfg"
+fi
+
 PORTS=2
 if [ -e "/sys/class/net/eth$ETH/sw/ports" ]; then
     PORTS=$(cat /sys/class/net/eth$ETH/sw/ports)
@@ -54,4 +63,4 @@ while [ $p -lt $PORTS ]; do
     let p=$p+1
 done
 
-ptp4l -p /dev/ptp0 -i eth$ETH.$VLAN -n $PORTS -f gPTP.cfg $VERBOSE $START
+ptp4l -p /dev/ptp0 -i eth$ETH.$VLAN -n $PORTS -B -f gPTP.cfg $VERBOSE $START

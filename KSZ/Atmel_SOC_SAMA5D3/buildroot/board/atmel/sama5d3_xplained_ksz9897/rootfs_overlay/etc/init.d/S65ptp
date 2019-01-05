@@ -23,9 +23,11 @@ fi
 start_avb() {
     if [ $AVB -gt 0 ] && [ $VLAN -gt 0 ]; then
         [ -x /ptp/avb/linuxptp.sh ] && cd /ptp/avb && ./linuxptp.sh &
-        [ -x /ptp/avb/mrpd.sh ] && cd /ptp/avb && ./mrpd.sh
 	sleep 1
         [ -x /ptp/avb/phc.sh ] && [ -e /var/run/ptp4l ] && /ptp/avb/phc.sh &
+    fi
+    if [ $AVB -eq 1 ] && [ $VLAN -gt 0 ]; then
+        [ -x /ptp/avb/mrpd.sh ] && cd /ptp/avb && ./mrpd.sh
     fi
 }
 

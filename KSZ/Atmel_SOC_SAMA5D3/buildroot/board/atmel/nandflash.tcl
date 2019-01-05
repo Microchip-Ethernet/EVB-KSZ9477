@@ -314,14 +314,15 @@ lappend u_boot_variables \
     "stderr=serial" \
     "bootargs=console=ttyS0,115200 mtdparts=atmel_nand:256k(bootstrap)ro,512k(uboot)ro,256k(env),256k(env_redundant),256k(spare),512k(dtb),6M(kernel)ro,-(rootfs) rootfstype=ubifs ubi.mtd=7 root=ubi0:rootfs rw $videoMode" \
     "_bootargs=console=ttyS0,115200 mtdparts=atmel_nand:256k(bootstrap)ro,512k(uboot)ro,256k(env),256k(env_redundant),256k(spare),512k(dtb),6M(kernel)ro,-(rootfs) rootfstype=ubifs ubi.mtd=7 root=ubi0:rootfs rw $videoMode \${extra_param}" \
-    "ethaddr=00:10:A1:94:77:01" \
-    "ipaddr=192.168.0.201" \
+    "ethaddr=00:10:A1:94:77:10" \
+    "ipaddr=192.168.0.210" \
     "serverip=192.168.0.100" \
     "subst_var=0" \
     "prep_boot=setenv -f subst_var 1; setenv -f bootargs \"\${_bootargs}\"" \
     "_chip=9897" \
-    "_drvname=spi-ksz\${_chip}" \
-    "extra_param=\${param1} \${param2} \${param3} \${param4} \${param5} \${param6} \${param7} \${param8} \${param9}" \
+    "_drvmode=spi" \
+    "_drvname=\${_drvmode}-ksz\${_chip}" \
+    "extra_param=\${param1} \${param2} \${param3} \${param4} \${param5} \${param6} \${param7} \${param8} \${param9} \${param10} \${param11}" \
     "param1=\${_drvname}.authen=\${authen}" \
     "param2=\${_drvname}.multi_dev=\${multi_dev}" \
     "param3=\${_drvname}.avb=\${avb}" \
@@ -329,14 +330,19 @@ lappend u_boot_variables \
     "param5=\${_drvname}.stp=\${stp}" \
     "param6=\${dev1_ports} \${dev1_vlan} \${dev1_proto}" \
     "param7=\${dev2_ports} \${dev2_vlan} \${dev2_proto}" \
-    "param8=\${_drvname}.sw_host_port=\${sw_host_port}" \
-    "param9=\${_drvname}.ports=\${ports}" \
+    "param8=\${dev3_ports} \${dev3_vlan} \${dev3_proto}" \
+    "param9=\${_drvname}.sw_host_port=\${sw_host_port}" \
+    "param10=\${_drvname}.ports=\${ports}" \
+    "param11=\${_drvname}.sgmii=\${sgmii}" \
     "dev1_ports=\${_drvname}.eth1_ports=\${eth1_ports}" \
     "dev1_vlan=\${_drvname}.eth1_vlan=\${eth1_vlan}" \
     "dev1_proto=\${_drvname}.eth1_proto=\${eth1_proto}" \
     "dev2_ports=\${_drvname}.eth2_ports=\${eth2_ports}" \
     "dev2_vlan=\${_drvname}.eth2_vlan=\${eth2_vlan}" \
     "dev2_proto=\${_drvname}.eth2_proto=\${eth2_proto}" \
+    "dev3_ports=\${_drvname}.eth3_ports=\${eth3_ports}" \
+    "dev3_vlan=\${_drvname}.eth3_vlan=\${eth3_vlan}" \
+    "dev3_proto=\${_drvname}.eth3_proto=\${eth3_proto}" \
     "_avb=1" \
     "_iba=1" \
     "$loadDts" \

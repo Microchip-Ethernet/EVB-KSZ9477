@@ -333,7 +333,7 @@ static int raw_send(struct transport *t, struct fdarray *fda, int event,
 	struct raw *raw = container_of(t, struct raw, t);
 	ssize_t cnt;
 	int fd = event ? fda->fd[FD_EVENT] : fda->fd[FD_GENERAL];
-#ifdef KSZ_1588_PTP
+#ifdef KSZ_1588_PTP_
 	unsigned char *ptr = buf;
 #else
 	unsigned char pkt[1600], *ptr = buf;
@@ -364,6 +364,8 @@ static int raw_send(struct transport *t, struct fdarray *fda, int event,
 #ifdef KSZ_1588_PTP
 	if (hwts)
 		memset(&hwts->ts, 0, sizeof(hwts->ts));
+	if (event == TRANS_EVENT)
+		sk_receive(fd, pkt, len, NULL, hwts, MSG_ERRQUEUE);
 	return cnt;
 #else
 	/*

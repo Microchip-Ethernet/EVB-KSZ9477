@@ -142,6 +142,34 @@ static struct ptp_message *pmc_message(struct pmc *pmc, uint8_t action)
 	return msg;
 }
 
+#ifdef KSZ_1588_PTP
+static struct ptp_message *pmc_signaling(struct pmc *pmc)
+{
+	struct ptp_message *msg;
+	int pdulen;
+
+	msg = msg_allocate();
+	if (!msg)
+		return NULL;
+
+	pdulen = sizeof(struct signaling_msg);
+	msg->hwts.type = TS_SOFTWARE;
+
+	msg->header.tsmt               = SIGNALING | pmc->transport_specific;
+	msg->header.ver                = PTP_VERSION;
+	msg->header.messageLength      = pdulen;
+	msg->header.domainNumber       = pmc->domain_number;
+	msg->header.sourcePortIdentity = pmc->port_identity;
+	msg->header.sequenceId         = pmc->sequence_id++;
+	msg->header.control            = CTL_OTHER;
+	msg->header.logMessageInterval = 0x7f;
+
+	msg->signaling.targetPortIdentity = pmc->target;
+
+	return msg;
+}
+#endif
+
 static int pmc_send(struct pmc *pmc, struct ptp_message *msg, int pdulen)
 {
 	int err;
@@ -209,6 +237,17 @@ static int pmc_tlv_datalen(struct pmc *pmc, int id)
 	case TLV_VERSION_NUMBER:
 	case TLV_DELAY_MECHANISM:
 	case TLV_LOG_MIN_PDELAY_REQ_INTERVAL:
+#ifdef KSZ_1588_PTP
+	case TLV_NEIGHBOR_PROP_DELAY:
+		len += sizeof(uint32_t);
+		break;
+	case TLV_MASTER_ONLY:
+	case TLV_INITIAL_LOG_PDELAY_REQ_INTERVAL:
+	case TLV_OPER_LOG_PDELAY_REQ_INTERVAL:
+	case TLV_INITIAL_LOG_SYNC_INTERVAL:
+	case TLV_OPER_LOG_SYNC_INTERVAL:
+	case TLV_WAKE_INFO:
+#endif
 		len += sizeof(struct management_tlv_datum);
 		break;
 	}
@@ -282,6 +321,26 @@ int pmc_send_set_action(struct pmc *pmc, int id, void *data, int datasize)
 
 	return 0;
 }
+
+#ifdef KSZ_1588_PTP
+int pmc_send_signaling(struct pmc *pmc, void *data, int datasize)
+{
+	int pdulen;
+	struct ptp_message *msg;
+	msg = pmc_signaling(pmc);
+	if (!msg) {
+		return -1;
+	}
+	memcpy(msg->signaling.suffix, data, datasize);
+	pdulen = msg->header.messageLength + datasize;
+	msg->header.messageLength = pdulen;
+	msg->tlv_count = 1;
+	pmc_send(pmc, msg, pdulen);
+	msg_put(msg);
+
+	return 0;
+}
+#endif
 
 struct ptp_message *pmc_recv(struct pmc *pmc)
 {

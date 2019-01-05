@@ -191,6 +191,8 @@ struct config_item config_tab[] = {
 	PORT_ITEM_INT("fault_reset_interval", 4, INT8_MIN, INT8_MAX),
 #ifdef KSZ_1588_PTP
 	GLOB_ITEM_DBL("first_step_threshold", 0.00005, 0.0, DBL_MAX),
+	GLOB_ITEM_INT("use_one_step", 0, 0, 1),
+	GLOB_ITEM_INT("use_2_step_pdelay", 0, 0, 1),
 #else
 	GLOB_ITEM_DBL("first_step_threshold", 0.00002, 0.0, DBL_MAX),
 #endif
@@ -255,8 +257,21 @@ struct config_item config_tab[] = {
 	GLOB_ITEM_INT("c37_238", 0, 0, 1),
 	GLOB_ITEM_INT("transparent", 1, 0, 1),
 	GLOB_ITEM_INT("skip_sync_check", 0, 0, 1),
+	GLOB_ITEM_INT("initialSyncReceiptTimeout", 1, 0, 20),
+	GLOB_ITEM_INT("waitPdelayReqInterval", 1, 0, 60),
+	GLOB_ITEM_INT("waitSyncInterval", 1, 0, 60),
 	PORT_ITEM_INT("followUpReceiptTimeout", 0, 0, INT_MAX),
 	PORT_ITEM_INT("syncTxContTimeout", 0, 0, INT_MAX),
+	PORT_ITEM_INT("masterOnly", 1, 0, 1),
+	PORT_ITEM_INT("initialLogSyncInterval", -3, INT8_MIN, INT8_MAX),
+	PORT_ITEM_INT("operLogSyncInterval", -2, INT8_MIN, INT8_MAX),
+	PORT_ITEM_INT("initialLogPdelayReqInterval", 0, INT8_MIN, INT8_MAX),
+	PORT_ITEM_INT("operLogPdelayReqInterval", 1, INT8_MIN, INT8_MAX),
+	PORT_ITEM_INT("neighborPropDelay", 0, 0, INT_MAX),
+	PORT_ITEM_INT("log_exception", 0, 0, 1),
+	PORT_ITEM_INT("no_announce", 0, 0, 1),
+	PORT_ITEM_INT("no_asCapable", 0, 0, 1),
+	PORT_ITEM_INT("no_id_check", 0, 0, 1),
 #endif
 };
 
@@ -578,6 +593,10 @@ int config_read(char *name, struct config *cfg)
 					goto parse_error;
 				}
 				current_port = config_create_interface(port, cfg);
+#ifdef KSZ_1588_PTP
+				if (!current_port && cfg->no_auto_create)
+					break;
+#endif
 				if (!current_port)
 					goto parse_error;
 			}
@@ -634,6 +653,82 @@ parse_error:
 	return -2;
 }
 
+#ifdef KSZ_1588_PTP
+static char* saved_global_configs[] = {
+	"log_exception",
+	"no_announce",
+	"no_asCapable",
+	"no_id_check",
+	"initialSyncReceiptTimeout",
+	"waitPdelayReqInterval",
+	"waitSyncInterval",
+	NULL,
+};
+
+static char* saved_configs[] = {
+	"masterOnly",
+	"initialLogPdelayReqInterval",
+	"operLogPdelayReqInterval",
+	"initialLogSyncInterval",
+	"operLogSyncInterval",
+	"neighborPropDelay",
+	NULL,
+};
+
+int config_write(char *name, struct config *cfg)
+{
+	struct interface *iface;
+	FILE *fp;
+	int i;
+	int len;
+	int val;
+	char *one_tab = "\t";
+	char *two_tab = "\t\t";
+	char *three_tab = "\t\t\t";
+	char *tab;
+
+	fp = fopen(name, "wt");
+	fprintf(fp, "[global]\n");
+	i = 0;
+	while (saved_global_configs[i]) {
+		len = strlen(saved_global_configs[i]);
+		len = (31 - len) / 8;
+		tab = one_tab;
+		if (len >= 2)
+			tab = three_tab;
+		else if (len >= 1)
+			tab = two_tab;
+		val = config_get_int(cfg, NULL,
+				     saved_global_configs[i]);
+		fprintf(fp, "%s%s%d\n", saved_global_configs[i], tab, val);
+		i++;
+	}
+	fprintf(fp, "\n");
+
+	/* only create each interface once (by name) */
+	STAILQ_FOREACH(iface, &cfg->interfaces, list) {
+		fprintf(fp, "[%s]\n", iface->name);
+		i = 0;
+		while (saved_configs[i]) {
+			len = strlen(saved_configs[i]);
+			len = (31 - len) / 8;
+			tab = one_tab;
+			if (len >= 2)
+				tab = three_tab;
+			else if (len >= 1)
+				tab = two_tab;
+			val = config_get_int(cfg, iface->name,
+					     saved_configs[i]);
+			fprintf(fp, "%s%s%d\n", saved_configs[i], tab, val);
+			i++;
+		}
+		fprintf(fp, "\n");
+	}
+	fclose(fp);
+	return 0;
+}
+#endif
+
 struct interface *config_create_interface(char *name, struct config *cfg)
 {
 	struct interface *iface;
@@ -648,6 +743,10 @@ struct interface *config_create_interface(char *name, struct config *cfg)
 			return iface;
 	}
 
+#ifdef KSZ_1588_PTP
+	if (cfg->no_auto_create)
+		return NULL;
+#endif
 	iface = calloc(1, sizeof(struct interface));
 	if (!iface) {
 		fprintf(stderr, "cannot allocate memory for a port\n");

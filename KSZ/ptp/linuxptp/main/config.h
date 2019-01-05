@@ -47,6 +47,10 @@ struct config {
 	/* configured interfaces */
 	STAILQ_HEAD(interfaces_head, interface) interfaces;
 	int n_interfaces;
+#ifdef KSZ_1588_PTP
+	int no_auto_create;
+	int changed;
+#endif
 
 	/* for parsing command line options */
 	struct option *opts;
@@ -56,6 +60,9 @@ struct config {
 };
 
 int config_read(char *name, struct config *cfg);
+#ifdef KSZ_1588_PTP
+int config_write(char *name, struct config *cfg);
+#endif
 struct interface *config_create_interface(char *name, struct config *cfg);
 void config_destroy(struct config *cfg);
 

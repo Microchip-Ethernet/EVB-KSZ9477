@@ -78,6 +78,7 @@ int main(int argc, char *argv[])
 	struct option *opts;
 	struct config *cfg;
 #ifdef KSZ_1588_PTP
+	char *config_save = NULL;
 	char dev_names[20];
 	int mports = 0;
 	int two_step = 0;
@@ -97,7 +98,7 @@ int main(int argc, char *argv[])
 	progname = strrchr(argv[0], '/');
 	progname = progname ? 1+progname : argv[0];
 #ifdef KSZ_1588_PTP
-	while (EOF != (c = getopt_long(argc, argv, "AEPN246HSLRZf:i:p:sl:mn:o:qvh",
+	while (EOF != (c = getopt_long(argc, argv, "ABEPN246HSLRZf:i:p:sl:mn:o:qvh",
 #else
 	while (EOF != (c = getopt_long(argc, argv, "AEP246HSLf:i:p:sl:mqvh",
 #endif
@@ -120,6 +121,9 @@ int main(int argc, char *argv[])
 				goto out;
 			break;
 #ifdef KSZ_1588_PTP
+		case 'B':
+			config_set_int(cfg, "transparent", 0);
+			break;
 		case 'N':
 			if (config_set_int(cfg, "delay_mechanism", DM_NONE))
 				goto out;
@@ -168,6 +172,12 @@ int main(int argc, char *argv[])
 			break;
 #endif
 		case 'f':
+#ifdef KSZ_1588_PTP
+			if (config) {
+				config_save = optarg;
+				break;
+			}
+#endif
 			config = optarg;
 			break;
 		case 'i':
@@ -213,40 +223,8 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (config && (c = config_read(config, cfg))) {
-		return c;
-	}
 #ifdef KSZ_1588_PTP
-	if (!config) {
-		/* Default clock is one-step. */
-		if (!two_step && config_set_int(cfg, "twoStepFlag", 0))
-			goto out;
-	}
-#endif
-
-	print_set_progname(progname);
-	print_set_tag(config_get_string(cfg, NULL, "message_tag"));
-	print_set_verbose(config_get_int(cfg, NULL, "verbose"));
-	print_set_syslog(config_get_int(cfg, NULL, "use_syslog"));
-	print_set_level(config_get_int(cfg, NULL, "logging_level"));
-
-	assume_two_step = config_get_int(cfg, NULL, "assume_two_step");
-	sk_check_fupsync = config_get_int(cfg, NULL, "check_fup_sync");
-	sk_tx_timeout = config_get_int(cfg, NULL, "tx_timestamp_timeout");
-
-	if (config_get_int(cfg, NULL, "clock_servo") == CLOCK_SERVO_NTPSHM) {
-		config_set_int(cfg, "kernel_leap", 0);
-		config_set_int(cfg, "sanity_freq_limit", 0);
-	}
-
-	if (STAILQ_EMPTY(&cfg->interfaces)) {
-		fprintf(stderr, "no interface specified\n");
-		usage(progname);
-		goto out;
-	}
-
-#ifdef KSZ_1588_PTP
-	if (mports > cfg->n_interfaces) {
+	if (mports > cfg->n_interfaces && cfg->n_interfaces == 1) {
 		int i;
 		int lan;
 		int len;
@@ -293,7 +271,45 @@ int main(int argc, char *argv[])
 			config_create_interface(dev_names, cfg);
 		}
 	}
+
+	/* Do not automatically create interface from configuration file. */
+	if (cfg->n_interfaces >= 1)
+		cfg->no_auto_create = 1;
 #endif
+
+	if (config && (c = config_read(config, cfg))) {
+		return c;
+	}
+#ifdef KSZ_1588_PTP
+	if (!config) {
+		/* Default clock is one-step. */
+		if (!two_step && config_set_int(cfg, "twoStepFlag", 0))
+			goto out;
+	} else if (config_save)
+		c = config_read(config_save, cfg);
+#endif
+
+	print_set_progname(progname);
+	print_set_tag(config_get_string(cfg, NULL, "message_tag"));
+	print_set_verbose(config_get_int(cfg, NULL, "verbose"));
+	print_set_syslog(config_get_int(cfg, NULL, "use_syslog"));
+	print_set_level(config_get_int(cfg, NULL, "logging_level"));
+
+	assume_two_step = config_get_int(cfg, NULL, "assume_two_step");
+	sk_check_fupsync = config_get_int(cfg, NULL, "check_fup_sync");
+	sk_tx_timeout = config_get_int(cfg, NULL, "tx_timestamp_timeout");
+
+	if (config_get_int(cfg, NULL, "clock_servo") == CLOCK_SERVO_NTPSHM) {
+		config_set_int(cfg, "kernel_leap", 0);
+		config_set_int(cfg, "sanity_freq_limit", 0);
+	}
+
+	if (STAILQ_EMPTY(&cfg->interfaces)) {
+		fprintf(stderr, "no interface specified\n");
+		usage(progname);
+		goto out;
+	}
+
 	clock = clock_create(cfg->n_interfaces > 1 ? CLOCK_TYPE_BOUNDARY :
 			     CLOCK_TYPE_ORDINARY, cfg, req_phc);
 	if (!clock) {
@@ -307,6 +323,10 @@ int main(int argc, char *argv[])
 		if (clock_poll(clock))
 			break;
 	}
+#ifdef KSZ_1588_PTP
+	if (config_save && cfg->changed)
+		c = config_write(config_save, cfg);
+#endif
 out:
 	if (clock)
 		clock_destroy(clock);

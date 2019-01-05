@@ -239,7 +239,7 @@ static int udp_send(struct transport *t, struct fdarray *fda, int event,
 	ssize_t cnt;
 	int fd = event ? fda->fd[FD_EVENT] : fda->fd[FD_GENERAL];
 	struct address addr_buf;
-#ifndef KSZ_1588_PTP
+#ifndef KSZ_1588_PTP_
 	unsigned char junk[1600];
 #endif
 
@@ -272,6 +272,8 @@ static int udp_send(struct transport *t, struct fdarray *fda, int event,
 #ifdef KSZ_1588_PTP
 	if (hwts)
 		memset(&hwts->ts, 0, sizeof(hwts->ts));
+	if (event == TRANS_EVENT)
+		sk_receive(fd, junk, len, NULL, hwts, MSG_ERRQUEUE);
 	return cnt;
 #else
 	/*

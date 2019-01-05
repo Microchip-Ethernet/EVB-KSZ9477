@@ -87,3 +87,21 @@ void print(int level, char const *format, ...)
 		       buf);
 	}
 }
+
+#ifdef KSZ_1588_PTP
+void timed_print(int level, struct timespec *ts, char const *buf)
+{
+	FILE *f;
+
+	if (verbose) {
+		f = level >= LOG_NOTICE ? stdout : stderr;
+		fprintf(f, "<%ld.%09ld>: %s\n",
+			ts->tv_sec, ts->tv_nsec, buf);
+		fflush(f);
+	}
+	if (use_syslog) {
+		syslog(level, "<%ld.%09ld> %s",
+		       ts->tv_sec, ts->tv_nsec, buf);
+	}
+}
+#endif

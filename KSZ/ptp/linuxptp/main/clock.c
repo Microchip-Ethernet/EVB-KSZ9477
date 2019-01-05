@@ -21,6 +21,9 @@
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef KSZ_1588_PTP
+#include <stdarg.h>
+#endif
 #include <time.h>
 #include <sys/queue.h>
 
@@ -137,8 +140,13 @@ struct clock {
 	int dev_cnt;
 	int drift;
 	int skip_sync_check;
+	int use_one_step;
+	int use_2_step_pdelay;
 	UInteger8 port_cnt;
 	UInteger8 version;
+	UInteger8 initialSyncReceiptTimeout;
+	UInteger8 waitPdelayReqInterval;
+	UInteger8 waitSyncInterval;
 	UInteger32 access_delay;
 	UInteger32 min_sync_interval;
 	struct port *dispatch;
@@ -365,12 +373,23 @@ static void clock_link_status(void *ctx, int index, int linkup)
 	port_link_status_set(p, linkup);
 	if (linkup) {
 		port_dispatch(p, EV_FAULT_CLEARED, 0);
+#ifdef KSZ_1588_PTP
+		if (port_is_aed_master(p)) {
+			port_dispatch(p, EV_RS_GRAND_MASTER, 0);
+		} else if (port_is_aed(p)) {
+			port_dispatch(p, EV_RS_SLAVE, 0);
+		} else if (c->slave_port && p != c->slave_port)
+			port_dispatch(p, EV_RS_GRAND_MASTER, 0);
+#endif
 	} else {
 		port_dispatch(p, EV_FAULT_DETECTED, 0);
 		/*
 		 * A port going down can affect the BMCA result.
 		 * Force a state decision event.
 		 */
+#ifdef KSZ_1588_PTP
+		if (!port_is_aed(p))
+#endif
 		c->sde = 1;
 	}
 }
@@ -544,7 +563,14 @@ static int clock_management_fill_response(struct clock *c, struct port *p,
 		sen = (struct subscribe_events_np *)tlv->data;
 		clock_get_subscription(c, req, sen->bitmask, &sen->duration);
 		respond = 1;
+#ifdef KSZ_1588_PTP
+	case TLV_WAKE_INFO:
+		mtd = (struct management_tlv_datum *) tlv->data;
+		mtd->val = 0;
+		datalen = sizeof(*mtd);
+		respond = 1;
 		break;
+#endif
 	}
 	if (respond) {
 		if (datalen % 2) {
@@ -656,6 +682,13 @@ static int clock_management_set(struct clock *c, struct port *p,
 					  sen->duration);
 		respond = 1;
 		break;
+#ifdef KSZ_1588_PTP
+	case TLV_WAKE_INFO:
+		mtd = (struct management_tlv_datum *) tlv->data;
+		process_wake_info(c, p, mtd->val);
+		respond = 1;
+		break;
+#endif
 	}
 	if (respond && !clock_management_get_response(c, p, id, req))
 		pr_err("failed to send management set response");
@@ -1011,6 +1044,9 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 		}
 	}
 	c->skip_sync_check = config_get_int(config, NULL, "skip_sync_check");
+	c->initialSyncReceiptTimeout = config_get_int(config, NULL, "initialSyncReceiptTimeout");
+	c->waitPdelayReqInterval = config_get_int(config, NULL, "waitPdelayReqInterval");
+	c->waitSyncInterval = config_get_int(config, NULL, "waitSyncInterval");
 #endif
 	switch (type) {
 #ifdef KSZ_1588_PTP
@@ -1330,10 +1366,14 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 #define PTP_KNOW_ABOUT_MULT_PORTS	(1 << 4)
 #define PTP_USE_RESERVED_FIELDS		(1 << 5)
 #define PTP_SEPARATE_PATHS		(1 << 6)
+#define PTP_USE_ONE_STEP		(1 << 7)
 
 	p = LIST_FIRST(&c->ports);
 	c->dm = config_get_int(config, p->name, "delay_mechanism");
 	c->ieee_c37_238 = config_get_int(config, NULL, "c37_238");
+	c->use_one_step = config_get_int(config, NULL, "use_one_step");
+	c->use_2_step_pdelay = config_get_int(config, NULL,
+					      "use_2_step_pdelay");
 	c->master_port = 0;
 	do {
 		int cap;
@@ -1344,6 +1384,8 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 		if (c->direct)
 			cap |= PTP_HAVE_MULT_DEVICES;
 		cap |= PTP_KNOW_ABOUT_MULT_PORTS;
+		if (c->use_one_step && (c->dds.flags & DDS_TWO_STEP_FLAG))
+			cap |= PTP_USE_ONE_STEP;
 		p = LIST_FIRST(&c->ports);
 		port_init_ptp(p, cap, &c->drift, &c->version,
 			&c->port_cnt, &c->access_delay);
@@ -1584,10 +1626,14 @@ int clock_manage(struct clock *c, struct port *p, struct ptp_message *msg)
 		break;
 	case SET:
 		if (mgt->length == 2 && mgt->id != TLV_NULL_MANAGEMENT) {
+#if 1
 if (mgt->id != TLV_DISABLE_PORT && mgt->id != TLV_ENABLE_PORT) {
+#endif
 			clock_management_send_error(p, msg, TLV_WRONG_LENGTH);
 			return changed;
+#if 1
 }
+#endif
 		}
 		if (p != c->uds_port) {
 			/* Sorry, only allowed on the UDS port. */
@@ -1811,7 +1857,7 @@ void clock_path_delay(struct clock *c, tmv_t req, tmv_t rx)
 	/* Wait until syntonization to start calculating path delay. */
 	if (c->servo_state == SERVO_UNLOCKED) {
 
-		/* Need valid inddication in clock_synchronize(). */
+		/* Need valid indication in clock_synchronize(). */
 		tsproc_set_delay(c->tsproc, 0);
 		return;
 	}
@@ -2043,6 +2089,10 @@ static void handle_state_decision_event(struct clock *c)
 	if (!cid_eq(&best_id, &c->best_id)) {
 		clock_freq_est_reset(c);
 		tsproc_reset(c->tsproc, 1);
+#ifdef KSZ_1588_PTP
+		if (c->dm == DM_NONE)
+			tsproc_set_delay(c->tsproc, 0);
+#endif
 		c->ingress_ts = tmv_zero();
 		c->path_delay = 0;
 		c->servo_state = SERVO_UNLOCKED;
@@ -2134,6 +2184,22 @@ double clock_rate_ratio(struct clock *c)
 }
 
 #ifdef KSZ_1588_PTP
+int clock_one_step(struct clock *c)
+{
+	int one_step = c->use_one_step || !(c->dds.flags & DDS_TWO_STEP_FLAG);
+
+	return one_step;
+}
+
+int clock_two_step_pdelay(struct clock *c)
+{
+	int two_step = (c->dds.flags & DDS_TWO_STEP_FLAG);
+
+	if (two_step && c->use_one_step)
+		two_step = c->use_2_step_pdelay;
+	return two_step;
+}
+
 int clock_two_step(struct clock *c)
 {
 	return (c->dds.flags & DDS_TWO_STEP_FLAG);
@@ -2308,62 +2374,6 @@ void clock_port_dispatch(struct clock *c, struct port *p)
 	c->dispatch = p;
 }
 
-void clock_clear_sync_fup(struct clock *c, int n)
-{
-	struct port *p;
-
-	LIST_FOREACH(p, &c->ports, list) {
-		port_clear_sync_fup(p, n);
-	}
-}
-
-void clock_clear_sync_tx(struct clock *c, int n)
-{
-	struct port *p;
-
-	LIST_FOREACH(p, &c->ports, list) {
-		port_clear_sync_tx(p, n);
-	}
-}
-
-void clock_update_sync(struct clock *c, int n, struct timespec *ts,
-	Integer64 corr, struct timestamp *timestamp)
-{
-	struct port *p;
-	int i = 1;
-
-	LIST_FOREACH(p, &c->ports, list) {
-		if (i != n)
-			port_update_sync(p, ts, corr, timestamp);
-		i++;
-	}
-}
-
-void clock_update_fup(struct clock *c, int n, Integer64 corr,
-	struct timestamp *timestamp)
-{
-	struct port *p;
-	int i = 1;
-
-	LIST_FOREACH(p, &c->ports, list) {
-		if (i != n)
-			port_update_fup(p, corr, timestamp);
-		i++;
-	}
-}
-
-void clock_update_sync_tx(struct clock *c, int n)
-{
-	struct port *p;
-	int i = 1;
-
-	LIST_FOREACH(p, &c->ports, list) {
-		if (i != n)
-			port_update_sync_tx(p);
-		i++;
-	}
-}
-
 void clock_update_port_grandmaster(struct clock *c)
 {
 	struct port *p;
@@ -2379,5 +2389,40 @@ dbg_phase_change = 1;
 int skip_sync_check(struct clock *c)
 {
 	return c->skip_sync_check;
+}
+
+int get_initialSyncReceiptTimeout(struct clock *c)
+{
+	return c->initialSyncReceiptTimeout;
+}
+
+int get_waitPdelayReqInterval(struct clock *c)
+{
+	return c->waitPdelayReqInterval;
+}
+
+int get_waitSyncInterval(struct clock *c)
+{
+	return c->waitSyncInterval;
+}
+
+void get_hw_clock(struct clock *c, struct timespec *ts)
+{
+	clock_gettime(c->clkid, ts);
+}
+
+void exception_log(struct clock *c, char const *format, ...)
+{
+	struct timespec ts;
+	va_list ap;
+	char buf[1024];
+
+	clock_gettime(c->clkid, &ts);
+
+	va_start(ap, format);
+	vsnprintf(buf, sizeof(buf), format, ap);
+	va_end(ap);
+
+	timed_print(LOG_ALERT, &ts, buf);
 }
 #endif

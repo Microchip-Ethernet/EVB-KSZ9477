@@ -695,7 +695,7 @@ int ptp_dev_init(void *fd,
 }
 
 int ptp_port_info(void *fd,
-	char *name, u8 *port, u32 *mask)
+	char *name, u8 *port, u8 *virt, u32 *mask)
 {
 	struct ksz_request_actual req;
 	int len;
@@ -714,6 +714,7 @@ int ptp_port_info(void *fd,
 				'c' == req.param.data[2] &&
 				'r' == req.param.data[3]) {
 			*port = req.param.data[4];
+			*virt = req.param.data[5];
 			*mask = req.output;
 		}
 	}

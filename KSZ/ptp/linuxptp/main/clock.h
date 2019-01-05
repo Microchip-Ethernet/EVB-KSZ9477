@@ -304,7 +304,9 @@ double clock_rate_ratio(struct clock *c);
 
 #ifdef KSZ_1588_PTP
 int clock_master_lost(struct clock *c);
+int clock_one_step(struct clock *c);
 int clock_two_step(struct clock *c);
+int clock_two_step_pdelay(struct clock *c);
 int clock_c37_238(struct clock *c);
 
 int all_ports(struct clock *c);
@@ -333,15 +335,13 @@ void clock_set_port_state(struct clock *c, enum fsm_event event);
 int is_slave_port(struct clock *c, struct port *p);
 int port_dispatched(struct clock *c);
 void clock_port_dispatch(struct clock *c, struct port *p);
-void clock_clear_sync_fup(struct clock *c, int n);
-void clock_clear_sync_tx(struct clock *c, int n);
-void clock_update_sync(struct clock *c, int n, struct timespec *ts,
-	Integer64 corr, struct timestamp *timestamp);
-void clock_update_fup(struct clock *c, int n, Integer64 corr,
-	struct timestamp *timestamp);
-void clock_update_sync_tx(struct clock *c, int n);
 void clock_update_port_grandmaster(struct clock *c);
 int skip_sync_check(struct clock *c);
+int get_initialSyncReceiptTimeout(struct clock *c);
+int get_waitPdelayReqInterval(struct clock *c);
+int get_waitSyncInterval(struct clock *c);
+void get_hw_clock(struct clock *c, struct timespec *ts);
+void exception_log(struct clock *c, char const *format, ...);
 #endif
 
 #endif

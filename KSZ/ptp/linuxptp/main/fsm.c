@@ -123,6 +123,9 @@ enum port_state ptp_fsm(enum port_state state, enum fsm_event event, int mdiff)
 			next = PS_PASSIVE;
 			break;
 #ifdef KSZ_1588_PTP
+		case EV_RS_GRAND_MASTER:
+			next = PS_GRAND_MASTER;
+			break;
 		case EV_INIT_COMPLETE:
 			next = PS_LISTENING;
 			break;

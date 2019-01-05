@@ -124,6 +124,16 @@ struct management_id idtab[] = {
 	{ "DELAY_MECHANISM", TLV_DELAY_MECHANISM, do_get_action },
 	{ "LOG_MIN_PDELAY_REQ_INTERVAL", TLV_LOG_MIN_PDELAY_REQ_INTERVAL, do_get_action },
 	{ "PORT_DATA_SET_NP", TLV_PORT_DATA_SET_NP, do_set_action },
+#ifdef KSZ_1588_PTP
+	{ "INTERVAL_INFO", TLV_INTERVAL_INFO, do_set_action },
+	{ "MASTER_ONLY", TLV_MASTER_ONLY, do_set_action },
+	{ "INITIAL_LOG_PDELAY_REQ_INTERVAL", TLV_INITIAL_LOG_PDELAY_REQ_INTERVAL, do_set_action },
+	{ "OPER_LOG_PDELAY_REQ_INTERVAL", TLV_OPER_LOG_PDELAY_REQ_INTERVAL, do_set_action },
+	{ "INITIAL_LOG_SYNC_INTERVAL", TLV_INITIAL_LOG_SYNC_INTERVAL, do_set_action },
+	{ "OPER_LOG_SYNC_INTERVAL", TLV_OPER_LOG_SYNC_INTERVAL, do_set_action },
+	{ "NEIGHBOR_PROP_DELAY", TLV_NEIGHBOR_PROP_DELAY, do_set_action },
+	{ "WAKE_INFO", TLV_WAKE_INFO, do_set_action },
+#endif
 };
 
 static const char *action_string[] = {
@@ -217,6 +227,7 @@ static void pmc_show(struct ptp_message *msg, FILE *fp)
 	struct transparent_clock_default_data_set *tcdds;
 	struct transparent_clock_port_data_set *tcpds;
 	struct Timestamp *ts;
+	uint32_t *ptr32;
 #endif
 	if (msg_type(msg) != MANAGEMENT) {
 		return;
@@ -520,7 +531,7 @@ static void pmc_show(struct ptp_message *msg, FILE *fp)
 		break;
 	case TLV_LOG_SYNC_INTERVAL:
 		mtd = (struct management_tlv_datum *) mgt->data;
-		fprintf(fp, "ANNOUNCE_RECEIPT_TIMEOUT "
+		fprintf(fp, "LOG_SYNC_INTERVAL "
 			IFMT "logSyncInterval %hhd", mtd->val);
 		break;
 	case TLV_VERSION_NUMBER:
@@ -538,6 +549,38 @@ static void pmc_show(struct ptp_message *msg, FILE *fp)
 		fprintf(fp, "LOG_MIN_PDELAY_REQ_INTERVAL "
 			IFMT "logMinPdelayReqInterval %hhd", mtd->val);
 		break;
+#ifdef KSZ_1588_PTP
+	case TLV_MASTER_ONLY:
+		mtd = (struct management_tlv_datum *) mgt->data;
+		fprintf(fp, "MASTER_ONLY"
+			IFMT "masterOnly %hhd", mtd->val);
+		break;
+	case TLV_INITIAL_LOG_PDELAY_REQ_INTERVAL:
+		mtd = (struct management_tlv_datum *) mgt->data;
+		fprintf(fp, "INITIAL_LOG_PDELAY_REQ_INTERVAL "
+			IFMT "initialLogPdelayReqInterval %hhd", mtd->val);
+		break;
+	case TLV_OPER_LOG_PDELAY_REQ_INTERVAL:
+		mtd = (struct management_tlv_datum *) mgt->data;
+		fprintf(fp, "OPER_LOG_PDELAY_REQ_INTERVAL "
+			IFMT "operLogPdelayReqInterval %hhd", mtd->val);
+		break;
+	case TLV_INITIAL_LOG_SYNC_INTERVAL:
+		mtd = (struct management_tlv_datum *) mgt->data;
+		fprintf(fp, "INITIAL_LOG_SYNC_INTERVAL "
+			IFMT "initialLogSyncInterval %hhd", mtd->val);
+		break;
+	case TLV_OPER_LOG_SYNC_INTERVAL:
+		mtd = (struct management_tlv_datum *) mgt->data;
+		fprintf(fp, "OPER_LOG_SYNC_INTERVAL "
+			IFMT "operLogSyncInterval %hhd", mtd->val);
+		break;
+	case TLV_NEIGHBOR_PROP_DELAY:
+		ptr32 = (uint32_t *) mgt->data;
+		fprintf(fp, "NEIGHBOR_PROP_DELAY "
+			IFMT "neighborPropDelay %u", ntohl(*ptr32));
+		break;
+#endif
 	}
 out:
 	fprintf(fp, "\n");
@@ -556,6 +599,13 @@ static void do_set_action(int action, int index, char *str)
 {
 	struct grandmaster_settings_np gsn;
 	struct management_tlv_datum mtd;
+#ifdef KSZ_1588_PTP
+	uint8_t buf[100];
+	struct organization_tlv *org;
+	struct interval_info_tlv *interval;
+	struct wake_info_tlv *wake;
+	uint32_t val32;
+#endif
 	struct port_ds_np pnp;
 	int cnt, code = idtab[index].code;
 	int leap_61, leap_59, utc_off_valid;
@@ -567,8 +617,16 @@ static void do_set_action(int action, int index, char *str)
 		return;
 	case SET:
 		break;
-	case RESPONSE:
+#ifdef KSZ_1588_PTP
 	case COMMAND:
+		if (code == TLV_INTERVAL_INFO ||
+		    code == TLV_WAKE_INFO)
+			break;
+#endif
+	case RESPONSE:
+#ifndef KSZ_1588_PTP
+	case COMMAND:
+#endif
 	case ACKNOWLEDGE:
 	default:
 		fprintf(stderr, "%s only allows GET or SET\n",
@@ -647,6 +705,89 @@ static void do_set_action(int action, int index, char *str)
 	case TLV_DISABLE_PORT:
 	case TLV_ENABLE_PORT:
 		pmc_send_set_action(pmc, code, NULL, 0);
+		break;
+	case TLV_INTERVAL_INFO:
+		if (action != COMMAND) {
+			fprintf(stderr, "%s only allows COMMAND\n",
+				idtab[index].name);
+			return;
+		}
+		cnt = sscanf(str,  " %*s %*s %hhu", &mtd.val);
+		if (cnt != 1) {
+			fprintf(stderr, "%s COMMAND needs 1 value\n",
+				idtab[index].name);
+			break;
+		}
+		org = (struct organization_tlv *)buf;
+		interval = (struct interval_info_tlv *)buf;
+		org->type = TLV_ORGANIZATION_EXTENSION;
+		org->length = sizeof(struct interval_info_tlv) - 4;
+		org->id[0] = 0x00;
+		org->id[1] = 0x10;
+		org->id[2] = 0xA1;
+		org->subtype[0] = 0;
+		org->subtype[1] = 0;
+		org->subtype[2] = 1;
+		memcpy(org->id, ieee8021_id, sizeof(ieee8021_id));
+		org->subtype[2] = 2;
+		interval->linkDelayInterval = 0x7f;
+		interval->announceInterval = 0x7f;
+		interval->timeSyncInterval = mtd.val;
+		interval->flags = 0x3;
+		interval->reserved = 0;
+		pmc_send_signaling(pmc, buf, sizeof(struct interval_info_tlv));
+		break;
+	case TLV_WAKE_INFO:
+#if 0
+		if (action != COMMAND) {
+			fprintf(stderr, "%s only allows COMMAND\n",
+				idtab[index].name);
+			return;
+		}
+		cnt = sscanf(str,  " %*s %*s %hhu", &mtd.val);
+		if (cnt != 1) {
+			fprintf(stderr, "%s COMMAND needs 1 value\n",
+				idtab[index].name);
+			break;
+		}
+		org = (struct organization_tlv *)buf;
+		wake = (struct wake_info_tlv *)buf;
+		org->type = TLV_ORGANIZATION_EXTENSION;
+		org->length = sizeof(struct wake_info_tlv) - 4;
+		if (org->length & 1)
+			org->length++;
+		org->id[0] = 0x00;
+		org->id[1] = 0x10;
+		org->id[2] = 0xA1;
+		org->subtype[0] = 0;
+		org->subtype[1] = 0;
+		org->subtype[2] = 2;
+		wake->event = mtd.val;
+		pmc_send_signaling(pmc, buf, org->length + 4);
+		break;
+#endif
+	case TLV_MASTER_ONLY:
+	case TLV_INITIAL_LOG_PDELAY_REQ_INTERVAL:
+	case TLV_OPER_LOG_PDELAY_REQ_INTERVAL:
+	case TLV_INITIAL_LOG_SYNC_INTERVAL:
+	case TLV_OPER_LOG_SYNC_INTERVAL:
+		cnt = sscanf(str,  " %*s %*s %hhu", &mtd.val);
+		if (cnt != 1) {
+			fprintf(stderr, "%s SET needs 1 value\n",
+				idtab[index].name);
+			break;
+		}
+		pmc_send_set_action(pmc, code, &mtd, sizeof(mtd));
+		break;
+	case TLV_NEIGHBOR_PROP_DELAY:
+		cnt = sscanf(str,  " %*s %*s %u", &val32);
+		if (cnt != 1) {
+			fprintf(stderr, "%s SET needs 1 value\n",
+				idtab[index].name);
+			break;
+		}
+		val32 = htonl(val32);
+		pmc_send_set_action(pmc, code, &val32, sizeof(uint32_t));
 		break;
 #endif
 	}
@@ -799,6 +940,9 @@ int main(int argc, char *argv[])
 	UInteger8 boundary_hops = 1, domain_number = 0, transport_specific = 0;
 	struct ptp_message *msg;
 	struct config *cfg;
+#ifdef KSZ_1588_PTP
+	int rx_cnt = 0;
+#endif
 #define N_FD 2
 	struct pollfd pollfd[N_FD];
 
@@ -879,6 +1023,11 @@ int main(int argc, char *argv[])
 			iface_name = "eth0";
 		}
 	}
+#ifdef KSZ_1588_PTP
+	if (transport_type == TRANS_IEEE_802_3 && transport_specific == 1 << 4)
+		config_set_string(cfg, "ptp_dst_mac",
+				  "01:80:C2:00:00:0E");
+#endif
 	if (optind < argc) {
 		batch_mode = 1;
 	}
@@ -962,6 +1111,14 @@ int main(int argc, char *argv[])
 				pmc_show(msg, stdout);
 				msg_put(msg);
 			}
+#ifdef KSZ_1588_PTP
+			/* May keep receiving Sync messages. */
+			if (batch_mode) {
+				++rx_cnt;
+				if (rx_cnt > 10)
+					break;
+			}
+#endif
 		}
 	}
 

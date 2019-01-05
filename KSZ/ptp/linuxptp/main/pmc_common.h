@@ -40,6 +40,10 @@ int pmc_send_get_action(struct pmc *pmc, int id);
 
 int pmc_send_set_action(struct pmc *pmc, int id, void *data, int datasize);
 
+#ifdef KSZ_1588_PTP
+int pmc_send_signaling(struct pmc *pmc, void *data, int datasize);
+#endif
+
 struct ptp_message *pmc_recv(struct pmc *pmc);
 
 int pmc_target(struct pmc *pmc, struct PortIdentity *pid);

@@ -94,15 +94,12 @@ int new_state(struct port *p);
 void port_set_host_port(struct port *p, struct port *host_port);
 void port_set_port_state(struct port *p, enum fsm_event event);
 int port_update_peer_delay(struct port *p, int n);
-void port_clear_sync_fup(struct port *p, int n);
-void port_clear_sync_tx(struct port *p, int n);
-void port_update_sync(struct port *p, struct timespec *ts, Integer64 corr,
-	struct timestamp *timestamp);
-void port_update_fup(struct port *p, Integer64 corr,
-	struct timestamp *timestamp);
-void port_update_sync_tx(struct port *p);
 void port_update_grandmaster(struct port *p);
 int port_matched(struct port *p, int n);
+
+int port_is_aed(struct port *p);
+int port_is_aed_master(struct port *p);
+void process_wake_info(struct clock *c, struct port *p, int event);
 #endif
 
 /**

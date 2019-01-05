@@ -102,6 +102,17 @@ enum management_action {
 #define TLV_PORT_DATA_SET_NP				0xC002
 #define TLV_PORT_PROPERTIES_NP				0xC004
 
+#ifdef KSZ_1588_PTP
+#define TLV_MASTER_ONLY					0x8001
+#define TLV_INITIAL_LOG_PDELAY_REQ_INTERVAL		0x8002
+#define TLV_OPER_LOG_PDELAY_REQ_INTERVAL		0x8003
+#define TLV_INITIAL_LOG_SYNC_INTERVAL			0x8004
+#define TLV_OPER_LOG_SYNC_INTERVAL			0x8005
+#define TLV_NEIGHBOR_PROP_DELAY				0x8007
+#define TLV_WAKE_INFO					0x8008
+#define TLV_INTERVAL_INFO				0x9001
+#endif
+
 /* Management error ID values */
 #define TLV_RESPONSE_TOO_BIG				0x0001
 #define TLV_NO_SUCH_ID					0x0002
@@ -191,6 +202,26 @@ struct time_status_np {
 } PACKED;
 
 #ifdef KSZ_1588_PTP
+struct interval_info_tlv {
+	Enumeration16 type;
+	UInteger16    length;
+	Octet         id[3];
+	Octet         subtype[3];
+	int8_t	      linkDelayInterval;
+	int8_t	      timeSyncInterval;
+	int8_t	      announceInterval;
+	uint8_t	      flags;
+	uint16_t      reserved;
+} PACKED;
+
+struct wake_info_tlv {
+	Enumeration16 type;
+	UInteger16    length;
+	Octet         id[3];
+	Octet         subtype[3];
+	uint8_t	      event;
+} PACKED;
+
 struct ieee_c37_238_data {
 	UInteger16 grandmasterID;
 	UInteger32 grandmasterTimeInaccuracy;

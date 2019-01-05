@@ -31,6 +31,9 @@
 __attribute__ ((format (printf, 2, 3)))
 #endif
 void print(int level, char const *format, ...);
+#ifdef KSZ_1588_PTP
+void timed_print(int level, struct timespec *ts, char const *buf);
+#endif
 
 void print_set_progname(const char *name);
 void print_set_tag(const char *tag);

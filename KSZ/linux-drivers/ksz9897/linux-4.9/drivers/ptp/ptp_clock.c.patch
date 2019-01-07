@@ -1,0 +1,20 @@
+--- ptp_clock.c.orig	2019-01-07 09:56:55.750852276 -0800
++++ ptp_clock.c	2019-01-07 11:00:16.146837779 -0800
+@@ -153,6 +153,17 @@
+ 		ptp->dialed_frequency = tx->freq;
+ 	} else if (tx->modes == 0) {
+ 		tx->freq = ptp->dialed_frequency;
++#if defined(CONFIG_KSZ_PTP)
++		do {
++			long freq;
++
++			err = ops->gettime64(ops, NULL);
++			freq = err;
++			freq <<= 13;
++			freq /= 125;
++			tx->freq = freq;
++		} while (0);
++#endif
+ 		err = 0;
+ 	}
+ 

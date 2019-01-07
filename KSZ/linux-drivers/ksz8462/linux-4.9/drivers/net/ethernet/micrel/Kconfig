@@ -1,0 +1,24 @@
+
+config KSZ8462_HLI
+	tristate "Microchip KSZ8462/KSZ8441/KSZ8852 HLI support"
+	select MII
+	select CRC32
+	select EEPROM_93CX6
+	help
+	  This platform driver is for Microchip KSZ8462/KSZ8441/KSZ8852
+	  address/data bus multiplexed network chip.
+
+config KSZ_PTP
+	bool "1588 PTP support"
+	depends on KSZ8462_HLI
+	default y
+	help
+	  Enable 1588 PTP support.
+
+config KSZ_STP
+	bool "STP support"
+	depends on KSZ8462_HLI
+	default n
+	help
+	  Enable STP support.
+

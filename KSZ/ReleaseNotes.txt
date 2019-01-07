@@ -1,4 +1,4 @@
-KSZ9xxx/KSZ85xx Ethernet Switch Software - Version: 1.1.9
+KSZ9xxx/KSZ85xx Ethernet Switch Software - Version: 1.2.0
 =========================================================
 
 Contenets:
@@ -26,6 +26,13 @@ Contenets:
  
 4. Release History
 ------------------
+
+V1.2.0 : 01/07/2019
+	1. Kernel is upgraded to 4.9.
+	2. Switch ports can be remapped.  Now the host port is always the last
+	   one to the users.  This change only affects KSZ9897 as the host
+	   port can be any.
+	3. Fix some MRP/MSRP/gPTP test failures.
 
 V1.1.9 : 02/12/2018
 	1. Fix Linux PTP stack problems running in E2E/P2P as eth0.100 devices

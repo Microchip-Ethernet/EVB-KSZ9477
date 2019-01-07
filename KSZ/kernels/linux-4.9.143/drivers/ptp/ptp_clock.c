@@ -153,6 +153,17 @@ static int ptp_clock_adjtime(struct posix_clock *pc, struct timex *tx)
 		ptp->dialed_frequency = tx->freq;
 	} else if (tx->modes == 0) {
 		tx->freq = ptp->dialed_frequency;
+#if defined(CONFIG_KSZ_PTP)
+		do {
+			long freq;
+
+			err = ops->gettime64(ops, NULL);
+			freq = err;
+			freq <<= 13;
+			freq /= 125;
+			tx->freq = freq;
+		} while (0);
+#endif
 		err = 0;
 	}
 

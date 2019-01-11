@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8863 SPI driver
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -62,7 +62,7 @@
 #define KS8863MLI_DEV0			"ksz8863"
 #define KS8863MLI_DEV2			"ksz8863_2"
 
-#define SW_DRV_RELDATE			"Nov 27, 2018"
+#define SW_DRV_RELDATE			"Jan 11, 2019"
 #define SW_DRV_VERSION			"1.2.0"
 
 /* -------------------------------------------------------------------------- */
@@ -104,11 +104,10 @@
  * This is the low level write call that issues the necessary spi message(s)
  * to write data to the register specified in @reg.
  */
-static void spi_wrreg(struct sw_priv *ks, u8 reg, void *buf, size_t txl)
+static void spi_wrreg(struct spi_hw_priv *ks, u8 reg, void *buf, size_t txl)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_dev;
-	struct spi_device *spi = hw_priv->spidev;
-	u8 *txb = (u8 *) hw_priv->txd;
+	struct spi_device *spi = ks->spidev;
+	u8 *txb = (u8 *) ks->txd;
 	struct spi_transfer *xfer;
 	struct spi_message *msg;
 	int ret;
@@ -121,18 +120,18 @@ static void spi_wrreg(struct sw_priv *ks, u8 reg, void *buf, size_t txl)
 	txb[1] = reg;
 
 	/* Own transmit buffer is being used. */
-	if (buf == hw_priv->txd) {
-		xfer = &hw_priv->spi_xfer1;
-		msg = &hw_priv->spi_msg1;
+	if (buf == ks->txd) {
+		xfer = &ks->spi_xfer1;
+		msg = &ks->spi_msg1;
 
-		xfer->tx_buf = hw_priv->txd;
+		xfer->tx_buf = ks->txd;
 		xfer->rx_buf = NULL;
 		xfer->len = txl + SPI_CMD_LEN;
 	} else {
-		xfer = hw_priv->spi_xfer2;
-		msg = &hw_priv->spi_msg2;
+		xfer = ks->spi_xfer2;
+		msg = &ks->spi_msg2;
 
-		xfer->tx_buf = hw_priv->txd;
+		xfer->tx_buf = ks->txd;
 		xfer->rx_buf = NULL;
 		xfer->len = SPI_CMD_LEN;
 
@@ -147,11 +146,10 @@ static void spi_wrreg(struct sw_priv *ks, u8 reg, void *buf, size_t txl)
 		pr_alert("spi_sync() failed: %x %u\n", reg, txl);
 }
 
-static void spi_wrreg_size(struct sw_priv *ks, u8 reg, unsigned val,
+static void spi_wrreg_size(struct spi_hw_priv *ks, u8 reg, unsigned val,
 			   size_t size)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_dev;
-	u8 *txb = hw_priv->txd;
+	u8 *txb = ks->txd;
 	int i = SPI_CMD_LEN;
 	size_t cnt = size;
 
@@ -170,7 +168,7 @@ static void spi_wrreg_size(struct sw_priv *ks, u8 reg, unsigned val,
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg32(struct sw_priv *ks, u8 reg, unsigned val)
+static void spi_wrreg32(struct spi_hw_priv *ks, u8 reg, unsigned val)
 {
 	spi_wrreg_size(ks, reg, val, 4);
 }
@@ -183,7 +181,7 @@ static void spi_wrreg32(struct sw_priv *ks, u8 reg, unsigned val)
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg16(struct sw_priv *ks, u8 reg, unsigned val)
+static void spi_wrreg16(struct spi_hw_priv *ks, u8 reg, unsigned val)
 {
 	spi_wrreg_size(ks, reg, val, 2);
 }
@@ -196,7 +194,7 @@ static void spi_wrreg16(struct sw_priv *ks, u8 reg, unsigned val)
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg8(struct sw_priv *ks, u8 reg, unsigned val)
+static void spi_wrreg8(struct spi_hw_priv *ks, u8 reg, unsigned val)
 {
 	spi_wrreg_size(ks, reg, val, 1);
 }
@@ -230,12 +228,11 @@ static inline bool ksz_rx_1msg(struct spi_hw_priv *ks)
  * This is the low level read call that issues the necessary spi message(s)
  * to read data from the register specified in @reg.
  */
-static void spi_rdreg(struct sw_priv *ks, u8 reg, void *rxb, void **rx,
+static void spi_rdreg(struct spi_hw_priv *ks, u8 reg, void *rxb, void **rx,
 		      size_t rxl)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_dev;
-	struct spi_device *spi = hw_priv->spidev;
-	u8 *txb = (u8 *) hw_priv->txd;
+	struct spi_device *spi = ks->spidev;
+	u8 *txb = (u8 *) ks->txd;
 	struct spi_transfer *xfer;
 	struct spi_message *msg;
 	int ret;
@@ -249,29 +246,29 @@ static void spi_rdreg(struct sw_priv *ks, u8 reg, void *rxb, void **rx,
 
 	if (rx)
 		*rx = rxb;
-	if (ksz_rx_1msg(hw_priv)) {
-		msg = &hw_priv->spi_msg1;
-		xfer = &hw_priv->spi_xfer1;
+	if (ksz_rx_1msg(ks)) {
+		msg = &ks->spi_msg1;
+		xfer = &ks->spi_xfer1;
 
-		xfer->tx_buf = hw_priv->txd;
-		xfer->rx_buf = hw_priv->rxd;
+		xfer->tx_buf = ks->txd;
+		xfer->rx_buf = ks->rxd;
 		xfer->len = rxl + SPI_CMD_LEN;
 		txb += SPI_CMD_LEN;
 		memset(txb, 0, rxl);
-		if (rx && rxb == hw_priv->rxd)
+		if (rx && rxb == ks->rxd)
 			*rx = (u8 *) rxb + SPI_CMD_LEN;
 #if defined(CONFIG_SPI_PEGASUS) || defined(CONFIG_SPI_PEGASUS_MODULE)
 		/*
 		 * A hack to tell KSZ8692 SPI host controller the read command.
 		 */
-		memcpy(hw_priv->rxd, hw_priv->txd, SPI_CMD_LEN + 1);
-		hw_priv->rxd[SPI_CMD_LEN] ^= 0xff;
+		memcpy(ks->rxd, ks->txd, SPI_CMD_LEN + 1);
+		ks->rxd[SPI_CMD_LEN] ^= 0xff;
 #endif
 	} else {
-		msg = &hw_priv->spi_msg2;
-		xfer = hw_priv->spi_xfer2;
+		msg = &ks->spi_msg2;
+		xfer = ks->spi_xfer2;
 
-		xfer->tx_buf = hw_priv->txd;
+		xfer->tx_buf = ks->txd;
 		xfer->rx_buf = NULL;
 		xfer->len = SPI_CMD_LEN;
 
@@ -284,16 +281,15 @@ static void spi_rdreg(struct sw_priv *ks, u8 reg, void *rxb, void **rx,
 	ret = spi_sync(spi, msg);
 	if (ret < 0)
 		pr_alert("read: spi_sync() failed: %x %u\n", reg, rxl);
-	else if (ksz_rx_1msg(hw_priv) && rxb != hw_priv->rxd)
-		memcpy(rxb, hw_priv->rxd + SPI_CMD_LEN, rxl);
+	else if (ksz_rx_1msg(ks) && rxb != ks->rxd)
+		memcpy(rxb, ks->rxd + SPI_CMD_LEN, rxl);
 }
 
-static void *spi_rdreg_size(struct sw_priv *ks, u8 reg, size_t size)
+static void *spi_rdreg_size(struct spi_hw_priv *ks, u8 reg, size_t size)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_dev;
 	void *r;
 
-	spi_rdreg(ks, reg, hw_priv->rxd, &r, size);
+	spi_rdreg(ks, reg, ks->rxd, &r, size);
 	return r;
 }
 
@@ -304,7 +300,7 @@ static void *spi_rdreg_size(struct sw_priv *ks, u8 reg, size_t size)
  *
  * Read a 8bit register from the chip, returning the result.
  */
-static u8 spi_rdreg8(struct sw_priv *ks, u8 reg)
+static u8 spi_rdreg8(struct spi_hw_priv *ks, u8 reg)
 {
 	u8 *rx;
 
@@ -319,7 +315,7 @@ static u8 spi_rdreg8(struct sw_priv *ks, u8 reg)
  *
  * Read a 16bit register from the chip, returning the result.
  */
-static u16 spi_rdreg16(struct sw_priv *ks, u8 reg)
+static u16 spi_rdreg16(struct spi_hw_priv *ks, u8 reg)
 {
 	u16 *rx;
 
@@ -336,7 +332,7 @@ static u16 spi_rdreg16(struct sw_priv *ks, u8 reg)
  *
  * Note, this read requires the address be aligned to 4 bytes.
  */
-static u32 spi_rdreg32(struct sw_priv *ks, u8 reg)
+static u32 spi_rdreg32(struct spi_hw_priv *ks, u8 reg)
 {
 	u32 *rx;
 

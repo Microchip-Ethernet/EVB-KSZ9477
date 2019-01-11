@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8863 SMI driver
  *
- * Copyright (c) 2018 Microchip Technology Inc.
+ * Copyright (c) 2018-2019 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -37,7 +37,7 @@
 #include "ksz_common.c"
 #include "ksz_req.c"
 
-#define SW_DRV_RELDATE			"Nov 27, 2018"
+#define SW_DRV_RELDATE			"Jan 11, 2019"
 #define SW_DRV_VERSION			"1.2.0"
 
 /* -------------------------------------------------------------------------- */
@@ -50,31 +50,29 @@ static void smi_addr(unsigned reg, int *phyid, int *regnum)
 	*phyid = reg >> 5;
 }
 
-static u8 mdio_r8(struct sw_priv *ks, unsigned reg)
+static u8 mdio_r8(struct smi_hw_priv *ks, unsigned reg)
 {
-	struct smi_hw_priv *hw_priv = ks->hw_dev;
 	int phyid;
 	int regnum;
 	int ret;
 
 	smi_addr(reg, &phyid, &regnum);
 	phyid |= 0x10;
-	ret = hw_priv->smi_read(hw_priv->bus, phyid, regnum);
+	ret = ks->smi_read(ks->bus, phyid, regnum);
 	return (u8)ret;
 }
 
-static void mdio_w8(struct sw_priv *ks, unsigned reg, unsigned val)
+static void mdio_w8(struct smi_hw_priv *ks, unsigned reg, unsigned val)
 {
-	struct smi_hw_priv *hw_priv = ks->hw_dev;
 	int phyid;
 	int regnum;
 	int ret;
 
 	smi_addr(reg, &phyid, &regnum);
-	ret = hw_priv->smi_write(hw_priv->bus, phyid, regnum, val & 0xff);
+	ret = ks->smi_write(ks->bus, phyid, regnum, val & 0xff);
 }
 
-static uint mdio_r_c(struct sw_priv *ks, unsigned reg, int cnt)
+static uint mdio_r_c(struct smi_hw_priv *ks, unsigned reg, int cnt)
 {
 	int i;
 	int ret;
@@ -89,7 +87,7 @@ static uint mdio_r_c(struct sw_priv *ks, unsigned reg, int cnt)
 	return val;
 }
 
-static void mdio_w_c(struct sw_priv *ks, unsigned reg, unsigned val, int cnt)
+static void mdio_w_c(struct smi_hw_priv *ks, unsigned reg, unsigned val, int cnt)
 {
 	int i;
 
@@ -99,7 +97,7 @@ static void mdio_w_c(struct sw_priv *ks, unsigned reg, unsigned val, int cnt)
 	}
 }
 
-static u16 mdio_r16(struct sw_priv *ks, unsigned reg)
+static u16 mdio_r16(struct smi_hw_priv *ks, unsigned reg)
 {
 	uint val;
 
@@ -107,7 +105,7 @@ static u16 mdio_r16(struct sw_priv *ks, unsigned reg)
 	return (u16)val;
 }
 
-static u32 mdio_r32(struct sw_priv *ks, unsigned reg)
+static u32 mdio_r32(struct smi_hw_priv *ks, unsigned reg)
 {
 	uint val;
 
@@ -115,19 +113,19 @@ static u32 mdio_r32(struct sw_priv *ks, unsigned reg)
 	return (u32)val;
 }
 
-static void mdio_w16(struct sw_priv *ks, unsigned reg, unsigned val)
+static void mdio_w16(struct smi_hw_priv *ks, unsigned reg, unsigned val)
 {
 	val = cpu_to_be16(val);
 	mdio_w_c(ks, reg, val, 2);
 }
 
-static void mdio_w32(struct sw_priv *ks, unsigned reg, unsigned val)
+static void mdio_w32(struct smi_hw_priv *ks, unsigned reg, unsigned val)
 {
 	val = cpu_to_be32(val);
 	mdio_w_c(ks, reg, val, 4);
 }
 
-static int mdio_r(struct sw_priv *ks, u32 reg, void *buf, unsigned len)
+static int mdio_r(struct smi_hw_priv *ks, u32 reg, void *buf, unsigned len)
 {
 	int i;
 	int ret;
@@ -140,7 +138,7 @@ static int mdio_r(struct sw_priv *ks, u32 reg, void *buf, unsigned len)
 	return 0;
 }
 
-static int mdio_w(struct sw_priv *ks, u32 reg, void *buf, unsigned len)
+static int mdio_w(struct smi_hw_priv *ks, u32 reg, void *buf, unsigned len)
 {
 	int i;
 	u8 *data = (u8 *)buf;

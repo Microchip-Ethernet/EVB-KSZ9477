@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8863 I2C driver
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -58,7 +58,7 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Nov 27, 2018"
+#define SW_DRV_RELDATE			"Jan 11, 2019"
 #define SW_DRV_VERSION			"1.2.0"
 
 /* -------------------------------------------------------------------------- */
@@ -94,16 +94,12 @@
  * This is the low level write call that issues the necessary i2c message(s)
  * to write data to the register specified in @reg.
  */
-static void i2c_wrreg(struct sw_priv *ks, u8 reg, void *buf, unsigned txl)
+static void i2c_wrreg(struct i2c_hw_priv *ks, u8 reg, void *buf, unsigned txl)
 {
-	struct i2c_hw_priv *hw_priv = ks->hw_dev;
 	struct i2c_msg msg;
 	u8 rxd[10];
-	struct i2c_client *i2c = hw_priv->i2cdev;
+	struct i2c_client *i2c = ks->i2cdev;
 	struct i2c_adapter *adapter = i2c->adapter;
-
-	if (!mutex_is_locked(&ks->lock))
-		pr_alert("W not locked\n");
 
 	rxd[0] = reg;
 	memcpy(&rxd[1], buf, txl);
@@ -125,12 +121,11 @@ static void i2c_wrreg(struct sw_priv *ks, u8 reg, void *buf, unsigned txl)
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void i2c_wrreg32(struct sw_priv *ks, u8 reg, unsigned val)
+static void i2c_wrreg32(struct i2c_hw_priv *ks, u8 reg, unsigned val)
 {
-	struct i2c_hw_priv *hw_priv = ks->hw_dev;
 	int cnt = 4;
 	int i = 0;
-	u8 *txb = (u8 *) hw_priv->txd;
+	u8 *txb = (u8 *) ks->txd;
 
 	while (cnt) {
 		txb[i++] = (u8)(val >> (8 * (cnt - 1)));
@@ -147,12 +142,11 @@ static void i2c_wrreg32(struct sw_priv *ks, u8 reg, unsigned val)
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void i2c_wrreg16(struct sw_priv *ks, u8 reg, unsigned val)
+static void i2c_wrreg16(struct i2c_hw_priv *ks, u8 reg, unsigned val)
 {
-	struct i2c_hw_priv *hw_priv = ks->hw_dev;
 	int cnt = 2;
 	int i = 0;
-	u8 *txb = (u8 *) hw_priv->txd;
+	u8 *txb = (u8 *) ks->txd;
 
 	while (cnt) {
 		txb[i++] = (u8)(val >> (8 * (cnt - 1)));
@@ -169,10 +163,9 @@ static void i2c_wrreg16(struct sw_priv *ks, u8 reg, unsigned val)
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void i2c_wrreg8(struct sw_priv *ks, u8 reg, unsigned val)
+static void i2c_wrreg8(struct i2c_hw_priv *ks, u8 reg, unsigned val)
 {
-	struct i2c_hw_priv *hw_priv = ks->hw_dev;
-	u8 *txb = (u8 *) hw_priv->txd;
+	u8 *txb = (u8 *) ks->txd;
 
 	*txb = (u8) val;
 	i2c_wrreg(ks, reg, txb, 1);
@@ -188,15 +181,11 @@ static void i2c_wrreg8(struct sw_priv *ks, u8 reg, unsigned val)
  * This is the low level read call that issues the necessary i2c message(s)
  * to read data from the register specified in @reg.
  */
-static void i2c_rdreg(struct sw_priv *ks, u8 reg, void *rxb, unsigned rxl)
+static void i2c_rdreg(struct i2c_hw_priv *ks, u8 reg, void *rxb, unsigned rxl)
 {
-	struct i2c_hw_priv *hw_priv = ks->hw_dev;
 	struct i2c_msg msg[2];
-	struct i2c_client *i2c = hw_priv->i2cdev;
+	struct i2c_client *i2c = ks->i2cdev;
 	struct i2c_adapter *adapter = i2c->adapter;
-
-	if (!mutex_is_locked(&ks->lock))
-		pr_alert("R not locked\n");
 
 	msg[0].addr = i2c->addr;
 	msg[0].flags = 0;
@@ -219,7 +208,7 @@ static void i2c_rdreg(struct sw_priv *ks, u8 reg, void *rxb, unsigned rxl)
  *
  * Read a 8bit register from the chip, returning the result.
  */
-static u8 i2c_rdreg8(struct sw_priv *ks, u8 reg)
+static u8 i2c_rdreg8(struct i2c_hw_priv *ks, u8 reg)
 {
 	u8 rxb[1];
 
@@ -234,7 +223,7 @@ static u8 i2c_rdreg8(struct sw_priv *ks, u8 reg)
  *
  * Read a 16bit register from the chip, returning the result.
  */
-static u16 i2c_rdreg16(struct sw_priv *ks, u8 reg)
+static u16 i2c_rdreg16(struct i2c_hw_priv *ks, u8 reg)
 {
 	__le16 rx = 0;
 
@@ -251,7 +240,7 @@ static u16 i2c_rdreg16(struct sw_priv *ks, u8 reg)
  *
  * Note, this read requires the address be aligned to 4 bytes.
  */
-static u32 i2c_rdreg32(struct sw_priv *ks, u8 reg)
+static u32 i2c_rdreg32(struct i2c_hw_priv *ks, u8 reg)
 {
 	__le32 rx = 0;
 

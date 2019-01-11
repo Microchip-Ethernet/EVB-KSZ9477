@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8463 SPI driver
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -62,7 +62,7 @@
 #define KS8463MLI_DEV0			"ksz8463"
 #define KS8463MLI_DEV2			"ksz8463_2"
 
-#define SW_DRV_RELDATE			"Nov 27, 2018"
+#define SW_DRV_RELDATE			"Jan 11, 2019"
 #define SW_DRV_VERSION			"1.2.0"
 
 /* -------------------------------------------------------------------------- */
@@ -115,18 +115,15 @@
  * This is the low level write call that issues the necessary spi message(s)
  * to write data to the register specified in @op.
  */
-static void spi_wrreg(struct sw_priv *ks, unsigned op, unsigned val,
+static void spi_wrreg(struct spi_hw_priv *ks, unsigned op, unsigned val,
 	unsigned txl)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_priv;
-	struct spi_transfer *xfer = &hw_priv->spi_xfer1;
-	struct spi_message *msg = &hw_priv->spi_msg1;
-	struct spi_device *spi = hw_priv->spidev;
+	struct spi_transfer *xfer = &ks->spi_xfer1;
+	struct spi_message *msg = &ks->spi_msg1;
+	struct spi_device *spi = ks->spidev;
 	__le16 txb[4];
 	int ret;
 
-	if (!mutex_is_locked(&ks->lock))
-		pr_alert("W not locked\n");
 	op |= KS_SPIOP_WR;
 	op <<= SPI_TURNAROUND_S;
 	txb[0] = cpu_to_be16(op);
@@ -150,7 +147,7 @@ static void spi_wrreg(struct sw_priv *ks, unsigned op, unsigned val,
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg32(struct sw_priv *ks, unsigned reg, unsigned val)
+static void spi_wrreg32(struct spi_hw_priv *ks, unsigned reg, unsigned val)
 {
 	spi_wrreg(ks, MK_OP(MK_LONG(reg), reg), val, 4);
 }
@@ -163,7 +160,7 @@ static void spi_wrreg32(struct sw_priv *ks, unsigned reg, unsigned val)
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg16(struct sw_priv *ks, unsigned reg, unsigned val)
+static void spi_wrreg16(struct spi_hw_priv *ks, unsigned reg, unsigned val)
 {
 	spi_wrreg(ks, MK_OP(MK_WORD(reg), reg), val, 2);
 }
@@ -176,7 +173,7 @@ static void spi_wrreg16(struct sw_priv *ks, unsigned reg, unsigned val)
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg8(struct sw_priv *ks, unsigned reg, unsigned val)
+static void spi_wrreg8(struct spi_hw_priv *ks, unsigned reg, unsigned val)
 {
 	spi_wrreg(ks, MK_OP(MK_BYTE(reg), reg), val, 1);
 }
@@ -210,23 +207,20 @@ static inline bool ksz_rx_1msg(struct spi_hw_priv *ks)
  * This is the low level read call that issues the necessary spi message(s)
  * to read data from the register specified in @op.
  */
-static void spi_rdreg(struct sw_priv *ks, unsigned op, u8 *rxb, unsigned rxl)
+static void spi_rdreg(struct spi_hw_priv *ks, unsigned op, u8 *rxb, unsigned rxl)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_priv;
 	struct spi_transfer *xfer;
 	struct spi_message *msg;
-	struct spi_device *spi = hw_priv->spidev;
-	__le16 *txb = (__le16 *) hw_priv->txd;
-	u8 *trx = hw_priv->rxd;
+	struct spi_device *spi = ks->spidev;
+	__le16 *txb = (__le16 *) ks->txd;
+	u8 *trx = ks->rxd;
 	int ret;
 
-	if (!mutex_is_locked(&ks->lock))
-		pr_alert("R not locked\n");
 	op |= KS_SPIOP_RD;
 	op <<= SPI_TURNAROUND_S;
 	txb[0] = cpu_to_be16(op);
 
-	if (ksz_rx_1msg(hw_priv)) {
+	if (ksz_rx_1msg(ks)) {
 #if defined(CONFIG_SPI_PEGASUS) || defined(CONFIG_SPI_PEGASUS_MODULE)
 		/*
 		 * A hack to tell KSZ8692 SPI host controller the read command.
@@ -235,15 +229,15 @@ static void spi_rdreg(struct sw_priv *ks, unsigned op, u8 *rxb, unsigned rxl)
 		memcpy(trx, txb, 2 + 2);
 		txb[1] ^= 0xffff;
 #endif
-		msg = &hw_priv->spi_msg1;
-		xfer = &hw_priv->spi_xfer1;
+		msg = &ks->spi_msg1;
+		xfer = &ks->spi_xfer1;
 
 		xfer->tx_buf = txb;
 		xfer->rx_buf = trx;
 		xfer->len = rxl + 2;
 	} else {
-		msg = &hw_priv->spi_msg2;
-		xfer = hw_priv->spi_xfer2;
+		msg = &ks->spi_msg2;
+		xfer = ks->spi_xfer2;
 
 		xfer->tx_buf = txb;
 		xfer->rx_buf = NULL;
@@ -258,7 +252,7 @@ static void spi_rdreg(struct sw_priv *ks, unsigned op, u8 *rxb, unsigned rxl)
 	ret = spi_sync(spi, msg);
 	if (ret < 0)
 		pr_alert("read: spi_sync() failed\n");
-	else if (ksz_rx_1msg(hw_priv))
+	else if (ksz_rx_1msg(ks))
 		memcpy(rxb, trx + 2, rxl);
 	else
 		memcpy(rxb, trx, rxl);
@@ -271,7 +265,7 @@ static void spi_rdreg(struct sw_priv *ks, unsigned op, u8 *rxb, unsigned rxl)
  *
  * Read a 8bit register from the chip, returning the result.
  */
-static u8 spi_rdreg8(struct sw_priv *ks, unsigned reg)
+static u8 spi_rdreg8(struct spi_hw_priv *ks, unsigned reg)
 {
 	u8 rxb[1];
 
@@ -286,7 +280,7 @@ static u8 spi_rdreg8(struct sw_priv *ks, unsigned reg)
  *
  * Read a 16bit register from the chip, returning the result.
  */
-static u16 spi_rdreg16(struct sw_priv *ks, unsigned reg)
+static u16 spi_rdreg16(struct spi_hw_priv *ks, unsigned reg)
 {
 	__le16 rx = 0;
 
@@ -303,7 +297,7 @@ static u16 spi_rdreg16(struct sw_priv *ks, unsigned reg)
  *
  * Note, this read requires the address be aligned to 4 bytes.
  */
-static u32 spi_rdreg32(struct sw_priv *ks, unsigned reg)
+static u32 spi_rdreg32(struct spi_hw_priv *ks, unsigned reg)
 {
 	__le32 rx = 0;
 

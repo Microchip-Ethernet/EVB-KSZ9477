@@ -53,7 +53,7 @@ typedef uint64_t u64;
 
 #if defined(_MSC_VER)
 #include <packon.h>
-#define __packed;
+#define __packed
 #endif
 
 #if defined(__GNUC__)

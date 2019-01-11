@@ -53,7 +53,7 @@ typedef uint64_t u64;
 
 #if defined(_MSC_VER)
 #include <packon.h>
-#define __packed;
+#define __packed
 #endif
 
 #if defined(__GNUC__)
@@ -181,6 +181,7 @@ struct iba_tag {
 } __packed;
 
 #define IBA_FORMAT_KSZ98XX	0x9800
+#define IBA_FORMAT_KSZ93XX	0x9300
 
 struct iba_format {
 	u16 format;
@@ -261,6 +262,8 @@ struct ksz_iba_info {
 
 #define ETH_P_IBA			IBA_TAG_TYPE
 
+u16 iba_ksz_format = IBA_FORMAT_KSZ98XX;
+
 static void prepare_iba(struct ksz_iba_info *iba, u8 *dst, u8 *src)
 {
 	if (iba->dst != dst)
@@ -274,7 +277,7 @@ static void prepare_iba(struct ksz_iba_info *iba, u8 *dst, u8 *src)
 	iba->frame->tag.prio = 0;
 	iba->frame->tag.cfi = 0;
 	iba->frame->tag.mode = 1;
-	iba->frame->format.format = htons(IBA_FORMAT_KSZ98XX);
+	iba->frame->format.format = htons(iba_ksz_format);
 	iba->frame->format.reserved = 0;
 
 	iba->cmds[0].cmd = 0;
@@ -909,6 +912,8 @@ static int iba_burst(struct ksz_iba_info *info, u32 addr, size_t cnt,
 	info->fptr = iba_post_cmd(info);
 	info->regs[0].cmd = (u32) -1;
 	rc = iba_xmit(info);
+	signal_wait(&rx_resp_thread, rx_resp_cnt);
+
 	rc = post(info, data, NULL);
 	rc *= 4;
 	return rc;
@@ -1117,7 +1122,7 @@ static int iba_rcv(struct ksz_iba_info *info, u8 *rdata, int rlen)
 	iba = (struct iba_frame *) ptr;
 
 	if (iba->tag.type != htons(info->tag_type) ||
-	    iba->format.format != htons(IBA_FORMAT_KSZ98XX))
+	    iba->format.format != htons(iba_ksz_format))
 		goto out_drop;
 
 	if (!info->cmds[0].cmd)
@@ -1475,7 +1480,7 @@ int get_cmd(FILE *fp)
 	int p = 0;
 	char cmd[80];
 	char line[80];
-	u8 payload[1500];
+	u32 buf[0x20];
 
 	do {
 		printf("> ");
@@ -1504,6 +1509,24 @@ int get_cmd(FILE *fp)
 				val = iba_r16(&iba_info, hex[0]);
 				printf("%u.%04x: %04x\n",
 					iba_info.id, hex[0], val);
+			} else if (hcount > 2) {
+				if (hex[1] > 0x20)
+					hex[1] = 0x20;
+				i = iba_get(&iba_info, hex[0], hex[1] * 4,
+					(char *)buf);
+				if (!i)
+					break;
+				for (i = 0; i < hex[1]; i++) {
+					if ((i % 8) == 0)
+						printf("%u.%04x: ",
+							iba_info.id,
+							hex[0] + i * 4);
+					printf("%08x ", buf[i]);
+					if ((i % 8) == 7)
+						printf("\n");
+				}
+				if ((i % 8) != 0)
+					printf("\n");
 			} else {
 				val = iba_r32(&iba_info, hex[0]);
 				printf("%u.%04x: %08x\n",
@@ -1528,6 +1551,14 @@ int get_cmd(FILE *fp)
 					iba_info.id = 0;
 			} else
 				printf("%u\n", iba_info.id);
+			break;
+		case 'f':
+			if (count > 1) {
+				iba_ksz_format = hex[0];
+				iba_info.frame->format.format =
+					htons(iba_ksz_format);
+			} else
+				printf("%04x\n", iba_ksz_format);
 			break;
 		case 'p':
 			if (count > 1) {
@@ -1562,6 +1593,7 @@ int get_cmd(FILE *fp)
 			printf("\tl <len>\n");
 			printf("\tt <tag>\n");
 			printf("\tp [0|1]\n");
+			printf("\tc [0|1]\n");
 			printf("\th\thelp\n");
 			printf("\tq\tquit\n");
 			break;

@@ -270,7 +270,7 @@
 							reg = <1>;
 							label = "lan2";
 						};
-						port@3 {
+						port@2 {
 							reg = <2>;
 							label = "cpu";
 							ethernet = <&macb1>;
@@ -298,7 +298,7 @@
 
 					interrupt-parent = <&pioB>;
 					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
-					status = "okay";
+					status = "disabled";
 					ports {
 						#address-cells = <1>;
 						#size-cells = <0>;

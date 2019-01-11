@@ -5399,6 +5399,10 @@ printf("rc: %d\n", port);
 			pr_debug("port %hu: ignoring message", portnum(p));
 			break;
 		}
+#ifdef KSZ_1588_PTP
+		if (dup)
+			msg_put(dup);
+#endif
 		msg_put(msg);
 		return EV_NONE;
 	}
@@ -5421,6 +5425,10 @@ printf("rc: %d\n", port);
 		p->fup_rx++;
 #endif
 	if (port_ignore(p, msg)) {
+#ifdef KSZ_1588_PTP
+		if (dup)
+			msg_put(dup);
+#endif
 		msg_put(msg);
 		return EV_NONE;
 	}
@@ -5479,6 +5487,8 @@ printf("  !! %s %d e\n", __func__, portnum(p));
 			f = (struct follow_up_info_tlv *)
 				dup->follow_up.suffix;
 			clock_get_follow_up_info(p->clock, f);
+			f->type = ntohs(f->type);
+			f->length = ntohs(f->length);
 			tlv_pre_send((struct TLV *)f, NULL);
 			tc_fwd_folup(p, dup);
 		}

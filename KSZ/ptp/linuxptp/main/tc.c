@@ -274,18 +274,19 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 	int cnt, err;
 	double rr;
 	tmv_t now;
-	int logInterval;
+	struct ptp_message *org = msg;
 
 	clock_gettime(CLOCK_MONOTONIC, &msg->ts.host);
 	now = timespec_to_tmv(msg->ts.host);
 
 	/* First send the event message out. */
 	for (p = clock_first_port(q->clock); p; p = LIST_NEXT(p, list)) {
+		msg = org;
 		if (tc_blocked(q, p, msg)) {
 			continue;
 		}
 		if (port_is_ieee8021as(p)) {
-			if (!p->tx_ann)
+			if (!p->tx_ann && !p->no_asCapable)
 				continue;
 			p->fwd_sync = 1;
 			if (p->syncTxContTimeout < p->actual_sync_interval)
@@ -298,15 +299,19 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 			if (p->sync_cnt)
 				continue;
 		}
-		logInterval = msg->header.logMessageInterval;
 		if (port_is_ieee8021as(p)) {
-			struct ptp_header *hdr = &msg->header;
+			struct ptp_header *hdr;
 
 			if (now > p->last_tx_sync_tmv &&
 			    now - p->last_tx_sync_tmv < 20000000ULL) {
 				p->skip_tx_sync = 1;
 				continue;
 			}
+			msg = msg_duplicate(org, q->msg_cnt);
+			if (!msg)
+				break;
+			p->fwd = msg;
+			hdr = &msg->header;
 			hdr->sourcePortIdentity = p->portIdentity;
 			hdr->sourcePortIdentity.portNumber =
 				htons(hdr->sourcePortIdentity.portNumber);
@@ -321,13 +326,18 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 				portnum(q), portnum(p));
 			port_dispatch(p, EV_FAULT_DETECTED, 0);
 		}
-		msg->header.logMessageInterval = logInterval;
 	}
 
 	/* Go back and gather the transmit time stamps. */
 	for (p = clock_first_port(q->clock); p; p = LIST_NEXT(p, list)) {
+		msg = org;
 		if (tc_blocked(q, p, msg)) {
 			continue;
+		}
+		if (port_is_ieee8021as(p)) {
+			msg = p->fwd;
+			if (!msg)
+				continue;
 		}
 		err = transport_txts(p->trp, &p->fda, msg);
 		if (err || !msg_sots_valid(msg)) {
@@ -347,6 +357,10 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 			residence = dbl_tmv(tmv_dbl(residence) * rr);
 		}
 		tc_complete(q, p, msg, residence);
+		if (port_is_ieee8021as(p)) {
+			msg_put(msg);
+			p->fwd = NULL;
+		}
 	}
 
 	return 0;
@@ -470,11 +484,12 @@ int tc_forward(struct port *q, struct ptp_message *msg)
 int tc_fwd_folup(struct port *q, struct ptp_message *msg)
 {
 	struct port *p;
-	int logInterval;
+	struct ptp_message *org = msg;
 
 	clock_gettime(CLOCK_MONOTONIC, &msg->ts.host);
 
 	for (p = clock_first_port(q->clock); p; p = LIST_NEXT(p, list)) {
+		msg = org;
 		if (tc_blocked(q, p, msg)) {
 			continue;
 		}
@@ -482,12 +497,15 @@ int tc_fwd_folup(struct port *q, struct ptp_message *msg)
 			p->skip_tx_sync = 0;
 			continue;
 		}
-		logInterval = msg->header.logMessageInterval;
 		if (port_is_ieee8021as(p)) {
-			struct ptp_header *hdr = &msg->header;
+			struct ptp_header *hdr;
 
-			if (!p->tx_ann)
+			if (!p->tx_ann && !p->no_asCapable)
 				continue;
+			msg = msg_duplicate(org, q->msg_cnt);
+			if (!msg)
+				break;
+			hdr = &msg->header;
 			hdr->sourcePortIdentity = p->portIdentity;
 			hdr->sourcePortIdentity.portNumber =
 				htons(hdr->sourcePortIdentity.portNumber);
@@ -497,7 +515,9 @@ int tc_fwd_folup(struct port *q, struct ptp_message *msg)
 			p->fup_tx++;
 		}
 		tc_complete(q, p, msg, tmv_zero());
-		msg->header.logMessageInterval = logInterval;
+		if (port_is_ieee8021as(p)) {
+			msg_put(msg);
+		}
 	}
 	return 0;
 }

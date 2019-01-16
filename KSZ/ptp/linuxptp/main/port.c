@@ -132,6 +132,9 @@ struct port {
 	struct ptp_message *last_sync;
 	struct ptp_message *last_fup;
 	struct ptp_message *last_announce;
+	struct ptp_message *prev_announce;
+	struct ptp_message *fwd;
+	int msg_cnt;
 	tmv_t last_sync_tmv;
 	tmv_t last_tx_sync_tmv;
 	u32 sync_interval;
@@ -179,6 +182,7 @@ struct port {
 	u32 sync_fup_ok:1;
 	u32 pdelay_resp_missed:1;
 	u32 tx_err:1;
+	u32 rx_sync_timeout:1;
 	u32 last_rx_sec;
 	u32 rx_sec;
 	u32 tx_sec;
@@ -613,13 +617,15 @@ int set_tmo_log(int fd, unsigned int scale, int log_seconds)
 			ns >>= 1;
 		}
 
+#ifdef KSZ_1588_PTP
 		/* -6 */
-		if (ns < NS_PER_SEC && ns >= 15625000) {
+		if (scale == 1 && ns < NS_PER_SEC && ns >= 15625000) {
 			ns -= 50000;
 			/* -5 */
 			if (ns <= 31200000)
 				ns -= 50000;
 		}
+#endif
 		while (ns >= NS_PER_SEC) {
 			ns -= NS_PER_SEC;
 			tmo.it_value.tv_sec++;
@@ -1953,11 +1959,7 @@ calculate_interval(p->syncReceiptTimeout, p->log_sync_interval));
 	clock_gettime(CLOCK_MONOTONIC, &sync_ts);
 #endif
 	return set_tmo_log(p->fda.fd[FD_SYNC_RX_TIMER],
-#ifdef KSZ_1588_PTP_
-			   p->syncReceiptTimeout, p->log_sync_interval);
-#else
 			   p->syncReceiptTimeout, p->logSyncInterval);
-#endif
 }
 
 static int port_set_sync_tx_tmo(struct port *p)
@@ -3089,6 +3091,10 @@ printf("%d=%u:%u %u:%u\n", portnum(p),
 		msg_put(p->last_announce);
 		p->last_announce = NULL;
 	}
+	if (p->prev_announce) {
+		msg_put(p->prev_announce);
+		p->prev_announce = NULL;
+	}
 	if (p->last_sync) {
 		msg_put(p->last_sync);
 		p->last_sync = NULL;
@@ -4108,6 +4114,17 @@ printf(" sync %d=%04x %04x\n", portnum(p),
 	case PS_MASTER:
 	case PS_GRAND_MASTER:
 	case PS_PASSIVE:
+		if (p->rx_sync_timeout &&
+		    (p->state == PS_MASTER || p->state == PS_GRAND_MASTER)) {
+			p->rx_sync_timeout = 0;
+#if 1
+			port_tx_announce(p);
+#endif
+			if (process_announce(p, p->prev_announce)) {
+				clock_update_state(p->clock);
+				break;
+			}
+		}
 		return;
 	case PS_UNCALIBRATED:
 	case PS_SLAVE:
@@ -4308,6 +4325,11 @@ static void process_signaling(struct port *p, struct ptp_message *m)
 #if 1
 #include "tc.c"
 #endif
+
+void port_tc_flush(struct port *p, void *param)
+{
+	tc_flush(p);
+}
 
 /* public methods */
 
@@ -5099,6 +5121,7 @@ enum fsm_event port_event(struct port *p, int fd_index)
 
 	switch (fd_index) {
 	case FD_SYNC_RX_TIMER:
+		p->rx_sync_timeout = 1;
 		if (port_is_ieee8021as(p)) {
 #ifdef KSZ_DBG_TIMER
 printf("syn: %d=%d %d\n", fd_index, p->announceReceiptTimeout, p->syncReceiptTimeout);
@@ -5163,6 +5186,8 @@ printf(" %s ann_rx %d\n", __func__, portnum(p));
 			return EV_NONE;
 		}
 	case FD_ANNOUNCE_TIMER:
+		if (fd_index == FD_ANNOUNCE_TIMER)
+			p->rx_sync_timeout = 0;
 		pr_debug("port %hu: %s timeout", portnum(p),
 			 fd_index == FD_SYNC_RX_TIMER ? "rx sync" : "announce");
 		if (p->best)
@@ -5292,9 +5317,13 @@ printf("%ld.%9ld %ld.%9ld ", fup_ts.tv_sec, fup_ts.tv_nsec, now.tv_sec, now.tv_n
 			now.tv_nsec -= fup_ts.tv_nsec;
 printf(" %lu ", now.tv_nsec);
 		} while (0);
+#endif
+#ifdef KSZ_DBG_MISS
 		fup_to_id = p->fup_seqid;
 printf(" fup to: %x\n", p->fup_seqid);
 #endif
+		for_other_ports(p,
+				port_tc_flush, NULL);
 		if (p->no_announce)
 printf(" no ann timeout\n");
 		if (p->no_announce)
@@ -5319,7 +5348,6 @@ printf(" no ann timeout\n");
 printf(" sync cont\n");
 #endif
 		return EV_NONE;
-#endif
 	case FD_PDELAY_RESP_FUP_TIMER:
 		port_clr_tmo(p->fda.fd[FD_PDELAY_RESP_FUP_TIMER]);
 		if (p->delayed_pdelay_req) {
@@ -5332,6 +5360,7 @@ printf(" sync cont\n");
 			p->delayed_pdelay_resp = NULL;
 		}
 		return EV_NONE;
+#endif
 	}
 
 	msg = msg_allocate();
@@ -5383,6 +5412,7 @@ printf("rc: %d\n", port);
 	    (msg_type(msg) == SYNC || msg_type(msg) == FOLLOW_UP ||
 	    msg_type(msg) == ANNOUNCE)) {
 		dup = msg_duplicate(msg, cnt);
+		p->msg_cnt = cnt;
 	}
 #endif
 	err = msg_post_recv(msg, cnt);
@@ -5487,8 +5517,6 @@ printf("  !! %s %d e\n", __func__, portnum(p));
 			f = (struct follow_up_info_tlv *)
 				dup->follow_up.suffix;
 			clock_get_follow_up_info(p->clock, f);
-			f->type = ntohs(f->type);
-			f->length = ntohs(f->length);
 			tlv_pre_send((struct TLV *)f, NULL);
 			tc_fwd_folup(p, dup);
 		}
@@ -5564,6 +5592,12 @@ printf("  !! %s %d h\n", __func__, portnum(p));
 printf("first ann\n");
 #endif
 			}
+		}
+		if (event == EV_STATE_DECISION_EVENT) {
+			if (p->prev_announce)
+				msg_put(p->prev_announce);
+			msg_get(msg);
+			p->prev_announce = msg;
 		}
 #endif
 		break;

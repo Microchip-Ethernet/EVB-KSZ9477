@@ -2386,6 +2386,11 @@ dbg_phase_change = 1;
 	}
 }
 
+void clock_update_state(struct clock *c)
+{
+	handle_state_decision_event(c);
+}
+
 int skip_sync_check(struct clock *c)
 {
 	return c->skip_sync_check;

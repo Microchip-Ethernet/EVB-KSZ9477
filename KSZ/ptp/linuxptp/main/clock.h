@@ -336,6 +336,7 @@ int is_slave_port(struct clock *c, struct port *p);
 int port_dispatched(struct clock *c);
 void clock_port_dispatch(struct clock *c, struct port *p);
 void clock_update_port_grandmaster(struct clock *c);
+void clock_update_state(struct clock *c);
 int skip_sync_check(struct clock *c);
 int get_initialSyncReceiptTimeout(struct clock *c);
 int get_waitPdelayReqInterval(struct clock *c);

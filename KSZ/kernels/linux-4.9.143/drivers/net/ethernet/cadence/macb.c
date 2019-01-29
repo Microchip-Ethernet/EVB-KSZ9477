@@ -1896,7 +1896,9 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			&header);
 
 	/* Hardware cannot handle scatter/gather mode. */
-	if (skb_shinfo(skb)->nr_frags || header > VLAN_HLEN) {
+	/* Hardware cannot generate checksum correctly for HSR frame. */
+	if (skb_shinfo(skb)->nr_frags ||
+	    (skb->ip_summed && header > VLAN_HLEN)) {
 		struct sk_buff *nskb;
 
 		nskb = dev_alloc_skb(len);

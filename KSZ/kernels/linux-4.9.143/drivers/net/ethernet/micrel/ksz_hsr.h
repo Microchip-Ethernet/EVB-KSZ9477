@@ -1,7 +1,7 @@
 /**
  * Microchip HSR driver header
  *
- * Copyright (c) 2016 Microchip Technology Inc.
+ * Copyright (c) 2016-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -60,6 +60,7 @@ struct ksz_hsr_info {
 	void *sw_dev;
 	struct net_device *dev;
 	struct net_device *redbox;
+	struct net_device *redbox_dev;
 	struct hsr_priv hsr;
 	struct hsr_port hsr_ports[HSR_PT_PORTS];
 	struct hsr_node *center;
@@ -76,10 +77,15 @@ struct ksz_hsr_info {
 	int len;
 	int state;
 	u8 ports[2];
+	u8 hsr_index;
+	u8 redbox_index;
 	u32 cap;
 	u16 member;
 	u16 part_cnt;
+	struct sk_buff_head txq;
+	struct work_struct tx_proc;
 	struct delayed_work chk_ring;
+	u16 redbox_vlan;
 	u16 seq_num;
 	u16 check:1;
 	u16 ring:1;
@@ -87,6 +93,7 @@ struct ksz_hsr_info {
 	u16 p2_down:1;
 	u16 p1_lost:1;
 	u16 p2_lost:1;
+	u16 redbox_up:1;
 
 	struct sw_dev_info *dev_info;
 	uint notifications;

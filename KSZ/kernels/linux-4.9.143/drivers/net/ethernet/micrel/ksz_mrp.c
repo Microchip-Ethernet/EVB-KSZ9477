@@ -5471,8 +5471,9 @@ static void mrp_cfg_mcast_addr(struct mrp_info *mrp, u16 fid, u8 *dest,
 {
 	struct mrp_node *mac_node;
 	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	int override = (ports == 0);
 
-	sw->ops->cfg_mac(sw, 1, dest, ports, true, fid != 0, fid);
+	sw->ops->cfg_mac(sw, 1, dest, ports, override, fid != 0, fid);
 	mac_node = mrp_get_mac_info(&mrp->mac_list, dest, fid);
 	if (mac_node) {
 		struct mrp_mac_info *mac;
@@ -7464,7 +7465,7 @@ static void mrp_chk_blocked_addr(struct mrp_info *mrp)
 				ports = sw->PORT_MASK;
 			sw->ops->cfg_mac(sw, mac->index, mac->addr, ports,
 					 false, mac->fid != 0, mac->fid);
-			mac->jiffies = jiffies + msecs_to_jiffies(10000);
+			mac->jiffies = jiffies + msecs_to_jiffies(15000);
 		}
 		prev = next;
 		next = prev->next;

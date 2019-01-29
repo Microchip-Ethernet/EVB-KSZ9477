@@ -14,6 +14,10 @@ create_br_dev() {
     VLAN=0
     if [ -e "/sys/class/net/eth$ETH/sw/two_dev" ]; then
         VLAN=$(cat /sys/class/net/eth$ETH/sw/two_dev)
+        if [ $VLAN -eq 2 ]; then
+            ifconfig eth1 0.0.0.0
+            VLAN=0
+        fi
     fi
     [ $VLAN -eq 0 ] && exit 0
 

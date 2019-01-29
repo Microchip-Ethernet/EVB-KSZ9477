@@ -123,6 +123,8 @@ int prp = 0;
 int prp_size = 60;
 int ptp_proto = PTP_PROTO;
 int port_acl_test = 0;
+int wrong_ptp = 0;
+int wrong_port = 0;
 
 SOCKET event_fd;
 SOCKET general_fd;
@@ -925,6 +927,18 @@ void send_msg(struct ptp_msg *msg, int family, int len)
 		len = tail->messageLength + ptp_start;
 		tail->messageLength |= (0xA | 1) << PRP_LANE_ID_SHIFT;
 		tail->messageLength = htons(tail->messageLength);
+	}
+	if (wrong_ptp) {
+		int i = ptp_start;
+
+		buf[i++] = 0x68;
+		buf[i++] = 0x65;
+		buf[i++] = 0x6c;
+		buf[i++] = 0x70;
+		buf[i++] = 0x0d;
+		buf[i++] = 0x0a;
+		buf[i++] = 0x0d;
+		buf[i++] = 0x0a;
 	}
 	Sendto(sockfd, buf, len, 0, (SA *) pservaddr, servlen);
 }  /* send_msg */
@@ -2302,6 +2316,8 @@ static SOCKET create_sock(char *devname, char *ptp_ip, char *p2p_ip,
 
 	sockfd = Socket(family, SOCK_DGRAM, 0);
 
+	if (port == PTP_GENERAL_PORT && wrong_port)
+		port = 321;
 	if (AF_INET6 == family) {
 		servaddr6.sin6_family = family;
 		memcpy(servaddr6.sin6_addr.s6_addr, &in6addr_any,
@@ -3165,6 +3181,12 @@ int main(int argc, char *argv[])
 						break;
 					reserved3 = atoi(argv[i]);
 					break;
+				case 'w':
+					wrong_ptp = 1;
+					break;
+				case 'x':
+					wrong_port = 1;
+					break;
 				case 't':
 					port_acl_test = 1;
 					break;
@@ -3253,12 +3275,16 @@ int main(int argc, char *argv[])
 
 		general_addr6.sin6_family = family;
 		general_addr6.sin6_port = htons(PTP_GENERAL_PORT);
+		if (wrong_port)
+			general_addr6.sin6_port = htons(321);
 
 		p2p_event_addr6.sin6_family = family;
 		p2p_event_addr6.sin6_port = htons(PTP_EVENT_PORT);
 
 		p2p_general_addr6.sin6_family = family;
 		p2p_general_addr6.sin6_port = htons(PTP_GENERAL_PORT);
+		if (wrong_port)
+			p2p_general_addr6.sin6_port = htons(321);
 		if (ptp_unicast) {
 			inet_pton(family, dest_ip, &event_addr6.sin6_addr);
 			inet_pton(family, dest_ip, &general_addr6.sin6_addr);
@@ -3283,12 +3309,16 @@ int main(int argc, char *argv[])
 
 		general_addr.sin_family = family;
 		general_addr.sin_port = htons(PTP_GENERAL_PORT);
+		if (wrong_port)
+			general_addr.sin_port = htons(321);
 
 		p2p_event_addr.sin_family = family;
 		p2p_event_addr.sin_port = htons(PTP_EVENT_PORT);
 
 		p2p_general_addr.sin_family = family;
 		p2p_general_addr.sin_port = htons(PTP_GENERAL_PORT);
+		if (wrong_port)
+			p2p_general_addr.sin_port = htons(321);
 		if (ptp_unicast && AF_INET == ip_family) {
 			inet_pton(family, dest_ip,
 				&event_addr.sin_addr.s_addr);

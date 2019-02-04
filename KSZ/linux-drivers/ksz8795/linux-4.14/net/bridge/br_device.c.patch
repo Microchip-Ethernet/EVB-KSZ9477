@@ -1,0 +1,12 @@
+--- br_device.c.orig	2019-01-07 10:57:05.058838508 -0800
++++ br_device.c	2019-01-07 09:56:57.026852272 -0800
+@@ -393,6 +393,9 @@
+ 	dev->hw_features = COMMON_FEATURES | NETIF_F_HW_VLAN_CTAG_TX |
+ 			   NETIF_F_HW_VLAN_STAG_TX;
+ 	dev->vlan_features = COMMON_FEATURES;
++#ifdef CONFIG_KSZ_SWITCH
++	dev->hard_header_len += 6;
++#endif
+ 
+ 	br->dev = dev;
+ 	spin_lock_init(&br->lock);

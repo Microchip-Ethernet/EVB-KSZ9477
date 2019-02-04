@@ -23,6 +23,8 @@ config NET_DSA_BCM_SF2
 
 source "drivers/net/dsa/b53/Kconfig"
 
+source "drivers/net/dsa/microchip/Kconfig"
+
 source "drivers/net/dsa/mv88e6xxx/Kconfig"
 
 config NET_DSA_QCA8K

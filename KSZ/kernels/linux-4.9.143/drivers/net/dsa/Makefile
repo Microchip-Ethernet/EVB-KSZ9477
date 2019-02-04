@@ -3,4 +3,5 @@ obj-$(CONFIG_NET_DSA_BCM_SF2)	+= bcm_sf2.o
 obj-$(CONFIG_NET_DSA_QCA8K)	+= qca8k.o
 
 obj-y				+= b53/
+obj-y				+= microchip/
 obj-y				+= mv88e6xxx/

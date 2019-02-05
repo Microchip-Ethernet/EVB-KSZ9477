@@ -21,7 +21,7 @@
 #define SPI_TURNAROUND_S		2
 
 #define SPI_CMD_LEN			2
-#define REG_SIZE			0x200
+#define REG_SIZE			0x800
 
 #define SPI_REGMAP_PAD			SPI_TURNAROUND_S
 #define SPI_REGMAP_VAL			8

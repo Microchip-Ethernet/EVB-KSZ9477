@@ -183,13 +183,13 @@ static inline void ksz_pwrite32(struct ksz_device *dev, int port, int offset,
 	ksz_write32(dev, PORT_CTRL_ADDR(port, offset), data);
 }
 
-static void ksz_cfg(struct ksz_device *dev, u32 addr, u8 bits, bool set)
+static inline void ksz_cfg(struct ksz_device *dev, u32 addr, u8 bits, bool set)
 {
 	regmap_update_bits(dev->regmap[0], addr, bits, set ? bits : 0);
 }
 
-static void ksz_port_cfg(struct ksz_device *dev, int port, int offset, u8 bits,
-			 bool set)
+static inline void ksz_port_cfg(struct ksz_device *dev, int port, int offset,
+				u8 bits, bool set)
 {
 	regmap_update_bits(dev->regmap[0], PORT_CTRL_ADDR(port, offset), bits,
 			   set ? bits : 0);

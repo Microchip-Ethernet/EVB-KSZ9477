@@ -81,15 +81,27 @@ static const struct {
 	{ "tx_discards" },
 };
 
+static void ksz_cfg16(struct ksz_device *dev, u32 addr, u16 bits, bool set)
+{
+	regmap_update_bits(dev->regmap[1], addr, bits, set ? bits : 0);
+}
+
+static void ksz_port_cfg16(struct ksz_device *dev, int port, int offset,
+			   u16 bits, bool set)
+{
+	regmap_update_bits(dev->regmap[1], PORT_CTRL_ADDR(port, offset), bits,
+			   set ? bits : 0);
+}
+
 static int ksz8463_reset_switch(struct ksz_device *dev)
 {
-	u8 data;
+	u16 data;
 
 	/* reset switch */
-	ksz_read8(dev, REG_SW_RESET, &data);
-	ksz_write8(dev, REG_SW_RESET, data | GLOBAL_SOFTWARE_RESET);
+	ksz_read16(dev, REG_SW_RESET, &data);
+	ksz_write16(dev, REG_SW_RESET, data | GLOBAL_SOFTWARE_RESET);
 	udelay(1);
-	ksz_write8(dev, REG_SW_RESET, data);
+	ksz_write16(dev, REG_SW_RESET, data);
 
 	return 0;
 }
@@ -99,22 +111,22 @@ static void ksz8463_set_prio_queue(struct ksz_device *dev, int port, int queue)
 	/* Number of queues can only be 1, 2, or 4. */
 	switch (queue) {
 	case 4:
-		ksz_port_cfg(dev, port, P_2_QUEUE_CTRL, PORT_2_QUEUES_ENABLE,
-			     false);
-		ksz_port_cfg(dev, port, P_4_QUEUE_CTRL, PORT_4_QUEUES_ENABLE,
-			     true);
+		ksz_port_cfg16(dev, port, P_2_QUEUE_CTRL, PORT_2_QUEUES_ENABLE,
+			       false);
+		ksz_port_cfg16(dev, port, P_4_QUEUE_CTRL, PORT_4_QUEUES_ENABLE,
+			       true);
 		break;
 	case 2:
-		ksz_port_cfg(dev, port, P_2_QUEUE_CTRL, PORT_2_QUEUES_ENABLE,
-			     true);
-		ksz_port_cfg(dev, port, P_4_QUEUE_CTRL, PORT_4_QUEUES_ENABLE,
-			     false);
+		ksz_port_cfg16(dev, port, P_2_QUEUE_CTRL, PORT_2_QUEUES_ENABLE,
+			       true);
+		ksz_port_cfg16(dev, port, P_4_QUEUE_CTRL, PORT_4_QUEUES_ENABLE,
+			       false);
 		break;
 	default:
-		ksz_port_cfg(dev, port, P_2_QUEUE_CTRL, PORT_2_QUEUES_ENABLE,
-			     false);
-		ksz_port_cfg(dev, port, P_4_QUEUE_CTRL, PORT_4_QUEUES_ENABLE,
-			     false);
+		ksz_port_cfg16(dev, port, P_2_QUEUE_CTRL, PORT_2_QUEUES_ENABLE,
+			       false);
+		ksz_port_cfg16(dev, port, P_4_QUEUE_CTRL, PORT_4_QUEUES_ENABLE,
+			       false);
 	}
 }
 
@@ -441,203 +453,48 @@ static void ksz8463_w_vlan_table(struct ksz_device *dev, u16 addr, u32 vlan)
 #define KSZ8463_SW_ID		0x8463
 #define PHY_ID_KSZ8463_SW	((KSZ8463_ID_HI << 16) | KSZ8463_SW_ID)
 
+/*
+ * Tha  2011/03/11
+ * The hardware register reads low word first of PHY id instead of high word.
+ */
+static int actual_reg(int regnum)
+{
+	if (2 == regnum)
+		regnum = 3;
+	else if (3 == regnum)
+		regnum = 2;
+	return regnum;
+}
+
 static void ksz8463_r_phy(struct ksz_device *dev, u16 phy, u16 reg, u16 *val)
 {
-	struct ksz_port *port;
-	u8 ctrl;
-	u8 restart;
-	u8 link;
-	u8 speed;
-	u8 p = phy;
-	u16 data = 0;
-	int processed = true;
+	u16 base;
+	u16 data;
 
-	port = &dev->ports[p];
-	switch (reg) {
-	case PHY_REG_CTRL:
-		ksz_pread8(dev, p, P_PHY_CTRL, &ctrl);
-		ksz_pread8(dev, p, P_NEG_RESTART_CTRL, &restart);
-		ksz_pread8(dev, p, P_SPEED_STATUS, &speed);
-		if (restart & PORT_LOOPBACK)
-			data |= PHY_LOOPBACK;
-		if (ctrl & PORT_FORCE_100_MBIT)
-			data |= PHY_SPEED_100MBIT;
-		if (ctrl & PORT_AUTO_NEG_ENABLE)
-			data |= PHY_AUTO_NEG_ENABLE;
-		if (restart & PORT_POWER_DOWN)
-			data |= PHY_POWER_DOWN;
-		if (restart & PORT_AUTO_NEG_RESTART)
-			data |= PHY_AUTO_NEG_RESTART;
-		if (ctrl & PORT_FORCE_FULL_DUPLEX)
-			data |= PHY_FULL_DUPLEX;
-		if (speed & PORT_HP_MDIX)
-			data |= PHY_HP_MDIX;
-		if (restart & PORT_FORCE_MDIX)
-			data |= PHY_FORCE_MDIX;
-		if (restart & PORT_AUTO_MDIX_DISABLE)
-			data |= PHY_AUTO_MDIX_DISABLE;
-		if (restart & PORT_TX_DISABLE)
-			data |= PHY_TRANSMIT_DISABLE;
-		if (restart & PORT_LED_OFF)
-			data |= PHY_LED_DISABLE;
-		break;
-	case PHY_REG_STATUS:
-		ksz_pread8(dev, p, P_LINK_STATUS, &link);
-		ksz_pread8(dev, p, P_SPEED_STATUS, &speed);
-		data = PHY_100BTX_FD_CAPABLE |
-		       PHY_100BTX_CAPABLE |
-		       PHY_10BT_FD_CAPABLE |
-		       PHY_10BT_CAPABLE |
-		       PHY_AUTO_NEG_CAPABLE;
-		if (link & PORT_AUTO_NEG_COMPLETE)
-			data |= PHY_AUTO_NEG_ACKNOWLEDGE;
-		if (link & PORT_STAT_LINK_GOOD)
-			data |= PHY_LINK_STATUS;
-		if (speed & PORT_REMOTE_FAULT)
-			data |= PHY_REMOTE_FAULT;
-		break;
-	case PHY_REG_ID_1:
-		data = KSZ8463_ID_HI;
-		break;
-	case PHY_REG_ID_2:
-		data = KSZ8463_ID_LO;
+	if (reg >= 6)
+		return;
+	reg = actual_reg(reg);
+	if (phy == 1)
+		base = PHY2_REG_CTRL;
+	else
+		base = PHY1_REG_CTRL;
+	ksz_read16(dev, base + reg * 2, &data);
+	if (reg == PHY_REG_ID_1)
 		data = KSZ8463_SW_ID;
-		break;
-	case PHY_REG_AUTO_NEGOTIATION:
-		ksz_pread8(dev, p, P_PHY_CTRL, &ctrl);
-		data = PHY_AUTO_NEG_802_3;
-		if (ctrl & PORT_AUTO_NEG_SYM_PAUSE)
-			data |= PHY_AUTO_NEG_SYM_PAUSE;
-		if (ctrl & PORT_AUTO_NEG_100BTX_FD)
-			data |= PHY_AUTO_NEG_100BTX_FD;
-		if (ctrl & PORT_AUTO_NEG_100BTX)
-			data |= PHY_AUTO_NEG_100BTX;
-		if (ctrl & PORT_AUTO_NEG_10BT_FD)
-			data |= PHY_AUTO_NEG_10BT_FD;
-		if (ctrl & PORT_AUTO_NEG_10BT)
-			data |= PHY_AUTO_NEG_10BT;
-		break;
-	case PHY_REG_REMOTE_CAPABILITY:
-		ksz_pread8(dev, p, P_LINK_STATUS, &link);
-		data = PHY_AUTO_NEG_802_3;
-		if (link & PORT_REMOTE_SYM_PAUSE)
-			data |= PHY_AUTO_NEG_SYM_PAUSE;
-		if (link & PORT_REMOTE_100BTX_FD)
-			data |= PHY_AUTO_NEG_100BTX_FD;
-		if (link & PORT_REMOTE_100BTX)
-			data |= PHY_AUTO_NEG_100BTX;
-		if (link & PORT_REMOTE_10BT_FD)
-			data |= PHY_AUTO_NEG_10BT_FD;
-		if (link & PORT_REMOTE_10BT)
-			data |= PHY_AUTO_NEG_10BT;
-		break;
-	default:
-		processed = false;
-		break;
-	}
-	if (processed)
-		*val = data;
+	*val = data;
 }
 
 static void ksz8463_w_phy(struct ksz_device *dev, u16 phy, u16 reg, u16 val)
 {
-	u8 ctrl;
-	u8 restart;
-	u8 speed;
-	u8 data;
-	u8 p = phy;
+	u16 base;
 
-	switch (reg) {
-	case PHY_REG_CTRL:
-
-		/* Do not support PHY reset function. */
-		if (val & PHY_RESET_NOT)
-			break;
-		ksz_pread8(dev, p, P_SPEED_STATUS, &speed);
-		data = speed;
-		if (val & PHY_HP_MDIX)
-			data |= PORT_HP_MDIX;
-		else
-			data &= ~PORT_HP_MDIX;
-		if (data != speed)
-			ksz_pwrite8(dev, p, P_SPEED_STATUS, data);
-		ksz_pread8(dev, p, P_PHY_CTRL, &ctrl);
-		data = ctrl;
-		if (val & PHY_AUTO_NEG_ENABLE)
-			data |= PORT_AUTO_NEG_ENABLE;
-		else
-			data &= ~PORT_AUTO_NEG_ENABLE;
-
-		/* Fiber port does not support auto-negotiation. */
-		if (dev->ports[p].fiber)
-			data &= ~PORT_AUTO_NEG_ENABLE;
-		if (val & PHY_SPEED_100MBIT)
-			data |= PORT_FORCE_100_MBIT;
-		else
-			data &= ~PORT_FORCE_100_MBIT;
-		if (val & PHY_FULL_DUPLEX)
-			data |= PORT_FORCE_FULL_DUPLEX;
-		else
-			data &= ~PORT_FORCE_FULL_DUPLEX;
-		if (data != ctrl)
-			ksz_pwrite8(dev, p, P_PHY_CTRL, data);
-		ksz_pread8(dev, p, P_NEG_RESTART_CTRL, &restart);
-		data = restart;
-		if (val & PHY_LED_DISABLE)
-			data |= PORT_LED_OFF;
-		else
-			data &= ~PORT_LED_OFF;
-		if (val & PHY_TRANSMIT_DISABLE)
-			data |= PORT_TX_DISABLE;
-		else
-			data &= ~PORT_TX_DISABLE;
-		if (val & PHY_AUTO_NEG_RESTART)
-			data |= PORT_AUTO_NEG_RESTART;
-		else
-			data &= ~(PORT_AUTO_NEG_RESTART);
-		if (val & PHY_POWER_DOWN)
-			data |= PORT_POWER_DOWN;
-		else
-			data &= ~PORT_POWER_DOWN;
-		if (val & PHY_AUTO_MDIX_DISABLE)
-			data |= PORT_AUTO_MDIX_DISABLE;
-		else
-			data &= ~PORT_AUTO_MDIX_DISABLE;
-		if (val & PHY_FORCE_MDIX)
-			data |= PORT_FORCE_MDIX;
-		else
-			data &= ~PORT_FORCE_MDIX;
-		if (val & PHY_LOOPBACK)
-			data |= PORT_LOOPBACK;
-		else
-			data &= ~PORT_LOOPBACK;
-		if (data != restart)
-			ksz_pwrite8(dev, p, P_NEG_RESTART_CTRL, data);
-		break;
-	case PHY_REG_AUTO_NEGOTIATION:
-		ksz_pread8(dev, p, P_PHY_CTRL, &ctrl);
-		data = ctrl;
-		data &= ~(PORT_AUTO_NEG_SYM_PAUSE |
-			  PORT_AUTO_NEG_100BTX_FD |
-			  PORT_AUTO_NEG_100BTX |
-			  PORT_AUTO_NEG_10BT_FD |
-			  PORT_AUTO_NEG_10BT);
-		if (val & PHY_AUTO_NEG_SYM_PAUSE)
-			data |= PORT_AUTO_NEG_SYM_PAUSE;
-		if (val & PHY_AUTO_NEG_100BTX_FD)
-			data |= PORT_AUTO_NEG_100BTX_FD;
-		if (val & PHY_AUTO_NEG_100BTX)
-			data |= PORT_AUTO_NEG_100BTX;
-		if (val & PHY_AUTO_NEG_10BT_FD)
-			data |= PORT_AUTO_NEG_10BT_FD;
-		if (val & PHY_AUTO_NEG_10BT)
-			data |= PORT_AUTO_NEG_10BT;
-		if (data != ctrl)
-			ksz_pwrite8(dev, p, P_PHY_CTRL, data);
-		break;
-	default:
-		break;
-	}
+	if (reg >= 6)
+		return;
+	if (phy == 1)
+		base = PHY2_REG_CTRL;
+	else
+		base = PHY1_REG_CTRL;
+	ksz_write16(dev, base + reg * 2, val);
 }
 
 static enum dsa_tag_protocol ksz8463_get_tag_protocol(struct dsa_switch *ds)
@@ -662,12 +519,12 @@ static const u8 stp_multicast_addr[] = {
 static void ksz8463_cfg_port_member(struct ksz_device *dev, int port,
 				    u8 member)
 {
-	u8 data;
+	u16 data;
 
-	ksz_pread8(dev, port, P_MIRROR_CTRL, &data);
+	ksz_pread16(dev, port, P_MIRROR_CTRL, &data);
 	data &= ~PORT_VLAN_MEMBERSHIP;
 	data |= (member & dev->port_mask);
-	ksz_pwrite8(dev, port, P_MIRROR_CTRL, data);
+	ksz_pwrite16(dev, port, P_MIRROR_CTRL, data);
 	dev->ports[port].member = member;
 }
 
@@ -676,11 +533,11 @@ static void ksz8463_port_stp_state_set(struct dsa_switch *ds, int port,
 {
 	struct ksz_device *dev = ds->priv;
 	struct ksz_port *p = &dev->ports[port];
-	u8 data;
+	u16 data;
 	int member = -1;
 	int forward = dev->member;
 
-	ksz_pread8(dev, port, P_STP_CTRL, &data);
+	ksz_pread16(dev, port, P_STP_CTRL, &data);
 	data &= ~(PORT_TX_ENABLE | PORT_RX_ENABLE | PORT_LEARN_DISABLE);
 
 	switch (state) {
@@ -724,7 +581,7 @@ static void ksz8463_port_stp_state_set(struct dsa_switch *ds, int port,
 		return;
 	}
 
-	ksz_pwrite8(dev, port, P_STP_CTRL, data);
+	ksz_pwrite16(dev, port, P_STP_CTRL, data);
 	p->stp_state = state;
 	if (data & PORT_RX_ENABLE)
 		dev->rx_ports |= (1 << port);
@@ -757,7 +614,7 @@ static void ksz8463_flush_dyn_mac_table(struct ksz_device *dev, int port)
 	int cnt;
 	int first;
 	int index;
-	u8 learn[TOTAL_PORT_NUM];
+	u16 learn[TOTAL_PORT_NUM];
 
 	if ((uint)port < TOTAL_PORT_NUM) {
 		first = port;
@@ -768,15 +625,15 @@ static void ksz8463_flush_dyn_mac_table(struct ksz_device *dev, int port)
 		cnt = dev->mib_port_cnt;
 	}
 	for (index = first; index < cnt; index++) {
-		ksz_pread8(dev, index, P_STP_CTRL, &learn[index]);
+		ksz_pread16(dev, index, P_STP_CTRL, &learn[index]);
 		if (!(learn[index] & PORT_LEARN_DISABLE))
-			ksz_pwrite8(dev, index, P_STP_CTRL,
-				    learn[index] | PORT_LEARN_DISABLE);
+			ksz_pwrite16(dev, index, P_STP_CTRL,
+				     learn[index] | PORT_LEARN_DISABLE);
 	}
-	ksz_cfg(dev, S_FLUSH_TABLE_CTRL, SW_FLUSH_DYN_MAC_TABLE, true);
+	ksz_cfg16(dev, S_FLUSH_TABLE_CTRL, SW_FLUSH_DYN_MAC_TABLE, true);
 	for (index = first; index < cnt; index++) {
 		if (!(learn[index] & PORT_LEARN_DISABLE))
-			ksz_pwrite8(dev, index, P_STP_CTRL, learn[index]);
+			ksz_pwrite16(dev, index, P_STP_CTRL, learn[index]);
 	}
 }
 
@@ -792,9 +649,9 @@ static int ksz8463_port_vlan_filtering(struct dsa_switch *ds, int port,
 		dev->vlan_ports &= ~(1 << port);
 	if ((flag && !vlan_ports) ||
 	    (!flag && !dev->vlan_ports && dev->vlan_up)) {
-		ksz_cfg(dev, S_MIRROR_CTRL, SW_VLAN_ENABLE, flag);
-		ksz_port_cfg(dev, dev->cpu_port, P_TAG_CTRL, PORT_INSERT_TAG,
-			     false);
+		ksz_cfg16(dev, S_MIRROR_CTRL, SW_VLAN_ENABLE, flag);
+		ksz_port_cfg16(dev, dev->cpu_port, P_TAG_CTRL, PORT_INSERT_TAG,
+			       false);
 		dev->vlan_up = flag;
 	}
 
@@ -820,7 +677,7 @@ static void ksz8463_port_vlan_add(struct dsa_switch *ds, int port,
 	if (!dev->vlan_up)
 		return;
 
-	ksz_port_cfg(dev, port, P_TAG_CTRL, PORT_REMOVE_TAG, untagged);
+	ksz_port_cfg16(dev, port, P_TAG_CTRL, PORT_REMOVE_TAG, untagged);
 
 	for (vid = vlan->vid_begin; vid <= vlan->vid_end; vid++) {
 
@@ -859,8 +716,8 @@ static void ksz8463_port_vlan_add(struct dsa_switch *ds, int port,
 		/* Switch may use lookup to forward unicast frame. */
 		dev->dev_ops->flush_dyn_mac_table(dev, port);
 		if (!dev->vid_ports)
-			ksz_port_cfg(dev, dev->cpu_port, P_TAG_CTRL,
-				     PORT_INSERT_TAG, true);
+			ksz_port_cfg16(dev, dev->cpu_port, P_TAG_CTRL,
+				       PORT_INSERT_TAG, true);
 		dev->vid_ports |= (1 << port);
 	}
 }
@@ -918,8 +775,8 @@ static int ksz8463_port_vlan_del(struct dsa_switch *ds, int port,
 		dev->dev_ops->flush_dyn_mac_table(dev, port);
 		dev->vid_ports &= ~(1 << port);
 		if (!dev->vid_ports)
-			ksz_port_cfg(dev, dev->cpu_port, P_TAG_CTRL,
-				     PORT_INSERT_TAG, false);
+			ksz_port_cfg16(dev, dev->cpu_port, P_TAG_CTRL,
+				       PORT_INSERT_TAG, false);
 	}
 
 	return 0;
@@ -933,19 +790,19 @@ static int ksz8463_port_mirror_add(struct dsa_switch *ds, int port,
 	struct ksz_device *dev = ds->priv;
 
 	if (ingress) {
-		ksz_port_cfg(dev, port, P_MIRROR_CTRL, PORT_MIRROR_RX, true);
+		ksz_port_cfg16(dev, port, P_MIRROR_CTRL, PORT_MIRROR_RX, true);
 		dev->mirror_rx |= (1 << port);
 	} else {
-		ksz_port_cfg(dev, port, P_MIRROR_CTRL, PORT_MIRROR_TX, true);
+		ksz_port_cfg16(dev, port, P_MIRROR_CTRL, PORT_MIRROR_TX, true);
 		dev->mirror_tx |= (1 << port);
 	}
 
-	ksz_port_cfg(dev, port, P_MIRROR_CTRL, PORT_MIRROR_SNIFFER, false);
+	ksz_port_cfg16(dev, port, P_MIRROR_CTRL, PORT_MIRROR_SNIFFER, false);
 
 	/* configure mirror port */
 	if (dev->mirror_rx || dev->mirror_tx)
-		ksz_port_cfg(dev, mirror->to_local_port, P_MIRROR_CTRL,
-			     PORT_MIRROR_SNIFFER, true);
+		ksz_port_cfg16(dev, mirror->to_local_port, P_MIRROR_CTRL,
+			       PORT_MIRROR_SNIFFER, true);
 
 	return 0;
 }
@@ -954,21 +811,21 @@ static void ksz8463_port_mirror_del(struct dsa_switch *ds, int port,
 				    struct dsa_mall_mirror_tc_entry *mirror)
 {
 	struct ksz_device *dev = ds->priv;
-	u8 data;
+	u16 data;
 
 	if (mirror->ingress) {
-		ksz_port_cfg(dev, port, P_MIRROR_CTRL, PORT_MIRROR_RX, false);
+		ksz_port_cfg16(dev, port, P_MIRROR_CTRL, PORT_MIRROR_RX, false);
 		dev->mirror_rx &= ~(1 << port);
 	} else {
-		ksz_port_cfg(dev, port, P_MIRROR_CTRL, PORT_MIRROR_TX, false);
+		ksz_port_cfg16(dev, port, P_MIRROR_CTRL, PORT_MIRROR_TX, false);
 		dev->mirror_tx &= ~(1 << port);
 	}
 
-	ksz_pread8(dev, port, P_MIRROR_CTRL, &data);
+	ksz_pread16(dev, port, P_MIRROR_CTRL, &data);
 
 	if (!dev->mirror_rx && !dev->mirror_tx)
-		ksz_port_cfg(dev, mirror->to_local_port, P_MIRROR_CTRL,
-			     PORT_MIRROR_SNIFFER, false);
+		ksz_port_cfg16(dev, mirror->to_local_port, P_MIRROR_CTRL,
+			       PORT_MIRROR_SNIFFER, false);
 }
 #endif
 
@@ -989,18 +846,19 @@ static void ksz8463_port_setup(struct ksz_device *dev, int port, bool cpu_port)
 	struct ksz_port *p = &dev->ports[port];
 
 	/* enable broadcast storm limit */
-	ksz_port_cfg(dev, port, P_BCAST_STORM_CTRL, PORT_BROADCAST_STORM, true);
+	ksz_port_cfg16(dev, port, P_BCAST_STORM_CTRL, PORT_BROADCAST_STORM,
+		       true);
 
 	ksz8463_set_prio_queue(dev, port, 4);
 
 	/* disable DiffServ priority */
-	ksz_port_cfg(dev, port, P_PRIO_CTRL, PORT_DIFFSERV_ENABLE, false);
+	ksz_port_cfg16(dev, port, P_PRIO_CTRL, PORT_DIFFSERV_ENABLE, false);
 
 	/* replace priority */
-	ksz_port_cfg(dev, port, P_MIRROR_CTRL, PORT_802_1P_REMAPPING, false);
+	ksz_port_cfg16(dev, port, P_MIRROR_CTRL, PORT_802_1P_REMAPPING, false);
 
 	/* enable 802.1p priority */
-	ksz_port_cfg(dev, port, P_PRIO_CTRL, PORT_802_1P_ENABLE, true);
+	ksz_port_cfg16(dev, port, P_PRIO_CTRL, PORT_802_1P_ENABLE, true);
 
 	if (cpu_port) {
 		member = dev->port_mask;
@@ -1022,9 +880,9 @@ static void ksz8463_config_cpu_port(struct dsa_switch *ds)
 	struct ksz_device *dev = ds->priv;
 	struct ksz_port *p;
 	int i;
-	u8 copper;
+	u16 fiber = 0;
 
-	ksz_cfg(dev, S_TAIL_TAG_CTRL, SW_TAIL_TAG_ENABLE, true);
+	ksz_cfg16(dev, S_TAIL_TAG_CTRL, SW_TAIL_TAG_ENABLE, true);
 
 	p = &dev->ports[dev->cpu_port];
 	p->vid_member = dev->port_mask;
@@ -1045,27 +903,33 @@ static void ksz8463_config_cpu_port(struct dsa_switch *ds)
 		p->on = 1;
 		p->phy = 1;
 	}
-	ksz_read8(dev, REG_MODE_INDICATOR, &copper);
-	if (!(copper & PORT_1_COPPER))
-		dev->ports[0].fiber = 1;
-	if (!(copper & PORT_2_COPPER))
-		dev->ports[1].fiber = 1;
 	for (i = 0; i < dev->phy_port_cnt; i++) {
 		p = &dev->ports[i];
 		if (!p->on)
 			continue;
 		if (p->fiber)
-			ksz_port_cfg(dev, i, P_STP_CTRL, PORT_FORCE_FLOW_CTRL,
-				     true);
+			fiber |= (1 << i);
+		if (p->fiber)
+			ksz_port_cfg16(dev, i, P_STP_CTRL, PORT_FORCE_FLOW_CTRL,
+				       true);
 		else
-			ksz_port_cfg(dev, i, P_STP_CTRL, PORT_FORCE_FLOW_CTRL,
-				     false);
+			ksz_port_cfg16(dev, i, P_STP_CTRL, PORT_FORCE_FLOW_CTRL,
+				       false);
+	}
+	if (fiber) {
+		u16 data;
+
+		ksz_read16(dev, REG_CFG_CTRL, &data);
+		data &= ~(fiber << PORT_COPPER_MODE_S);
+		ksz_write16(dev, REG_CFG_CTRL, data);
+		ksz_read16(dev, REG_DSP_CTRL_1, &data);
+		data &= ~COPPER_RECEIVE_ADJUSTMENT;
+		ksz_write16(dev, REG_DSP_CTRL_1, data);
 	}
 }
 
 static int ksz8463_setup(struct dsa_switch *ds)
 {
-	u8 data8;
 	u16 data16;
 	u32 value;
 	int i;
@@ -1084,42 +948,42 @@ static int ksz8463_setup(struct dsa_switch *ds)
 		return ret;
 	}
 
-	ksz_cfg(dev, S_REPLACE_VID_CTRL, SW_FLOW_CTRL, true);
+	ksz_cfg16(dev, S_REPLACE_VID_CTRL, SW_FLOW_CTRL, true);
 
 	/* Enable automatic fast aging when link changed detected. */
-	ksz_cfg(dev, S_LINK_AGING_CTRL, SW_LINK_AUTO_AGING, true);
+	ksz_cfg16(dev, S_LINK_AGING_CTRL, SW_LINK_AUTO_AGING, true);
 
-	ksz_read8(dev, REG_SW_CTRL_1, &data8);
+	ksz_read16(dev, REG_SW_CTRL_1, &data16);
 
 	/* Enable aggressive back off algorithm in half duplex mode. */
-	data8 |= SW_AGGR_BACKOFF;
-	ksz_write8(dev, REG_SW_CTRL_1, data8);
+	data16 |= SW_AGGR_BACKOFF;
+	ksz_write16(dev, REG_SW_CTRL_1, data16);
 
-	ksz_read8(dev, REG_SW_CTRL_2, &data8);
+	ksz_read16(dev, REG_SW_CTRL_2, &data16);
 
 	/* Make sure unicast VLAN boundary is set as default. */
-	data8 |= UNICAST_VLAN_BOUNDARY;
+	data16 |= UNICAST_VLAN_BOUNDARY;
 
 	/* Enable no excessive collision drop. */
-	data8 |= NO_EXC_COLLISION_DROP;
-	ksz_write8(dev, REG_SW_CTRL_2, data8);
+	data16 |= NO_EXC_COLLISION_DROP;
+	ksz_write16(dev, REG_SW_CTRL_2, data16);
 
 	ksz8463_config_cpu_port(ds);
 
-	ksz_cfg(dev, REG_SW_CTRL_2, MULTICAST_STORM_DISABLE, true);
+	ksz_cfg16(dev, REG_SW_CTRL_2, MULTICAST_STORM_DISABLE, true);
 
-	ksz_cfg(dev, S_REPLACE_VID_CTRL, SW_REPLACE_VID, false);
+	ksz_cfg16(dev, S_REPLACE_VID_CTRL, SW_REPLACE_VID, false);
 
-	ksz_cfg(dev, S_MIRROR_CTRL, SW_MIRROR_RX_TX, false);
+	ksz_cfg16(dev, S_MIRROR_CTRL, SW_MIRROR_RX_TX, false);
 
 	/* set broadcast storm protection 10% rate */
-	data8 = BROADCAST_STORM_PROT_RATE;
-	value = ((u32)BROADCAST_STORM_VALUE * data8) / 100;
+	data16 = BROADCAST_STORM_PROT_RATE;
+	value = ((u32)BROADCAST_STORM_VALUE * data16) / 100;
 	if (value > BROADCAST_STORM_RATE)
 		value = BROADCAST_STORM_RATE;
 	ksz_read16(dev, S_REPLACE_VID_CTRL, &data16);
-	data16 &= ~BROADCAST_STORM_RATE;
-	data16 |= value;
+	data16 &= ~(BROADCAST_STORM_RATE_HI | BROADCAST_STORM_RATE_LO);
+	data16 |= htons(value);
 	ksz_write16(dev, S_REPLACE_VID_CTRL, data16);
 
 	for (i = 0; i < dev->num_vlans; i++)
@@ -1174,7 +1038,7 @@ static struct dsa_switch_ops ksz8463_switch_ops = {
 #endif
 };
 
-#define KSZ8463_REGS_SIZE		0x200
+#define KSZ8463_REGS_SIZE		0x800
 
 static struct bin_attribute ksz8463_registers_attr = {
 	.attr = {
@@ -1231,7 +1095,7 @@ static int ksz8463_switch_detect(struct ksz_device *dev)
 	id1 = id16 >> 8;
 	id2 = id16 & SW_CHIP_ID_M;
 	if (id1 != FAMILY_ID ||
-	    (id2 != CHIP_ID_63))
+	    (id2 != CHIP_ID_63 && id2 != CHIP_ID_63_R))
 		return -ENODEV;
 
 	dev->mib_port_cnt = TOTAL_PORT_NUM;
@@ -1239,10 +1103,6 @@ static int ksz8463_switch_detect(struct ksz_device *dev)
 	dev->port_cnt = SWITCH_PORT_NUM;
 
 	chip = KSZ8463_SW_CHIP;
-	ret = ksz_read8(dev, REG_MODE_INDICATOR, &id1);
-	if (!(id1 & (PORT_1_COPPER | PORT_2_COPPER)) ||
-	    !(id1 & MODE_2_PHY))
-		chip = KSZ8873_SW_CHIP;
 	if (chip >= 0) {
 		dev->name = ksz8463_chip_names[chip];
 		strlcpy(ksz8463_phy_driver[0].name, ksz8463_chip_names[chip],
@@ -1250,7 +1110,7 @@ static int ksz8463_switch_detect(struct ksz_device *dev)
 	}
 	id2 = 0x63;
 
-	id16 = 0x8800;
+	id16 = 0x8400;
 	id16 |= id2;
 	dev->chip_id = id16;
 

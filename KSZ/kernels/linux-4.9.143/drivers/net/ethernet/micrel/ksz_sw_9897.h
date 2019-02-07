@@ -905,6 +905,7 @@ struct ksz_sw {
 	u16 tx_ports[NUM_OF_MSTI];
 	u8 ctrl_queue;
 	u8 tx_pad[60];
+	int mtu;
 	int tx_start;
 	int priv_port;
 	struct ksz_sw_tx_tag tag;

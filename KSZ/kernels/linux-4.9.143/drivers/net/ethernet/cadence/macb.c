@@ -680,6 +680,286 @@ err_out:
 	return err;
 }
 
+#if !defined(CONFIG_KSZ_IBA_ONLY)
+#if 1
+#define MACB_REGS_SIZE		0x20000
+#endif
+#endif
+
+#ifdef MACB_REGS_SIZE
+
+#if 1
+#define SW_CSR_CMD		0x1B0
+#define SW_CSR_CMD_CSR_BUSY	0x80000000
+#define SW_CSR_CMD_R_NOT_W	0x40000000
+#define SW_CSR_CMD_BYTE_EN	0x000f0000
+
+#define SW_CSR_DATA		0x1AC
+#endif
+
+#ifdef SW_CSR_CMD
+static u32 smi_reg(u32 offset, u32 *phy_id)
+{
+	offset &= 0x3ff;
+	offset >>= 1;
+	offset &= ~1;
+	offset |= 0x200;
+	*phy_id = (offset & 0x3e0) >> 5;
+	offset &= 0x1f;
+	offset <<= 1;
+	return offset;
+}
+
+static u32 csr_r(struct mii_bus *bus, u32 phy_id, u32 reg)
+{
+	int err;
+	u32 val;
+
+	err = bus->read(bus, phy_id, (reg / 2) + 1);
+	val = (u16) err;
+	val <<= 16;
+	err = bus->read(bus, phy_id, reg / 2);
+	val |= (u16) err;
+	return val;
+}
+
+static void csr_w(struct mii_bus *bus, u32 phy_id, u32 reg, u32 val)
+{
+	int err;
+
+	err = bus->write(bus, phy_id, reg / 2, (u16) val);
+	err = bus->write(bus, phy_id, (reg / 2) + 1, (u16)(val >> 16));
+}
+
+static u32 ind_r(struct mii_bus *bus, u32 phy_id_cmd, u32 cmd,
+	u32 phy_id_data, u32 data, u32 reg)
+{
+	u32 val;
+	int timeout = 10;
+
+	do {
+		val = csr_r(bus, phy_id_cmd, cmd);
+	} while ((val & SW_CSR_CMD_CSR_BUSY) && timeout--);
+
+	val = SW_CSR_CMD_CSR_BUSY | SW_CSR_CMD_R_NOT_W | reg;
+	csr_w(bus, phy_id_cmd, cmd, val);
+	timeout = 10;
+	do {
+		val = csr_r(bus, phy_id_data, cmd);
+	} while ((val & SW_CSR_CMD_CSR_BUSY) && timeout--);
+	val = csr_r(bus, phy_id_data, data);
+	return val;
+}
+
+static void ind_w(struct mii_bus *bus, u32 phy_id_cmd, u32 cmd,
+	u32 phy_id_data, u32 data, u32 reg, u32 val)
+{
+	u32 busy;
+	int timeout = 10;
+
+	do {
+		busy = csr_r(bus, phy_id_cmd, cmd);
+	} while ((busy & SW_CSR_CMD_CSR_BUSY) && timeout--);
+
+	csr_w(bus, phy_id_data, data, val);
+	busy = SW_CSR_CMD_CSR_BUSY | SW_CSR_CMD_BYTE_EN | reg;
+	csr_w(bus, phy_id_cmd, cmd, busy);
+	timeout = 10;
+	do {
+		busy = csr_r(bus, phy_id_cmd, cmd);
+	} while ((busy & SW_CSR_CMD_CSR_BUSY) && timeout--);
+}
+#endif
+
+static ssize_t macb_registers_read(struct file *filp, struct kobject *kobj,
+	struct bin_attribute *bin_attr, char *buf, loff_t off, size_t count)
+{
+	size_t i;
+	u32 *addr;
+	u16 *addr_16;
+	u8 *addr_8;
+	u32 reg;
+	u32 val;
+	struct device *dev;
+	struct net_device *netdev;
+	struct macb *bp;
+
+	if (unlikely(off >= MACB_REGS_SIZE))
+		return 0;
+
+	if ((off + count) >= MACB_REGS_SIZE)
+		count = MACB_REGS_SIZE - off;
+
+	if (unlikely(!count))
+		return count;
+
+	dev = container_of(kobj, struct device, kobj);
+	netdev = to_net_dev(dev);
+	bp = netdev_priv(netdev);
+
+	reg = off;
+	addr = (u32 *) buf;
+	addr_16 = (u16 *) buf;
+	addr_8 = (u8 *) buf;
+	if (4 == count && (reg & 3))
+		return 0;
+	*addr = 0;
+
+#ifdef SW_CSR_CMD
+	if (reg >= 0x10000) {
+		u32 cmd;
+		u32 data;
+		u32 phy_id_cmd;
+		u32 phy_id_data;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg &= 0xffff;
+		cmd = smi_reg(SW_CSR_CMD, &phy_id_cmd);
+		data = smi_reg(SW_CSR_DATA, &phy_id_data);
+		for (i = 0; i < count; i += 4, reg += 4, addr++)
+			*addr = ind_r(bp->mii_bus, phy_id_cmd, cmd,
+				phy_id_data, data, reg);
+		return i;
+	} else if (reg >= 0x1000) {
+		u32 phy_id;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg = smi_reg(reg, &phy_id);
+		for (i = 0; i < count; i += 4, reg += 4, addr++)
+			*addr = csr_r(bp->mii_bus, phy_id, reg);
+		return i;
+	}
+#endif
+	if (reg >= 0x800) {
+		int err;
+		u32 phy_id = reg >> 6;
+		struct mii_bus *bus = bp->mii_bus;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg &= (1 << 6) - 1;
+		for (i = 0; i < count; i += 2, reg += 2, addr_16++) {
+			err = bus->read(bus, phy_id, reg / 2);
+			if (err >= 0)
+				*addr_16 = (u16) err;
+			else
+				*addr_16 = 0;
+		}
+	} else {
+		for (i = 0; i < count; i += 4, reg += 4, addr++) {
+			val = __raw_readl(bp->regs + reg);
+			if (count >= 4)
+				*addr = val;
+			else if (count >= 2)
+				*addr_16 = (u16) val;
+			else
+				*addr_8 = (u8) val;
+		}
+	}
+	return i;
+}
+
+static ssize_t macb_registers_write(struct file *filp, struct kobject *kobj,
+	struct bin_attribute *bin_attr, char *buf, loff_t off, size_t count)
+{
+	size_t i;
+	u32 *addr;
+	u16 *addr_16;
+	u8 *addr_8;
+	u32 reg;
+	struct device *dev;
+	struct net_device *netdev;
+	struct macb *bp;
+
+	if (unlikely(off >= MACB_REGS_SIZE))
+		return -EFBIG;
+
+	if ((off + count) >= MACB_REGS_SIZE)
+		count = MACB_REGS_SIZE - off;
+
+	if (unlikely(!count))
+		return count;
+
+	dev = container_of(kobj, struct device, kobj);
+	netdev = to_net_dev(dev);
+	bp = netdev_priv(netdev);
+
+	reg = off;
+	addr = (u32 *) buf;
+	addr_16 = (u16 *) buf;
+	addr_8 = (u8 *) buf;
+
+#ifdef SW_CSR_CMD
+	if (reg >= 0x10000) {
+		u32 cmd;
+		u32 data;
+		u32 phy_id_cmd;
+		u32 phy_id_data;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg &= 0xffff;
+		cmd = smi_reg(SW_CSR_CMD, &phy_id_cmd);
+		data = smi_reg(SW_CSR_DATA, &phy_id_data);
+		for (i = 0; i < count; i += 4, reg += 4, addr++)
+			ind_w(bp->mii_bus, phy_id_cmd, cmd,
+				phy_id_data, data, reg, *addr);
+		return i;
+	} else if (reg >= 0x1000) {
+		u32 phy_id;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg = smi_reg(reg, &phy_id);
+		for (i = 0; i < count; i += 4, reg += 4, addr++)
+			csr_w(bp->mii_bus, phy_id, reg, *addr);
+		return i;
+	}
+#endif
+	if (reg >= 0x800) {
+		int err;
+		u32 phy_id = reg >> 6;
+		struct mii_bus *bus = bp->mii_bus;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg &= (1 << 6) - 1;
+		for (i = 0; i < count; i += 2, reg += 2, addr_16++)
+			err = bus->write(bus, phy_id, reg / 2, *addr_16);
+	} else {
+		for (i = 0; i < count; i += 4, reg += 4, addr++) {
+			if (count >= 4)
+				__raw_writel(*addr, bp->regs + reg);
+			else {
+				u32 val = __raw_readl(bp->regs + reg);
+
+				if (count >= 2) {
+					val &= ~0xffff;
+					val |= *addr_16;
+				} else {
+					val &= ~0xff;
+					val |= *addr_8;
+				}
+				__raw_writel(val, bp->regs + reg);
+			}
+		}
+	}
+	return i;
+}
+
+static struct bin_attribute macb_registers_attr = {
+	.attr = {
+		.name	= "registers",
+		.mode	= S_IRUSR | S_IWUSR,
+	},
+	.size	= MACB_REGS_SIZE,
+	.read	= macb_registers_read,
+	.write	= macb_registers_write,
+};
+#endif
+
 static void macb_update_stats(struct macb *bp)
 {
 	u32 *p = &bp->hw_stats.macb.rx_pause_frames;
@@ -2327,6 +2607,15 @@ static void macb_init_hw(struct macb *bp)
 		config |= MACB_BIT(JFRAME);	/* Enable jumbo frames */
 	else
 		config |= MACB_BIT(BIG);	/* Receive oversized frames */
+
+#ifdef HAVE_KSZ_SWITCH
+	do {
+		struct ksz_sw *sw = bp->port.sw;
+
+		if (sw_is_switch(sw))
+			config |= MACB_BIT(JFRAME);
+	} while (0);
+#endif
 	if (bp->dev->flags & IFF_PROMISC)
 		config |= MACB_BIT(CAF);	/* Copy All Frames */
 	else if (macb_is_gem(bp) && bp->dev->features & NETIF_F_RXCSUM)
@@ -2811,6 +3100,34 @@ static int macb_change_mtu(struct net_device *dev, int new_mtu)
 	max_mtu = ETH_DATA_LEN;
 	if (bp->caps & MACB_CAPS_JUMBO)
 		max_mtu = gem_readl(bp, JML) - ETH_HLEN - ETH_FCS_LEN;
+
+#ifdef HAVE_KSZ_SWITCH
+	do {
+		struct ksz_sw *sw = bp->port.sw;
+
+		/* 3906 bytes seems to be the transmit limit of the MAC.
+		 * So the MTU is about 3906 - 5 = 3901 - 18 = 3883.
+		 * 1536 bytes seems to be the receive limit of the MAC.
+		 * Up to 1527 bytes can be received although the receive
+		 * oversize counter is increased for frames more than that.
+		 * Enable jumbo frame does allow receive up to 3902 bytes.
+		 * The maximum ping size is 3854 between KSZ9897 and KSZ9563.
+		 * 3854 + 42 + 1 = 3897
+		 * With PTP off the size can be increased by 4 bytes.
+		 * The effective MTU is 3882.
+		 * However, receive sometimes has overrun issue and it seems
+		 * the maximum size is 0xC00 = 3072, so the MTU is 3072 - 18 -
+		 * 2 - 6 = 3046.
+		 */
+		if (sw_is_switch(sw)) {
+			int mtu = sw->mtu - ETH_HLEN - ETH_FCS_LEN;
+
+			mtu -= sw->net_ops->get_mtu(sw);
+			if (max_mtu < mtu)
+				max_mtu = mtu;
+		}
+	} while (0);
+#endif
 
 	if ((new_mtu > max_mtu) || (new_mtu < GEM_MTU_MIN_SIZE))
 		return -EINVAL;
@@ -4408,6 +4725,11 @@ static int macb_probe(struct platform_device *pdev)
 	phydev = dev->phydev;
 #endif
 
+#ifdef MACB_REGS_SIZE
+	err = sysfs_create_bin_file(&dev->dev.kobj,
+				    &macb_registers_attr);
+#endif
+
 	phy_attached_info(phydev);
 
 	netdev_info(dev, "Cadence %s rev 0x%08x at 0x%08lx irq %d (%pM)\n",
@@ -4502,6 +4824,10 @@ static int macb_remove(struct platform_device *pdev)
 #ifdef HAVE_KSZ_SWITCH
 		}
 next:
+#endif
+
+#ifdef MACB_REGS_SIZE
+		sysfs_remove_bin_file(&dev->dev.kobj, &macb_registers_attr);
 #endif
 
 		/* Shutdown the PHY if there is a GPIO reset */

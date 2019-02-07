@@ -290,37 +290,6 @@
 			i2c0: i2c@f0014000 {
 				pinctrl-0 = <&pinctrl_i2c0_pu>;
 				status = "okay";
-
-				i2c_ksz9563: ksz9563@5f {
-					compatible = "microchip,ksz9563";
-					reg = <0x5f>;
-					phy-mode = "rgmii-id";
-
-					interrupt-parent = <&pioB>;
-					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
-					status = "disabled";
-					ports {
-						#address-cells = <1>;
-						#size-cells = <0>;
-						port@0 {
-							reg = <0>;
-							label = "lan1";
-						};
-						port@1 {
-							reg = <1>;
-							label = "lan2";
-						};
-						port@2 {
-							reg = <2>;
-							label = "cpu";
-							ethernet = <&macb0>;
-							fixed-link {
-								speed = <1000>;
-								full-duplex;
-							};
-						};
-					};
-				};
 			};
 
 			i2c1: i2c@f0018000 {
@@ -437,6 +406,37 @@
 				dmas = <0>, <0>;	/* Do not use DMA for i2c2 */
 				pinctrl-0 = <&pinctrl_i2c2_pu>;
 				status = "okay";
+
+				i2c_ksz9563: ksz9563@5f {
+					compatible = "microchip,ksz9563";
+					reg = <0x5f>;
+					phy-mode = "rgmii-id";
+
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
+					status = "disabled";
+					ports {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						port@0 {
+							reg = <0>;
+							label = "lan1";
+						};
+						port@1 {
+							reg = <1>;
+							label = "lan2";
+						};
+						port@2 {
+							reg = <2>;
+							label = "cpu";
+							ethernet = <&macb0>;
+							fixed-link {
+								speed = <1000>;
+								full-duplex;
+							};
+						};
+					};
+				};
 			};
 
 			macb1: ethernet@f802c000 {

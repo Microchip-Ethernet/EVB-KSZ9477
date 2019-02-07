@@ -490,3 +490,33 @@ diff -purN uboot-linux4sam_5.3.orig/configs/sama5d3_xplained_ksz9897_mmc_defconf
 +# CONFIG_CMD_LOADS is not set
 +# CONFIG_CMD_FLASH is not set
 +# CONFIG_CMD_FPGA is not set
+diff -purN uboot-linux4sam_5.3.orig/configs/sama5d3_xplained_ung8087_defconfig uboot-linux4sam_5.3/configs/sama5d3_xplained_ung8087_defconfig
+--- uboot-linux4sam_5.3.orig/configs/sama5d3_xplained_ung8087_defconfig	1969-12-31 16:00:00.000000000 -0800
++++ uboot-linux4sam_5.3/configs/sama5d3_xplained_ung8087_defconfig	2019-02-05 19:41:24.200127218 -0700
+@@ -0,0 +1,11 @@
++CONFIG_ARM=y
++CONFIG_ARCH_AT91=y
++CONFIG_TARGET_SAMA5D3_XPLAINED=y
++CONFIG_SPL=y
++CONFIG_SYS_EXTRA_OPTIONS="SAMA5D3,SYS_USE_NANDFLASH,SYS_HAVE_KSZ9897,SYS_HAVE_UNG8087"
++CONFIG_CMD_SPI_KSZ=y
++# CONFIG_CMD_IMI is not set
++# CONFIG_CMD_IMLS is not set
++# CONFIG_CMD_LOADS is not set
++# CONFIG_CMD_FLASH is not set
++# CONFIG_CMD_FPGA is not set
+diff -purN uboot-linux4sam_5.3.orig/configs/sama5d3_xplained_ung8087_mmc_defconfig uboot-linux4sam_5.3/configs/sama5d3_xplained_ung8087_mmc_defconfig
+--- uboot-linux4sam_5.3.orig/configs/sama5d3_xplained_ung8087_mmc_defconfig	1969-12-31 16:00:00.000000000 -0800
++++ uboot-linux4sam_5.3/configs/sama5d3_xplained_ung8087_mmc_defconfig	2019-02-05 19:41:24.200127218 -0700
+@@ -0,0 +1,11 @@
++CONFIG_ARM=y
++CONFIG_ARCH_AT91=y
++CONFIG_TARGET_SAMA5D3_XPLAINED=y
++CONFIG_SPL=y
++CONFIG_SYS_EXTRA_OPTIONS="SAMA5D3,SYS_USE_MMC,SYS_HAVE_KSZ9897,SYS_HAVE_UNG8087"
++CONFIG_CMD_SPI_KSZ=y
++# CONFIG_CMD_IMI is not set
++# CONFIG_CMD_IMLS is not set
++# CONFIG_CMD_LOADS is not set
++# CONFIG_CMD_FLASH is not set
++# CONFIG_CMD_FPGA is not set

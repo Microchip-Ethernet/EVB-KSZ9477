@@ -220,8 +220,8 @@ diff -purN uboot-linux4sam_5.3.orig/drivers/net/macb.c uboot-linux4sam_5.3/drive
  #if defined(CONFIG_CMD_MII) || defined(CONFIG_PHYLIB)
 diff -purN uboot-linux4sam_5.3.orig/include/configs/sama5d3_xplained.h uboot-linux4sam_5.3/include/configs/sama5d3_xplained.h
 --- uboot-linux4sam_5.3.orig/include/configs/sama5d3_xplained.h	2016-04-13 18:26:28.000000000 -0700
-+++ uboot-linux4sam_5.3/include/configs/sama5d3_xplained.h	2018-05-30 18:16:13.926988393 -0700
-@@ -80,6 +80,23 @@
++++ uboot-linux4sam_5.3/include/configs/sama5d3_xplained.h	2019-02-05 18:16:13.926988393 -0700
+@@ -80,6 +80,27 @@
  #define CONFIG_CMD_MII
  #define CONFIG_PHYLIB
  
@@ -236,7 +236,11 @@ diff -purN uboot-linux4sam_5.3.orig/include/configs/sama5d3_xplained.h uboot-lin
 +
 +#define CONFIG_ATMEL_SPI
 +#define CONFIG_ATMEL_SPI1
++#ifdef CONFIG_SYS_HAVE_UNG8087
++#define CONFIG_DEFAULT_SPI_BUS		0
++#else
 +#define CONFIG_DEFAULT_SPI_BUS		1
++#endif
 +#define CONFIG_DEFAULT_SPI_CS		0
 +#define CONFIG_DEFAULT_SPI_SPEED	19000000
 +#define CONFIG_DEFAULT_SPI_MODE		SPI_MODE_3
@@ -245,7 +249,7 @@ diff -purN uboot-linux4sam_5.3.orig/include/configs/sama5d3_xplained.h uboot-lin
  /* MMC */
  #define CONFIG_CMD_MMC
  
-@@ -90,6 +107,15 @@
+@@ -90,6 +111,20 @@
  #define CONFIG_ATMEL_MCI_8BIT
  #endif
  
@@ -255,8 +259,13 @@ diff -purN uboot-linux4sam_5.3.orig/include/configs/sama5d3_xplained.h uboot-lin
 +#define CONFIG_SYS_I2C
 +#define CONFIG_SYS_I2C_SOFT
 +#define CONFIG_SYS_I2C_SOFT_SPEED       50000
++#ifdef CONFIG_SYS_HAVE_UNG8087
++#define CONFIG_SOFT_I2C_GPIO_SCL        GPIO_PIN_PA(19)
++#define CONFIG_SOFT_I2C_GPIO_SDA        GPIO_PIN_PA(18)
++#else
 +#define CONFIG_SOFT_I2C_GPIO_SCL        GPIO_PIN_PA(31)
 +#define CONFIG_SOFT_I2C_GPIO_SDA        GPIO_PIN_PA(30)
++#endif
 +
  /* USB */
  #define CONFIG_CMD_USB

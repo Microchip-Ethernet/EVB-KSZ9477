@@ -30,6 +30,11 @@ struct lan88xx_priv {
 	__u32	wolopts;
 };
 
+struct lan87xx_priv {
+	int	chip_id;
+	int	chip_rev;
+};
+
 static int lan88xx_phy_config_intr(struct phy_device *phydev)
 {
 	int rc;
@@ -106,6 +111,102 @@ static int lan88xx_set_wol(struct phy_device *phydev,
 	return 0;
 }
 
+static int lan87xx_probe(struct phy_device *phydev)
+{
+	struct device *dev = &phydev->mdio.dev;
+	struct lan87xx_priv *priv;
+
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	/* these values can be used to identify internal PHY */
+	priv->chip_id = phy_read(phydev, LAN87XX_PHY_ID1);
+	priv->chip_rev = phy_read(phydev, LAN87XX_PHY_ID2);
+
+	phydev->priv = priv;
+
+	return 0;
+}
+
+static void lan87xx_remove(struct phy_device *phydev)
+{
+	struct device *dev = &phydev->mdio.dev;
+	struct lan87xx_priv *priv = phydev->priv;
+
+	if (priv)
+		devm_kfree(dev, priv);
+}
+
+static int lan87xx_phy_config_intr(struct phy_device *phydev)
+{
+	int rc = 0;
+
+	if (phydev->interrupts == PHY_INTERRUPT_ENABLED) {
+		/* unmask all source and clear them before enable */
+		rc = phy_write(phydev, LAN87XX_INTERRUPT_MASK, 0x7FFF);
+		rc = phy_read(phydev, LAN87XX_INTERRUPT_SOURCE);
+		rc = phy_write(phydev, LAN87XX_INTERRUPT_MASK,
+			       LAN87XX_MASK_LINK_UP | LAN87XX_MASK_LINK_DOWN);
+	} else {
+		rc = phy_write(phydev, LAN87XX_INTERRUPT_MASK, 0);
+	}
+
+	return rc < 0 ? rc : 0;
+}
+
+static int lan87xx_phy_ack_interrupt(struct phy_device *phydev)
+{
+	int rc = phy_read(phydev, LAN87XX_INTERRUPT_SOURCE);
+
+	return rc < 0 ? rc : 0;
+}
+
+static int lan87xx_config_init(struct phy_device *phydev)
+{
+	int rc = 0;
+
+	/* enable rgmii delays */
+	if ((phydev->interface == PHY_INTERFACE_MODE_RGMII) ||
+	    (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) ||
+	    (phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID) ||
+	    (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID)) {
+
+		/* read the CTRL_1 reg in MISC bank */
+		rc = phy_write(phydev, LAN87XX_EXT_REG_CTL,
+			       LAN87XX_MASK_READ_CONTROL | LAN87XX_MISC | LAN87XX_CTRL_1);
+		rc = phy_read(phydev, LAN87XX_EXT_REG_RD_DATA);
+		
+		if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
+			rc |= (LAN87XX_MASK_RGMII_TXC_DLY_EN |
+			       LAN87XX_MASK_RGMII_RXC_DLY_EN);
+		}
+		else if (phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID) {
+			rc &= ~LAN87XX_MASK_RGMII_TXC_DLY_EN;
+			rc |= LAN87XX_MASK_RGMII_RXC_DLY_EN;
+		}
+		else if (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID) {
+			rc &= ~LAN87XX_MASK_RGMII_RXC_DLY_EN;
+			rc |= LAN87XX_MASK_RGMII_TXC_DLY_EN;
+		}
+		else {
+			rc &= ~(LAN87XX_MASK_RGMII_TXC_DLY_EN |
+				LAN87XX_MASK_RGMII_RXC_DLY_EN);
+		}
+		/* write back to the CTRL_1 reg in MISC bank */
+		rc = phy_write(phydev, LAN87XX_EXT_REG_WR_DATA, rc);
+		rc = phy_write(phydev, LAN87XX_EXT_REG_CTL,
+			       LAN87XX_MASK_WRITE_CONTROL | LAN87XX_MISC | LAN87XX_CTRL_1 );
+	}
+
+	/* Always in forced mode. */
+	phydev->autoneg = 0;
+	phydev->speed = SPEED_100;
+	phydev->duplex = DUPLEX_FULL;
+
+	return rc < 0 ? rc : 0;
+}
+
 static struct phy_driver microchip_phy_driver[] = {
 {
 	.phy_id		= 0x0007c130,
@@ -129,12 +230,35 @@ static struct phy_driver microchip_phy_driver[] = {
 	.suspend	= lan88xx_suspend,
 	.resume		= genphy_resume,
 	.set_wol	= lan88xx_set_wol,
-} };
+},
+{
+	.phy_id		= 0x0007c150,
+	.phy_id_mask	= 0xfffffff0,
+	.name		= "Microchip LAN87xx",
+
+	.features	= SUPPORTED_100baseT_Full,
+	.flags		= PHY_HAS_INTERRUPT | PHY_HAS_MAGICANEG,
+
+	.probe		= lan87xx_probe,
+	.remove		= lan87xx_remove,
+
+	.config_init	= lan87xx_config_init,
+	.config_aneg	= genphy_setup_forced,
+	.read_status	= genphy_read_status,
+
+	.ack_interrupt	= lan87xx_phy_ack_interrupt,
+	.config_intr	= lan87xx_phy_config_intr,
+
+	.suspend	= genphy_suspend,
+	.resume		= genphy_resume,
+}
+};
 
 module_phy_driver(microchip_phy_driver);
 
 static struct mdio_device_id __maybe_unused microchip_tbl[] = {
 	{ 0x0007c130, 0xfffffff0 },
+	{ 0x0007c150, 0xfffffff0 },
 	{ }
 };
 

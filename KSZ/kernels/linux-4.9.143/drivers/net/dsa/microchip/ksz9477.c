@@ -101,6 +101,21 @@ static void ksz9477_port_cfg32(struct ksz_device *dev, int port, int offset,
 	data; \
 })
 
+static u16 ksz9477_get_fid(u16 vid)
+{
+	u16 fid;
+
+	/* Need to find a way to map VID to FID. */
+	if (vid <= 1) {
+		fid = 0;
+	} else {
+		fid = vid & VLAN_FID_M;
+		if (fid == 0)
+			fid = VLAN_FID_M;
+	}
+	return fid;
+}
+
 static int ksz9477_get_vlan_table(struct ksz_device *dev, u16 vid,
 				  u32 *vlan_table)
 {
@@ -556,12 +571,7 @@ static void ksz9477_port_vlan_add(struct dsa_switch *ds, int port,
 			return;
 		}
 
-		/* Need to find a way to map VID to FID. */
-		fid = vid & VLAN_FID_M;
-		if (vid <= 1)
-			fid = 0;
-		else if (fid == 0)
-			fid = VLAN_FID_M;
+		fid = ksz9477_get_fid(vid);
 		vlan_table[0] = VLAN_VALID | fid;
 		if (untagged)
 			vlan_table[1] |= BIT(port);
@@ -657,11 +667,12 @@ static void ksz9477_port_fdb_add(struct dsa_switch *ds, int port,
 	int ret = 0;
 	u16 vid = fdb->vid;
 	const u8 *addr = fdb->addr;
+	u16 fid = ksz9477_get_fid(vid);
 
 	mutex_lock(&dev->alu_mutex);
 
 	/* find any entry with mac & vid */
-	data = vid << ALU_FID_INDEX_S;
+	data = fid << ALU_FID_INDEX_S;
 	data |= ((addr[0] << 8) | addr[1]);
 	ksz_write32(dev, REG_SW_ALU_INDEX_0, data);
 
@@ -686,9 +697,13 @@ static void ksz9477_port_fdb_add(struct dsa_switch *ds, int port,
 	/* update ALU entry */
 	alu_table[0] = ALU_V_STATIC_VALID;
 	alu_table[1] |= BIT(port);
-	if (vid)
+#if 1
+	/* Host port can never be specified!? */
+	alu_table[1] |= dev->host_mask;
+#endif
+	if (fid)
 		alu_table[1] |= ALU_V_USE_FID;
-	alu_table[2] = (vid << ALU_V_FID_S);
+	alu_table[2] = (fid << ALU_V_FID_S);
 	alu_table[2] |= ((addr[0] << 8) | addr[1]);
 	alu_table[3] = ((addr[2] << 24) | (addr[3] << 16));
 	alu_table[3] |= ((addr[4] << 8) | addr[5]);
@@ -713,14 +728,16 @@ static int ksz9477_port_fdb_del(struct dsa_switch *ds, int port,
 	struct ksz_device *dev = ds->priv;
 	u32 alu_table[4];
 	u32 data;
+	u32 mask = 0;
 	int ret = 0;
 	u16 vid = fdb->vid;
 	const u8 *addr = fdb->addr;
+	u16 fid = ksz9477_get_fid(vid);
 
 	mutex_lock(&dev->alu_mutex);
 
 	/* read any entry with mac & vid */
-	data = vid << ALU_FID_INDEX_S;
+	data = fid << ALU_FID_INDEX_S;
 	data |= ((addr[0] << 8) | addr[1]);
 	ksz_write32(dev, REG_SW_ALU_INDEX_0, data);
 
@@ -746,10 +763,15 @@ static int ksz9477_port_fdb_del(struct dsa_switch *ds, int port,
 		ksz_read32(dev, REG_SW_ALU_VAL_D, &alu_table[3]);
 
 		/* clear forwarding port */
-		alu_table[2] &= ~BIT(port);
+		alu_table[1] &= ~BIT(port);
+
+#if 1
+		/* Host port may never get called to remove the entry. */
+		mask = dev->host_mask;
+#endif
 
 		/* if there is no port to forward, clear table */
-		if ((alu_table[2] & ALU_V_PORT_MAP) == 0) {
+		if (!((alu_table[1] & ALU_V_PORT_MAP) & ~mask)) {
 			alu_table[0] = 0;
 			alu_table[1] = 0;
 			alu_table[2] = 0;
@@ -807,10 +829,12 @@ static int ksz9477_port_fdb_dump(struct dsa_switch *ds, int port,
 {
 	struct ksz_device *dev = ds->priv;
 	int ret = 0;
+	u32 index;
 	u32 ksz_data;
 	u32 alu_table[4];
 	struct alu_struct alu;
 	int timeout;
+	u32 cnt = 0;
 
 	mutex_lock(&dev->alu_mutex);
 
@@ -830,6 +854,18 @@ static int ksz9477_port_fdb_dump(struct dsa_switch *ds, int port,
 			dev_dbg(dev->dev, "Failed to search ALU\n");
 			ret = -ETIMEDOUT;
 			goto exit;
+		}
+
+		if (!(ksz_data & ALU_VALID))
+			goto exit;
+		++cnt;
+		index = ksz_data;
+		index >>= ALU_VALID_CNT_S;
+		index &= ALU_VALID_CNT_M;
+		if (index != cnt) {
+			dev_dbg(dev->dev, "index not matched: %d %d\n",
+				index, cnt);
+			cnt = index;
 		}
 
 		/* read ALU table */
@@ -855,6 +891,11 @@ exit:
 
 	/* stop ALU search */
 	ksz_write32(dev, REG_SW_ALU_CTRL__4, 0);
+	ksz_data >>= ALU_VALID_CNT_S;
+	ksz_data &= ALU_VALID_CNT_M;
+	if (ksz_data != cnt)
+		dev_dbg(dev->dev, "count not matched: %d %d\n",
+			ksz_data, cnt);
 
 	mutex_unlock(&dev->alu_mutex);
 
@@ -865,13 +906,23 @@ static void ksz9477_port_mdb_add(struct dsa_switch *ds, int port,
 				 const struct switchdev_obj_port_mdb *mdb,
 				 struct switchdev_trans *trans)
 {
+#if 1
+	struct switchdev_obj_port_fdb fdb;
+
+	ether_addr_copy(fdb.addr, mdb->addr);
+	fdb.vid = mdb->vid;
+	memcpy(fdb.addr, mdb->addr, ETH_ALEN);
+	ksz9477_port_fdb_add(ds, port, &fdb, trans);
+#else
 	struct ksz_device *dev = ds->priv;
 	u32 static_table[4];
 	u32 data;
 	int index;
 	int ret;
 	u32 mac_hi, mac_lo;
+	u16 fid;
 
+	fid = ksz9477_get_fid(mdb->vid);
 	mac_hi = ((mdb->addr[0] << 8) | mdb->addr[1]);
 	mac_lo = ((mdb->addr[2] << 24) | (mdb->addr[3] << 16));
 	mac_lo |= ((mdb->addr[4] << 8) | mdb->addr[5]);
@@ -898,7 +949,7 @@ static void ksz9477_port_mdb_add(struct dsa_switch *ds, int port,
 
 		if (static_table[0] & ALU_V_STATIC_VALID) {
 			/* check this has same vid & mac address */
-			if (((static_table[2] >> ALU_V_FID_S) == mdb->vid) &&
+			if (((static_table[2] >> ALU_V_FID_S) == fid) &&
 			    ((static_table[2] & ALU_V_MAC_ADDR_HI) == mac_hi) &&
 			    static_table[3] == mac_lo) {
 				/* found matching one */
@@ -921,9 +972,9 @@ static void ksz9477_port_mdb_add(struct dsa_switch *ds, int port,
 	/* Host port can never be specified!? */
 	static_table[1] |= dev->host_mask;
 #endif
-	if (mdb->vid)
+	if (fid)
 		static_table[1] |= ALU_V_USE_FID;
-	static_table[2] = (mdb->vid << ALU_V_FID_S);
+	static_table[2] = (fid << ALU_V_FID_S);
 	static_table[2] |= mac_hi;
 	static_table[3] = mac_lo;
 
@@ -940,18 +991,29 @@ static void ksz9477_port_mdb_add(struct dsa_switch *ds, int port,
 
 exit:
 	mutex_unlock(&dev->alu_mutex);
+#endif
 }
 
 static int ksz9477_port_mdb_del(struct dsa_switch *ds, int port,
 				const struct switchdev_obj_port_mdb *mdb)
 {
+#if 1
+	struct switchdev_obj_port_fdb fdb;
+
+	ether_addr_copy(fdb.addr, mdb->addr);
+	fdb.vid = mdb->vid;
+	memcpy(fdb.addr, mdb->addr, ETH_ALEN);
+	return ksz9477_port_fdb_del(ds, port, &fdb);
+#else
 	struct ksz_device *dev = ds->priv;
 	u32 static_table[4];
 	u32 data;
 	int index;
 	int ret = 0;
 	u32 mac_hi, mac_lo;
+	u16 fid;
 
+	fid = ksz9477_get_fid(mdb->vid);
 	mac_hi = ((mdb->addr[0] << 8) | mdb->addr[1]);
 	mac_lo = ((mdb->addr[2] << 24) | (mdb->addr[3] << 16));
 	mac_lo |= ((mdb->addr[4] << 8) | mdb->addr[5]);
@@ -979,7 +1041,7 @@ static int ksz9477_port_mdb_del(struct dsa_switch *ds, int port,
 		if (static_table[0] & ALU_V_STATIC_VALID) {
 			/* check this has same vid & mac address */
 
-			if (((static_table[2] >> ALU_V_FID_S) == mdb->vid) &&
+			if (((static_table[2] >> ALU_V_FID_S) == fid) &&
 			    ((static_table[2] & ALU_V_MAC_ADDR_HI) == mac_hi) &&
 			    static_table[3] == mac_lo) {
 				/* found matching one */
@@ -1018,6 +1080,7 @@ exit:
 	mutex_unlock(&dev->alu_mutex);
 
 	return ret;
+#endif
 }
 
 #if 0

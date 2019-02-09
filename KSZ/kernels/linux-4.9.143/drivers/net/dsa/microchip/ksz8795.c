@@ -258,6 +258,21 @@ static void ksz8795_w_table(struct ksz_device *dev, int table, u16 addr,
 	data8; \
 })
 
+static u8 ksz8795_get_fid(u16 vid)
+{
+	u8 fid;
+
+	/* Need to find a way to map VID to FID. */
+	if (vid <= 1) {
+		fid = 0;
+	} else {
+		fid = vid & VLAN_TABLE_FID;
+		if (fid == 0)
+			fid = VLAN_TABLE_FID;
+	}
+	return fid;
+}
+
 static int ksz8795_valid_dyn_entry(struct ksz_device *dev, u8 *data)
 {
 	readx_poll_timeout(read8_op, REG_IND_DATA_CHECK, *data,
@@ -372,6 +387,7 @@ static void ksz8795_w_sta_mac_table(struct ksz_device *dev, u16 addr,
 	u64 data;
 	u32 data_hi;
 	u32 data_lo;
+	u8 fid = ksz8795_get_fid(alu->fid);
 
 	data_lo = ((u32)alu->mac[2] << 24) |
 		((u32)alu->mac[3] << 16) |
@@ -383,7 +399,7 @@ static void ksz8795_w_sta_mac_table(struct ksz_device *dev, u16 addr,
 		data_hi |= STATIC_MAC_TABLE_OVERRIDE;
 	if (alu->is_use_fid) {
 		data_hi |= STATIC_MAC_TABLE_USE_FID;
-		data_hi |= (u32)alu->fid << STATIC_MAC_FID_S;
+		data_hi |= (u32)fid << STATIC_MAC_FID_S;
 	}
 	if (alu->is_static)
 		data_hi |= STATIC_MAC_TABLE_VALID;
@@ -850,12 +866,7 @@ static void ksz8795_port_vlan_add(struct dsa_switch *ds, int port,
 		ksz8795_r_vlan_table(dev, vid, &data);
 		ksz8795_from_vlan(data, &fid, &member, &valid);
 
-		/* Need to find a way to map VID to FID. */
-		fid = vid & VLAN_TABLE_FID;
-		if (vid <= 1)
-			fid = 0;
-		else if (fid == 0)
-			fid = VLAN_TABLE_FID;
+		fid = ksz8795_get_fid(vid);
 
 		/* First time to setup the VLAN entry. */
 		if (!valid) {
@@ -1337,7 +1348,7 @@ static const struct ksz_chip_data ksz8795_switch_chips[] = {
 		.dev_name = "KSZ8795",
 		.num_vlans = 4096,
 		.num_alus = 0,
-		.num_statics = 8,
+		.num_statics = 32,
 		.cpu_ports = 0x10,	/* can be configured as cpu port */
 		.port_cnt = 4,		/* total physical port count */
 	},
@@ -1346,7 +1357,7 @@ static const struct ksz_chip_data ksz8795_switch_chips[] = {
 		.dev_name = "KSZ8794",
 		.num_vlans = 4096,
 		.num_alus = 0,
-		.num_statics = 8,
+		.num_statics = 32,
 		.cpu_ports = 0x10,	/* can be configured as cpu port */
 		.port_cnt = 3,		/* total physical port count */
 	},
@@ -1355,7 +1366,7 @@ static const struct ksz_chip_data ksz8795_switch_chips[] = {
 		.dev_name = "KSZ8765",
 		.num_vlans = 4096,
 		.num_alus = 0,
-		.num_statics = 8,
+		.num_statics = 32,
 		.cpu_ports = 0x10,	/* can be configured as cpu port */
 		.port_cnt = 4,		/* total physical port count */
 	},

@@ -299,6 +299,9 @@ static struct ksz_sw_reg_ops sw_reg_ops = {
 	.w16			= sw_w16,
 	.w32			= sw_w32,
 
+	.r			= sw_r8,
+	.w			= sw_w8,
+
 	.get			= sw_reg_get,
 	.set			= sw_reg_set,
 };

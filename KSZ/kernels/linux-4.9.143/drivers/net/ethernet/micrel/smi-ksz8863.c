@@ -125,6 +125,7 @@ static void mdio_w32(struct smi_hw_priv *ks, unsigned reg, unsigned val)
 	mdio_w_c(ks, reg, val, 4);
 }
 
+#if 0
 static int mdio_r(struct smi_hw_priv *ks, u32 reg, void *buf, unsigned len)
 {
 	int i;
@@ -148,6 +149,7 @@ static int mdio_w(struct smi_hw_priv *ks, u32 reg, void *buf, unsigned len)
 	}
 	return 0;
 }
+#endif
 
 static u8 smi_r8(struct ksz_sw *sw, unsigned reg)
 {
@@ -179,6 +181,7 @@ static void smi_w32(struct ksz_sw *sw, unsigned reg, unsigned val)
 	mdio_w32(sw->dev, reg, val);
 }
 
+#if 0
 static int smi_r(struct ksz_sw *sw, u32 reg, void *buf, unsigned len)
 {
 	return mdio_r(sw->dev, reg, buf, len);
@@ -188,6 +191,7 @@ static int smi_w(struct ksz_sw *sw, u32 reg, void *buf, unsigned len)
 {
 	return mdio_w(sw->dev, reg, buf, len);
 }
+#endif
 
 #include "ksz_sw.c"
 
@@ -199,8 +203,8 @@ static struct ksz_sw_reg_ops smi_reg_ops = {
 	.w16			= smi_w16,
 	.w32			= smi_w32,
 
-	.r			= smi_r,
-	.w			= smi_w,
+	.r			= smi_r8,
+	.w			= smi_w8,
 
 	.get			= sw_reg_get,
 	.set			= sw_reg_set,

@@ -70,6 +70,8 @@ static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #include "../micrel/smi-ksz8895.c"
 #elif defined(CONFIG_HAVE_KSZ8895)
 #include "../micrel/spi-ksz8895.c"
+#elif defined(CONFIG_SMI_KSZ8863)
+#include "../micrel/smi-ksz8863.c"
 #elif defined(CONFIG_HAVE_KSZ8863)
 #include "../micrel/spi-ksz8863.c"
 #elif defined(CONFIG_HAVE_KSZ8463)
@@ -3102,6 +3104,7 @@ static int macb_change_mtu(struct net_device *dev, int new_mtu)
 		max_mtu = gem_readl(bp, JML) - ETH_HLEN - ETH_FCS_LEN;
 
 #ifdef HAVE_KSZ_SWITCH
+#if defined(CONFIG_HAVE_KSZ9897)
 	do {
 		struct ksz_sw *sw = bp->port.sw;
 
@@ -3127,6 +3130,7 @@ static int macb_change_mtu(struct net_device *dev, int new_mtu)
 				max_mtu = mtu;
 		}
 	} while (0);
+#endif
 #endif
 
 	if ((new_mtu > max_mtu) || (new_mtu < GEM_MTU_MIN_SIZE))

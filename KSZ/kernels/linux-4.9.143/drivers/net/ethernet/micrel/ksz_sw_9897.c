@@ -17388,7 +17388,6 @@ static void ksz_mii_exit(struct sw_priv *ks)
 
 			port = &ks->ports[i];
 			flush_work(&port->link_update);
-			kfree(phydev->priv);
 		}
 	}
 	mdiobus_unregister(bus);

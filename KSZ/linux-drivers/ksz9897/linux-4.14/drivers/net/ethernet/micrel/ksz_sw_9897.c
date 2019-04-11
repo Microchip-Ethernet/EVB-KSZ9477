@@ -6443,6 +6443,18 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 					port_w(sw, sw->HOST_PORT,
 						REG_PORT_XMII_CTRL_0, data);
 				}
+			} else {
+				if (sw->features & IS_9893) {
+					port_cfg_force_flow_ctrl(sw,
+						sw->HOST_PORT, 1);
+				} else {
+					port_r(sw, sw->HOST_PORT,
+						REG_PORT_XMII_CTRL_0, &data);
+					data |= (PORT_MII_TX_FLOW_CTRL |
+						 PORT_MII_RX_FLOW_CTRL);
+					port_w(sw, sw->HOST_PORT,
+						REG_PORT_XMII_CTRL_0, data);
+				}
 			}
 		}
 		if ((sw->features & NO_GLOBAL_RESET) ||
@@ -8716,6 +8728,7 @@ static void sw_init(struct ksz_sw *sw)
 	sw->tx_start = 0;
 	sw_init_cached_regs(sw);
 	sw->open_ports = sw->PORT_MASK & ~sw->HOST_MASK;
+	sw->mtu = sw->reg->r16(sw, REG_SW_MTU__2);
 
 #ifdef SWITCH_PORT_PHY_ADDR_MASK
 	sw_init_phy_addr(sw);
@@ -10319,6 +10332,7 @@ static ssize_t sysfs_sw_read_hw(struct ksz_sw *sw, int proc_num, ssize_t len,
 		break;
 	case PROC_SET_MTU:
 		chk = sw->reg->r16(sw, REG_SW_MTU__2);
+		sw->mtu = chk;
 		type = SHOW_HELP_NUM;
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_UNICAST:
@@ -10661,8 +10675,10 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 #endif
 		break;
 	case PROC_SET_MTU:
-		if (2000 <= num && num <= 9000)
+		if (2000 <= num && num <= 9000) {
 			sw->reg->w16(sw, REG_SW_MTU__2, (u16) num);
+			sw->mtu = num;
+		}
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_UNICAST:
 		sw_cfg(sw, REG_SW_LUE_UNK_UCAST_CTRL__4,
@@ -14357,7 +14373,7 @@ add_tag:
 		if (!sk) {
 			sk = &dummy;
 			sk->sk_allocation = GFP_KERNEL;
-			refcount_set(&sk->sk_wmem_alloc, 1);
+			atomic_set(&sk->sk_wmem_alloc, 1);
 		}
 
 		/* Clear last tag. */
@@ -14662,6 +14678,10 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 	if (!reset)
 		sw_reset(sw);
 	reset = true;
+	if (sw->mtu > 2000) {
+		sw->reg->w16(sw, REG_SW_MTU__2, (u16) sw->mtu);
+		sw_cfg(sw, REG_SW_MAC_CTRL_1, SW_JUMBO_PACKET, true);
+	}
 	sw_init(sw);
 
 	/* Clean out static MAC table when the switch shutdown. */
@@ -15734,7 +15754,7 @@ static void link_update_work(struct work_struct *work)
 
 			hsr->redbox_up = netif_carrier_ok(dev);
 			if (up != hsr->redbox_up && up)
-				hsr_rmv_slaves(hsr);			
+				hsr_rmv_slaves(hsr);
 		}
 	}
 #endif
@@ -16121,9 +16141,14 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 #ifdef CONFIG_KSZ_DLR
 		if ((features & DLR_HW) && !(used & DLR_HW))
 			features = 0;
+		if (!(sw->features & DLR_HW) && (features & DLR_HW))
+			features = 0;
 #endif
 #ifdef CONFIG_KSZ_HSR
 		if ((features & HSR_HW) && !(used & HSR_HW))
+			features = 0;
+		if (!(sw->features & HSR_HW) &&
+		    (features & (HSR_HW | HSR_REDBOX)))
 			features = 0;
 		if (features == HSR_REDBOX)
 			used |= features;
@@ -17363,7 +17388,6 @@ static void ksz_mii_exit(struct sw_priv *ks)
 
 			port = &ks->ports[i];
 			flush_work(&port->link_update);
-			kfree(phydev->priv);
 		}
 	}
 	mdiobus_unregister(bus);

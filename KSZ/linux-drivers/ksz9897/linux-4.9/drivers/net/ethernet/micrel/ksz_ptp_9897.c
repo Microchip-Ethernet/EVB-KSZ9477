@@ -6841,7 +6841,8 @@ static void ptp_exit(struct ptp_info *ptp)
 		exit_ptp_device(ptp->dev_major, ptp->dev_name[0]);
 
 #ifdef CONFIG_PTP_1588_CLOCK
-	micrel_ptp_remove(ptp);
+	if (ptp->clock_info)
+		micrel_ptp_remove(ptp);
 #endif
 }  /* ptp_exit */
 

@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -5999,6 +5999,11 @@ static void sw_setup_prio(struct ksz_sw *sw)
 	sw->ctrl_queue = (1 << 2) - 1;
 	if (sw->features & AVB_SUPPORT)
 		sw->ctrl_queue = 1;
+#ifdef CONFIG_MACB_
+	/* Atmel MAC has problem receiving larger traffic. */
+	for (q = 0; q < PRIO_QUEUES; q++)
+		hw_cfg_tx_prio_rate(sw, sw->HOST_PORT, q, 380000);
+#endif
 }  /* sw_setup_prio */
 
 /* -------------------------------------------------------------------------- */
@@ -6435,6 +6440,18 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 						REG_PORT_XMII_CTRL_0, &data);
 					data &= ~(PORT_MII_TX_FLOW_CTRL |
 						  PORT_MII_RX_FLOW_CTRL);
+					port_w(sw, sw->HOST_PORT,
+						REG_PORT_XMII_CTRL_0, data);
+				}
+			} else {
+				if (sw->features & IS_9893) {
+					port_cfg_force_flow_ctrl(sw,
+						sw->HOST_PORT, 1);
+				} else {
+					port_r(sw, sw->HOST_PORT,
+						REG_PORT_XMII_CTRL_0, &data);
+					data |= (PORT_MII_TX_FLOW_CTRL |
+						 PORT_MII_RX_FLOW_CTRL);
 					port_w(sw, sw->HOST_PORT,
 						REG_PORT_XMII_CTRL_0, data);
 				}
@@ -8360,6 +8377,13 @@ dbg_msg(" ?? %s %d %04x\n", __func__, i, sqi[i]);
 	info->sqi = val;
 }  /* port_chk_sqi */
 
+#if 1
+#define SETUP_PHY_OLD
+#endif
+#if 0
+#define SETUP_PHY_NEW
+#endif
+
 struct ksz_phy_settings {
 	u16 mmd;
 	u16 reg;
@@ -8385,6 +8409,8 @@ dbg_msg("%04x=%04x\n", REG_PORT_PHY_CTRL, val[0]);
 dbg_msg("%04x=%04x\n", REG_PORT_PHY_REMOTE_LB_LED, val[0]);
 
 dbg_msg(" %x\n", MMD_DEVICE_ID_DSP);
+		port_mmd_read(sw, port, MMD_DEVICE_ID_DSP, 0x6F, val, 1);
+dbg_msg(" %04x=%04x\n", 0x6F, val[0]);
 		port_mmd_read(sw, port, MMD_DEVICE_ID_DSP, 0xCE, val, 1);
 dbg_msg(" %04x=%04x\n", 0xCE, val[0]);
 		port_mmd_read(sw, port, MMD_DEVICE_ID_DSP, 0xCC, val, 1);
@@ -8423,6 +8449,8 @@ dbg_msg(" %04x=%04x\n", 0x0, val[0]);
 dbg_msg(" %04x=%04x\n", 0x4, val[0]);
 		port_mmd_read(sw, port, 0x1C, 0x6, val, 1);
 dbg_msg(" %04x=%04x\n", 0x6, val[0]);
+		port_mmd_read(sw, port, 0x1C, 0x8, val, 1);
+dbg_msg(" %04x=%04x\n", 0x8, val[0]);
 		port_mmd_read(sw, port, 0x1C, 0x9, val, 1);
 dbg_msg(" %04x=%04x\n", 0x9, val[0]);
 
@@ -8430,12 +8458,20 @@ dbg_msg(" %04x=%04x\n", 0x9, val[0]);
 for (i = 0; i < 12; i++)
 dbg_msg("%04x ", val[0x13 + i]);
 dbg_msg("\n");
+		port_mmd_read(sw, port, 0x1C, 0x20, val, 1);
+dbg_msg(" %04x=%04x\n", 0x20, val[0]);
 }
 #endif
 
 		port_w16(sw, port, REG_PORT_PHY_CTRL, 0x2100);
+#ifdef SETUP_PHY_OLD
 		port_w16(sw, port, REG_PORT_PHY_REMOTE_LB_LED, 0x00f0);
+#endif
 
+#ifdef SETUP_PHY_NEW
+		val[0] = 0xDD0B;
+		port_mmd_write(sw, port, MMD_DEVICE_ID_DSP, 0x6F, val, 1);
+#else
 		val[0] = 0x0100;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_DSP, 0xCE, val, 1);
 		val[0] = 0x0ff0;
@@ -8450,7 +8486,9 @@ dbg_msg("\n");
 		port_mmd_write(sw, port, MMD_DEVICE_ID_DSP, 0xD9, val, 1);
 		val[0] = 0x0280;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_DSP, 0xC9, val, 1);
+#endif
 
+#ifdef SETUP_PHY_OLD
 		val[0x09] = 0x010A;
 		val[0x0a] = 0x00ED;
 		val[0x0b] = 0x00D3;
@@ -8471,6 +8509,7 @@ dbg_msg("\n");
 		val[0x1a] = 0x0026;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_DSP, 0x79, &val[0x09],
 			18);
+#endif
 
 		val[0] = 0x6032;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_DSP, 0x8F, val, 1);
@@ -8482,8 +8521,19 @@ dbg_msg("\n");
 		val[0] = 0x7777;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_DSP, 0xD3, val, 1);
 
+#ifdef SETUP_PHY_OLD
 		val[0] = 0x9400;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x0, val, 1);
+#endif
+
+#ifdef SETUP_PHY_NEW
+		val[0] = 0x00d0;
+		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x4, val, 1);
+		val[0] = 0x3008;
+		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x6, val, 1);
+		val[0] = 0x2001;
+		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x8, val, 1);
+#else
 /*
  * THa  2016/10/20
  * Use value 0x00E2 for improved 100BTX PMD Output Amplitude.
@@ -8494,6 +8544,7 @@ dbg_msg("\n");
 		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x6, val, 1);
 		val[0] = 0xe01c;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x9, val, 1);
+#endif
 
 		val[0x13] = 0x6eff;
 		val[0x14] = 0xe6ff;
@@ -8509,6 +8560,10 @@ dbg_msg("\n");
 		val[0x1e] = 0xefff;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x13, &val[0x13],
 			12);
+#ifdef SETUP_PHY_NEW
+		val[0] = 0xeeee;
+		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x20, val, 1);
+#endif
 
 		if (port == sw->HOST_PORT)
 			port_w16(sw, port, REG_PORT_PHY_CTRL, 0x1140);
@@ -8673,6 +8728,7 @@ static void sw_init(struct ksz_sw *sw)
 	sw->tx_start = 0;
 	sw_init_cached_regs(sw);
 	sw->open_ports = sw->PORT_MASK & ~sw->HOST_MASK;
+	sw->mtu = sw->reg->r16(sw, REG_SW_MTU__2);
 
 #ifdef SWITCH_PORT_PHY_ADDR_MASK
 	sw_init_phy_addr(sw);
@@ -8860,7 +8916,10 @@ static void sw_setup(struct ksz_sw *sw)
 
 	sw->info->multi_sys = MULTI_MAC_TABLE_ENTRIES;
 	sw->info->multi_net = SWITCH_MAC_TABLE_ENTRIES;
-	sw_setup_multi(sw);
+
+	/* Unknown multicast forwarding will not be used. */
+	if (sw->features & AVB_SUPPORT)
+		sw_setup_multi(sw);
 #ifdef CONFIG_KSZ_STP
 	sw_setup_stp(sw);
 #endif
@@ -10067,6 +10126,10 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 		i = 0;
 		if (2 == sw->dev_count && (sw->features & SW_VLAN_DEV))
 			i = 1;
+#ifdef CONFIG_KSZ_HSR
+		if (sw->features & HSR_REDBOX)
+			i = 2;
+#endif
 		len += sprintf(buf + len, "%d\n", i);
 		break;
 	case PROC_SET_SW_FEATURES:
@@ -10269,6 +10332,7 @@ static ssize_t sysfs_sw_read_hw(struct ksz_sw *sw, int proc_num, ssize_t len,
 		break;
 	case PROC_SET_MTU:
 		chk = sw->reg->r16(sw, REG_SW_MTU__2);
+		sw->mtu = chk;
 		type = SHOW_HELP_NUM;
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_UNICAST:
@@ -10611,8 +10675,10 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 #endif
 		break;
 	case PROC_SET_MTU:
-		if (2000 <= num && num <= 9000)
+		if (2000 <= num && num <= 9000) {
 			sw->reg->w16(sw, REG_SW_MTU__2, (u16) num);
+			sw->mtu = num;
+		}
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_UNICAST:
 		sw_cfg(sw, REG_SW_LUE_UNK_UCAST_CTRL__4,
@@ -10857,73 +10923,73 @@ static ssize_t sysfs_port_read(struct ksz_sw *sw, int proc_num, uint n,
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->rx_packet[0] : port_cfg->rx_rate[0],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_RX_P1_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->rx_packet[1] : port_cfg->rx_rate[1],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_RX_P2_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->rx_packet[2] : port_cfg->rx_rate[2],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_RX_P3_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->rx_packet[3] : port_cfg->rx_rate[3],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_RX_P4_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->rx_packet[4] : port_cfg->rx_rate[4],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_RX_P5_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->rx_packet[5] : port_cfg->rx_rate[5],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_RX_P6_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->rx_packet[6] : port_cfg->rx_rate[6],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_RX_P7_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->rx_packet[7] : port_cfg->rx_rate[7],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_TX_Q0_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->tx_packet[0] : port_cfg->tx_rate[0],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_TX_Q1_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->tx_packet[1] : port_cfg->tx_rate[1],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_TX_Q2_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->tx_packet[2] : port_cfg->tx_rate[2],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_TX_Q3_RATE:
 		len += sprintf(buf + len, "%u %s\n", (int)
 			port_cfg->packet_based ?
 			port_cfg->tx_packet[3] : port_cfg->tx_rate[3],
-			port_cfg->packet_based ? "pps" : "bps");
+			port_cfg->packet_based ? "Kpps" : "Kbps");
 		break;
 	case PROC_SET_COLOR_MAP:
 		for (i = 0; i < DIFFSERV_ENTRIES / 16; i++) {
@@ -13482,6 +13548,15 @@ dbg_msg(" 2 vid: %x\n", vlan_tci);
 			*tag = 0;
 		index = sw->info->port_cfg[*tag].index;
 
+#ifdef CONFIG_KSZ_HSR
+		/* Always use HSR device for communication. */
+		if (sw->features & HSR_REDBOX) {
+			struct ksz_hsr_info *info = &sw->info->hsr;
+
+			index = info->hsr_index;
+		}
+#endif
+
 		/* Save receiving port. */
 		*port = *tag;
 	}
@@ -13522,6 +13597,7 @@ dbg_msg(" 2 vid: %x\n", vlan_tci);
 		BUG();
 	}
 	dev = sw->netdev[index];
+	*tag = get_log_port(sw, *tag);
 	if (!(sw->features & VLAN_PORT_TAGGING) ||
 	    !(sw->vlan_id & (1 << *tag))) {
 		*tag = 0;
@@ -13662,11 +13738,13 @@ static int sw_port_vlan_rx(struct ksz_sw *sw, struct net_device *dev,
 	if (!tag || !(sw->features & VLAN_PORT))
 		return false;
 
+#if 0
 	/* tag never equals sw->HOST_PORT + 1. */
 if (tag == sw->HOST_PORT + 1)
 BUG();
 	if (tag > sw->HOST_PORT)
 		--tag;
+#endif
 	tag += VLAN_PORT_START;
 
 	/* Only forward to one network device. */
@@ -13938,36 +14016,41 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 	if (skb->protocol == htons(ETH_P_IBA))
 		return skb;
 #endif
+#if 0
 	port = get_phy_port(sw, port);
-#ifdef CONFIG_KSZ_HSR
-	do {
-		int i = sw->info->port_cfg[port].index;
-
-		if (sw->eth_cnt && (sw->eth_maps[i].proto & HSR_HW))
-			return skb;
-	} while (0);
 #endif
+	port = sw->priv_port;
 
 	/* Need to insert VLAN tag. */
 	if (sw->dev_count > 1 && (sw->features & SW_VLAN_DEV)) {
 		u16 vid;
 		struct vlan_ethhdr *vlan;
 		struct ethhdr *eth;
-		struct sk_buff *nskb;
+		struct sk_buff *nskb = NULL;
+#if 0
 		int i = sw->info->port_cfg[port].index;
+#endif
 
 		/*
 		 * Bridge uses clones of socket buffer to send to both
 		 * devices!
 		 */
-		nskb = skb_copy(skb, GFP_ATOMIC);
-		if (!nskb)
-			return skb;
-		dev_kfree_skb_irq(skb);
-		skb = nskb;
+#ifdef CONFIG_KSZ_HSR
+		if (sw->features & HSR_REDBOX)
+			nskb = skb;
+#endif
+		if (!nskb) {
+			nskb = skb_copy(skb, GFP_ATOMIC);
+			if (!nskb)
+				return skb;
+			dev_kfree_skb_irq(skb);
+			skb = nskb;
+		}
 		eth = (struct ethhdr *) skb->data;
-		if (sw->eth_cnt && (sw->eth_maps[i].proto & (DLR_HW | HSR_HW)))
+#if 0
+		if (sw->eth_cnt && (sw->eth_maps[i].proto & (DLR_HW)))
 			memcpy(eth->h_source, sw->info->mac_addr, ETH_ALEN);
+#endif
 
 		vid = sw->info->port_cfg[port].vid;
 		vlan = (struct vlan_ethhdr *) skb_push(skb, VLAN_HLEN);
@@ -13984,15 +14067,37 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 {
 	int i;
 	uint p;
+	struct ksz_hsr_info *info = &sw->info->hsr;
 
-#ifdef CONFIG_KSZ_IBA
-	if (skb->protocol == htons(ETH_P_IBA))
-		return skb;
-#endif
+#if 0
 	p = get_phy_port(sw, n);
+#endif
+	p = sw->priv_port;
 	i = sw->info->port_cfg[p].index;
+	if (info->redbox_up) {
+		struct net_device **dev = (struct net_device **)skb->cb;
+
+		/* Destination is Redbox. */
+		if (info->redbox && *dev == info->redbox)
+			return skb;
+		if (skb->dev == info->redbox) {
+			dev_kfree_skb_irq(skb);
+			return NULL;
+		}
+		if (*dev != info->dev) {
+			int forward = hsr_fwd(info, skb);
+
+			if (forward == 2) {
+				struct ksz_port *sw_port =
+					sw->netport[info->redbox_index];
+				uint m = sw_port->first_port;
+
+				sw->priv_port = get_phy_port(sw, m);
+				return skb;
+			}
+		}
+	}
 	if (sw->eth_cnt && (sw->eth_maps[i].proto & HSR_HW)) {
-		struct ksz_hsr_info *info = &sw->info->hsr;
 		struct hsr_port *from =
 			hsr_port_get_hsr(&info->hsr, HSR_PT_MASTER);
 #ifdef CONFIG_1588_PTP
@@ -14022,7 +14127,9 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 #endif
 		if (!hsr_forward_skb(skb, from))
 			return NULL;
+#if 0
 		memcpy(&skb->data[6], info->src_addr, ETH_ALEN);
+#endif
 		*ports = info->member;
 	}
 	return skb;
@@ -14175,6 +14282,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		ptp_set_tx_info(ptp, skb->data, &tx_tag);
 #endif
 	if (!port) {
+		sw->priv_port = get_phy_port(sw, priv->first_port);
 		if (!tx_tag.ports)
 			tx_tag.ports = sw->TAIL_TAG_LOOKUP;
 
@@ -14461,12 +14569,16 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 			entry.valid = 1;
 			sw_w_vlan_table(sw, map->vlan, &entry);
 			sw->ops->acquire(sw);
+			need_vlan = true;
+#ifdef CONFIG_KSZ_HSR
+			if (map->proto & HSR_HW)
+				continue;
+#endif
 			for (i = 0, q = map->first;
 			     i < map->cnt; i++, q++) {
 				port = get_phy_port(sw, q);
 				sw_cfg_def_vid(sw, port, map->vlan);
 			}
-			need_vlan = true;
 		}
 	}
 	if (sw->features & (STP_SUPPORT | DSA_SUPPORT))
@@ -14566,6 +14678,10 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 	if (!reset)
 		sw_reset(sw);
 	reset = true;
+	if (sw->mtu > 2000) {
+		sw->reg->w16(sw, REG_SW_MTU__2, (u16) sw->mtu);
+		sw_cfg(sw, REG_SW_MAC_CTRL_1, SW_JUMBO_PACKET, true);
+	}
 	sw_init(sw);
 
 	/* Clean out static MAC table when the switch shutdown. */
@@ -14616,6 +14732,10 @@ static int sw_open_dev(struct ksz_sw *sw, struct net_device *dev, u8 *addr)
 		mode |= 1;
 	if (sw->features & DIFF_MAC_ADDR)
 		mode |= 2;
+#ifdef CONFIG_KSZ_HSR
+	if (sw->features & HSR_REDBOX)
+		mode |= 2;
+#endif
 	return mode;
 }  /* sw_open_dev */
 
@@ -14720,6 +14840,11 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 			if (info->ports[0] == p)
 				prep_hsr(info, dev, dev->dev_addr);
 		}
+		if (sw->eth_maps[i].proto & HSR_REDBOX) {
+			struct ksz_hsr_info *info = &sw->info->hsr;
+
+			start_hsr_redbox(info, dev);
+		}
 #endif
 	}
 dbg_msg("%s r:%x t:%x d:%x l:%x\n", __func__,
@@ -14786,6 +14911,11 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 			p = get_phy_port(sw, port->first_port);
 			if (info->ports[0] == p)
 				stop_hsr(info);
+		}
+		if (sw->eth_maps[i].proto & HSR_REDBOX) {
+			struct ksz_hsr_info *info = &sw->info->hsr;
+
+			stop_hsr_redbox(info, dev);
 		}
 #endif
 	}
@@ -15614,6 +15744,20 @@ static void link_update_work(struct work_struct *work)
 		stp->ops->link_change(stp, true);
 	}
 #endif
+#ifdef CONFIG_KSZ_HSR
+	if (sw->features & HSR_HW) {
+		struct ksz_hsr_info *hsr = &sw->info->hsr;
+
+		dev = port->netdev;
+		if (dev && dev == hsr->redbox_dev) {
+			int up = hsr->redbox_up;
+
+			hsr->redbox_up = netif_carrier_ok(dev);
+			if (up != hsr->redbox_up && up)
+				hsr_rmv_slaves(hsr);
+		}
+	}
+#endif
 
 	for (i = 1; i <= sw->mib_port_cnt; i++) {
 		p = get_phy_port(sw, i);
@@ -15997,9 +16141,14 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 #ifdef CONFIG_KSZ_DLR
 		if ((features & DLR_HW) && !(used & DLR_HW))
 			features = 0;
+		if (!(sw->features & DLR_HW) && (features & DLR_HW))
+			features = 0;
 #endif
 #ifdef CONFIG_KSZ_HSR
 		if ((features & HSR_HW) && !(used & HSR_HW))
+			features = 0;
+		if (!(sw->features & HSR_HW) &&
+		    (features & (HSR_HW | HSR_REDBOX)))
 			features = 0;
 		if (features == HSR_REDBOX)
 			used |= features;
@@ -16310,12 +16459,12 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 #if 0
 		port->flow_ctrl = PHY_TX_ONLY;
 #endif
-		setup_hsr(&sw->info->hsr, dev);
+		setup_hsr(&sw->info->hsr, dev, i);
 		if (header < HSR_HLEN)
 			header = HSR_HLEN;
 	}
 	if (sw->eth_cnt && (map->proto & HSR_REDBOX)) {
-		setup_hsr_redbox(&sw->info->hsr, dev);
+		setup_hsr_redbox(&sw->info->hsr, dev, i);
 	}
 #endif
 #ifdef CONFIG_KSZ_MRP
@@ -17239,7 +17388,6 @@ static void ksz_mii_exit(struct sw_priv *ks)
 
 			port = &ks->ports[i];
 			flush_work(&port->link_update);
-			kfree(phydev->priv);
 		}
 	}
 	mdiobus_unregister(bus);

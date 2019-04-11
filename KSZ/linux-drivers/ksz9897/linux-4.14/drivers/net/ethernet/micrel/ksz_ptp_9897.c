@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2018 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -5581,8 +5581,8 @@ static void check_sys_time(struct ptp_info *ptp, unsigned long cur_jiffies,
 		drift_jiffies *= 1000;
 		drift_jiffies = div_s64_rem(drift_jiffies, passed_sec, &rem);
 
-		cur_ktime -= ptp->first_ktime;
-		drift_ktime = cur_ktime - passed_nsec;
+		cur_ktime.tv64 -= ptp->first_ktime.tv64;
+		drift_ktime = cur_ktime.tv64 - passed_nsec;
 		drift_ktime = div_s64_rem(drift_ktime, passed_sec, &rem);
 
 		if (!ptp->clk_divider) {
@@ -6841,7 +6841,8 @@ static void ptp_exit(struct ptp_info *ptp)
 		exit_ptp_device(ptp->dev_major, ptp->dev_name[0]);
 
 #ifdef CONFIG_PTP_1588_CLOCK
-	micrel_ptp_remove(ptp);
+	if (ptp->clock_info)
+		micrel_ptp_remove(ptp);
 #endif
 }  /* ptp_exit */
 

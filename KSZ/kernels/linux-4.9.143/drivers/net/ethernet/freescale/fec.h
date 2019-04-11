@@ -576,6 +576,12 @@ struct fec_enet_private {
 	unsigned int next_counter;
 
 	u64 ethtool_stats[0];
+#if defined(HAVE_KSZ_SWITCH)
+	struct ksz_sw *sw;
+	struct ksz_port port;
+	u8 state;
+	struct ksz_sw_sysfs sysfs;
+#endif
 };
 
 void fec_ptp_init(struct platform_device *pdev);

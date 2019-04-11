@@ -6443,6 +6443,18 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 					port_w(sw, sw->HOST_PORT,
 						REG_PORT_XMII_CTRL_0, data);
 				}
+			} else {
+				if (sw->features & IS_9893) {
+					port_cfg_force_flow_ctrl(sw,
+						sw->HOST_PORT, 1);
+				} else {
+					port_r(sw, sw->HOST_PORT,
+						REG_PORT_XMII_CTRL_0, &data);
+					data |= (PORT_MII_TX_FLOW_CTRL |
+						 PORT_MII_RX_FLOW_CTRL);
+					port_w(sw, sw->HOST_PORT,
+						REG_PORT_XMII_CTRL_0, data);
+				}
 			}
 		}
 		if ((sw->features & NO_GLOBAL_RESET) ||

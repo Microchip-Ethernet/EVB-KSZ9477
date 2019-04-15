@@ -14373,7 +14373,7 @@ add_tag:
 		if (!sk) {
 			sk = &dummy;
 			sk->sk_allocation = GFP_KERNEL;
-			atomic_set(&sk->sk_wmem_alloc, 1);
+			refcount_set(&sk->sk_wmem_alloc, 1);
 		}
 
 		/* Clear last tag. */

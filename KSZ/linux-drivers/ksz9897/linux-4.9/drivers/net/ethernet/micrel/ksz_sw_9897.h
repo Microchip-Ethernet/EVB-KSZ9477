@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 switch common header
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -905,7 +905,9 @@ struct ksz_sw {
 	u16 tx_ports[NUM_OF_MSTI];
 	u8 ctrl_queue;
 	u8 tx_pad[60];
+	int mtu;
 	int tx_start;
+	int priv_port;
 	struct ksz_sw_tx_tag tag;
 	struct ksz_sw_cached_regs cached;
 

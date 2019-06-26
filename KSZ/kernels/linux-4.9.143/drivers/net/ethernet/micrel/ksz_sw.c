@@ -6290,7 +6290,7 @@ static int sw_chk_id(struct ksz_sw *sw, u16 *id)
 	    (*id & CIDER_ID_MASK) != CIDER_ID_8463_RLI)
 		return -ENODEV;
 	sw->chip_id = KSZ8463_SW_CHIP;
-	return 0;
+	return 2;
 }
 #endif
 #endif
@@ -6350,7 +6350,7 @@ static int sw_chk_id(struct ksz_sw *sw, u16 *id)
 	if (!(mode & (PORT_1_COPPER | PORT_2_COPPER)) ||
 	    !(mode & MODE_2_PHY))
 		sw->chip_id = KSZ8873_SW_CHIP;
-	return 0;
+	return 2;
 }
 #endif
 

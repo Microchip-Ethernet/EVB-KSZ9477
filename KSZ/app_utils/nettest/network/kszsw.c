@@ -697,12 +697,41 @@ int get_hsr_cmd(FILE *fp)
 	return 0;
 }  /* get_hsr_cmd */
 
+static void print_link(int num, int port, struct ksz_info_speed *speed)
+{
+	int i;
+
+	for (i = 0; i < num; i++) {
+		printf("%u: ", port + i);
+		if (speed->tx_rate)
+			printf("%u %u %x\n",
+				speed->tx_rate / TX_RATE_UNIT, speed->duplex,
+				speed->flow_ctrl);
+		else
+			printf("unlinked\n");
+		++speed;
+	}
+}  /* print_link */
+
+static void handle_sw_link(void *ptr, int len)
+{
+	struct ksz_info_opt *opt = ptr;
+	struct ksz_info_speed *speed = &opt->data.speed;
+
+	len -= 4;
+	if (len - 2 < opt->num * sizeof(struct ksz_info_speed)) {
+		printf(" len too short\n");
+	}
+	print_link(opt->num, opt->port, speed);
+}  /* handle_sw_link */
+
 static void print_sw_help(void)
 {
-	printf("\tl <p> [0,1]\tlearning\n");
-	printf("\tr <p> [0,1]\trx\n");
-	printf("\tt <p> [0,1]\ttx\n");
-	printf("\ts <p> [0,1]\tpower\n");
+	printf("\tL <p> [0,1]\tlearning\n");
+	printf("\tR <p> [0,1]\trx\n");
+	printf("\tT <p> [0,1]\ttx\n");
+	printf("\tS <p> [0,1]\tpower\n");
+	printf("\tl [p]\t\tlink\n");
 	printf("\tN\t\tChange notifications\n");
 	printf("\tdlr\t\tswitch to dlr\n");
 	printf("\thsr\t\tswitch to hsr\n");
@@ -712,6 +741,7 @@ static void print_sw_help(void)
 
 int get_cmd(FILE *fp)
 {
+	struct ksz_info_speed speed[8];
 	int count;
 	int hcount;
 	unsigned int num[8];
@@ -747,7 +777,7 @@ int get_cmd(FILE *fp)
 			return 2;
 		else
 		switch (line[0]) {
-		case 'l':
+		case 'L':
 			if (count >= 3)
 				rc = set_port_learn(fd, num[0], !!num[1]);
 			else if (count >= 2)
@@ -759,7 +789,7 @@ int get_cmd(FILE *fp)
 			else if (count < 3)
 				printf("%d\n", get);
 			break;
-		case 'r':
+		case 'R':
 			if (count >= 3)
 				rc = set_port_rx(fd, num[0], !!num[1]);
 			else if (count >= 2)
@@ -771,7 +801,7 @@ int get_cmd(FILE *fp)
 			else if (count < 3)
 				printf("%d\n", get);
 			break;
-		case 't':
+		case 'T':
 			if (count >= 3)
 				rc = set_port_tx(fd, num[0], !!num[1]);
 			else if (count >= 2)
@@ -783,7 +813,7 @@ int get_cmd(FILE *fp)
 			else if (count < 3)
 				printf("%d\n", get);
 			break;
-		case 's':
+		case 'S':
 			if (count >= 3)
 				rc = set_port_power(fd, num[0],
 					!!num[1]);
@@ -802,6 +832,19 @@ int get_cmd(FILE *fp)
 				if (rc)
 					print_sw_err(rc);
 			}
+			break;
+		case 'l':
+			num[1] = 1;
+			if (count < 2) {
+				num[1] = sw_ports;
+				num[0] = 1;
+			}
+			rc = get_port_link(fd, num[1], num[0], speed,
+					   sizeof(speed));
+			if (rc)
+				print_sw_err(rc);
+			else
+				print_link(num[1], num[0], speed);
 			break;
 		case 'h':
 			print_sw_help();
@@ -1493,9 +1536,8 @@ static void handle_sw_msg(u16 cmd, void *data, int len)
 	case DEV_INFO_QUIT:
 		break;
 	case DEV_INFO_SW_LINK:
-	{
+		handle_sw_link(data, len);
 		break;
-	}
 	case DEV_INFO_SW_ACL:
 		printf("acl: %x\n", *dword);
 		break;

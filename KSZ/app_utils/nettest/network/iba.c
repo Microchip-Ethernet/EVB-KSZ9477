@@ -53,7 +53,7 @@ typedef uint64_t u64;
 
 #if defined(_MSC_VER)
 #include <packon.h>
-#define __packed
+#define __packed;
 #endif
 
 #if defined(__GNUC__)
@@ -418,7 +418,7 @@ static void *iba_cmd_data(struct ksz_iba_info *info, u32 cmd, u32 size,
 		shift = IBA_BURST_S;
 	} else {
 		/* write can be 8-bit, 16-bit, or 32-bit. */
-		if (IBA_CMD_WRITE == cmd) {
+		if (IBA_CMD_READ != cmd) {
 			info->data[0] = iba_set_val(size, addr, info->data[0]);
 		}
 		size = iba_set_size(addr, size);
@@ -520,6 +520,26 @@ static void *iba_w_pre(struct ksz_iba_info *info, void *in, void *obj)
 	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, data[0], data[1]);
 	return info->fptr;
 }  /* iba_w_pre */
+
+static void *iba_w_b_pre(struct ksz_iba_info *info, void *in, void *obj)
+{
+	u32 *data = in;
+
+	info->data[0] = 0;
+	info->fptr = iba_cmd_data(info, IBA_CMD_READ, data[0], data[1]);
+	info->data[0] = data[2];
+	info->fptr = iba_cmd_data(info, data[3], data[0], data[1]);
+	return info->fptr;
+}  /* iba_w_b_pre */
+
+static void *iba_wait_on_pre(struct ksz_iba_info *info, void *in, void *obj)
+{
+	u32 *data = in;
+
+	info->data[0] = data[2];
+	info->fptr = iba_cmd_data(info, data[3], data[0], data[1]);
+	return info->fptr;
+}  /* iba_wait_on_pre */
 
 /**
  * iba_reqs - IBA register request
@@ -735,6 +755,65 @@ static void iba_w32(struct ksz_iba_info *iba, unsigned reg, unsigned val)
 {
 	iba_w(iba, reg, val, IBA_CMD_32);
 }  /* iba_w32 */
+
+static void iba_w_b(struct ksz_iba_info *info, unsigned reg, unsigned val,
+	u32 cmd, u32 size)
+{
+	u32 data[4];
+	int rc;
+
+	data[0] = size;
+	data[1] = reg;
+	data[2] = val;
+	data[3] = cmd;
+	rc = iba_req(info, data, NULL, NULL, iba_w_b_pre, NULL);
+}  /* iba_w_b */
+
+static void iba_wait_on(struct ksz_iba_info *info, unsigned reg, unsigned val,
+	u32 cmd, u32 size)
+{
+	u32 data[4];
+	int rc;
+
+	data[0] = size;
+	data[1] = reg;
+	data[2] = val;
+	data[3] = cmd;
+	rc = iba_req(info, data, NULL, NULL, iba_wait_on_pre, NULL);
+}  /* iba_wait_on */
+
+#define iba_s0_1(iba, reg, val)		iba_w_b(iba, reg, val, \
+	IBA_CMD_WRITE_0, IBA_CMD_8)
+#define iba_s0_2(iba, reg, val)		iba_w_b(iba, reg, val, \
+	IBA_CMD_WRITE_0, IBA_CMD_16)
+#define iba_s0_3(iba, reg, val)		iba_w_b(iba, reg, val, \
+	IBA_CMD_WRITE_0, IBA_CMD_24)
+#define iba_s0_4(iba, reg, val)		iba_w_b(iba, reg, val, \
+	IBA_CMD_WRITE_0, IBA_CMD_32)
+#define iba_s1_1(iba, reg, val)		iba_w_b(iba, reg, val, \
+	IBA_CMD_WRITE_1, IBA_CMD_8)
+#define iba_s1_2(iba, reg, val)		iba_w_b(iba, reg, val, \
+	IBA_CMD_WRITE_1, IBA_CMD_16)
+#define iba_s1_3(iba, reg, val)		iba_w_b(iba, reg, val, \
+	IBA_CMD_WRITE_1, IBA_CMD_24)
+#define iba_s1_4(iba, reg, val)		iba_w_b(iba, reg, val, \
+	IBA_CMD_WRITE_1, IBA_CMD_32)
+#define iba_w0_1(iba, reg, val)		iba_wait_on(iba, reg, val, \
+	IBA_CMD_WAIT_ON_0, IBA_CMD_8)
+#define iba_w0_2(iba, reg, val)		iba_wait_on(iba, reg, val, \
+	IBA_CMD_WAIT_ON_0, IBA_CMD_16)
+#define iba_w0_3(iba, reg, val)		iba_wait_on(iba, reg, val, \
+	IBA_CMD_WAIT_ON_0, IBA_CMD_24)
+#define iba_w0_4(iba, reg, val)		iba_wait_on(iba, reg, val, \
+	IBA_CMD_WAIT_ON_0, IBA_CMD_32)
+#define iba_w1_1(iba, reg, val)		iba_wait_on(iba, reg, val, \
+	IBA_CMD_WAIT_ON_1, IBA_CMD_8)
+#define iba_w1_2(iba, reg, val)		iba_wait_on(iba, reg, val, \
+	IBA_CMD_WAIT_ON_1, IBA_CMD_16)
+#define iba_w1_3(iba, reg, val)		iba_wait_on(iba, reg, val, \
+	IBA_CMD_WAIT_ON_1, IBA_CMD_24)
+#define iba_w1_4(iba, reg, val)		iba_wait_on(iba, reg, val, \
+	IBA_CMD_WAIT_ON_1, IBA_CMD_32)
 
 /**
  * iba_get_pre - IBA burst read pre-processing
@@ -1509,6 +1588,10 @@ int get_cmd(FILE *fp)
 				val = iba_r16(&iba_info, hex[0]);
 				printf("%u.%04x: %04x\n",
 					iba_info.id, hex[0], val);
+			} else if (line[1] == 't') {
+				val = iba_r24(&iba_info, hex[0]);
+				printf("%u.%04x: %06x\n",
+					iba_info.id, hex[0], val);
 			} else if (hcount > 2) {
 				if (hex[1] > 0x20)
 					hex[1] = 0x20;
@@ -1540,8 +1623,58 @@ int get_cmd(FILE *fp)
 				iba_w8(&iba_info, hex[0], hex[1]);
 			else if (line[1] == 'w')
 				iba_w16(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 't')
+				iba_w24(&iba_info, hex[0], hex[1]);
 			else
 				iba_w32(&iba_info, hex[0], hex[1]);
+			break;
+		case 'a':
+			if (hcount < 3)
+				break;
+			if (line[1] == 'b')
+				iba_s0_1(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 'w')
+				iba_s0_2(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 't')
+				iba_s0_3(&iba_info, hex[0], hex[1]);
+			else
+				iba_s0_4(&iba_info, hex[0], hex[1]);
+			break;
+		case 'b':
+			if (hcount < 3)
+				break;
+			if (line[1] == 'b')
+				iba_s1_1(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 'w')
+				iba_s1_2(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 't')
+				iba_s1_3(&iba_info, hex[0], hex[1]);
+			else
+				iba_s1_4(&iba_info, hex[0], hex[1]);
+			break;
+		case 'm':
+			if (hcount < 3)
+				break;
+			if (line[1] == 'b')
+				iba_w0_1(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 'w')
+				iba_w0_2(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 't')
+				iba_w0_3(&iba_info, hex[0], hex[1]);
+			else
+				iba_w0_4(&iba_info, hex[0], hex[1]);
+			break;
+		case 'n':
+			if (hcount < 3)
+				break;
+			if (line[1] == 'b')
+				iba_w1_1(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 'w')
+				iba_w1_2(&iba_info, hex[0], hex[1]);
+			else if (line[1] == 't')
+				iba_w1_3(&iba_info, hex[0], hex[1]);
+			else
+				iba_w1_4(&iba_info, hex[0], hex[1]);
 			break;
 		case 'c':
 			if (count > 1) {
@@ -1584,18 +1717,38 @@ int get_cmd(FILE *fp)
 				printf("0x%02x\n", tail_tag);
 			break;
 		case 'h':
-			printf("\tr <reg>\n");
+		case '?':
+			printf("\tr <reg> [cnt]\tread register\n");
 			printf("\trb <reg>\n");
 			printf("\trw <reg>\n");
-			printf("\tw <reg> <val>\n");
+			printf("\trt <reg>\n");
+			printf("\tw  <reg> <val>\twrite register\n");
 			printf("\twb <reg> <val>\n");
 			printf("\tww <reg> <val>\n");
-			printf("\tl <len>\n");
-			printf("\tt <tag>\n");
-			printf("\tp [0|1]\n");
-			printf("\tc [0|1]\n");
-			printf("\th\thelp\n");
-			printf("\tq\tquit\n");
+			printf("\twt <reg> <val>\n");
+			printf("\ta  <reg> <mask>\tclear bits\n");
+			printf("\tab <reg> <mask>\n");
+			printf("\taw <reg> <mask>\n");
+			printf("\tat <reg> <mask>\n");
+			printf("\tb  <reg> <mask>\tset bits\n");
+			printf("\tbb <reg> <mask>\n");
+			printf("\tbw <reg> <mask>\n");
+			printf("\tbt <reg> <mask>\n");
+			printf("\tm  <reg> <mask>\twait on 0 bits\n");
+			printf("\tmb <reg> <mask>\n");
+			printf("\tmw <reg> <mask>\n");
+			printf("\tmt <reg> <mask>\n");
+			printf("\tn  <reg> <mask>\twait on 1 bits\n");
+			printf("\tnb <reg> <mask>\n");
+			printf("\tnw <reg> <mask>\n");
+			printf("\tnt <reg> <mask>\n");
+			printf("\tf [9300|9800]\tchange format\n");
+			printf("\tl <len>\t\tset tail tag length\n");
+			printf("\tt <tag>\t\tset tail tag value\n");
+			printf("\tp [0|1]\t\tchange PTP\n");
+			printf("\tc [0|1]\t\tchange chip id\n");
+			printf("\th\t\thelp\n");
+			printf("\tq\t\tquit\n");
 			break;
 		case 'q':
 			cont = 0;

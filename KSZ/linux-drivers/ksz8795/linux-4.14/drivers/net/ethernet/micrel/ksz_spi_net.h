@@ -1,7 +1,7 @@
 /**
  * Microchip SPI switch common header
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2012-2015 Micrel, Inc.
@@ -63,13 +63,13 @@ struct spi_hw_priv {
 
 struct smi_hw_priv {
 	struct mii_bus *bus;
-	int (*smi_read)(struct mii_bus *bus, int phy_id, int regnum);
-	int (*smi_write)(struct mii_bus *bus, int phy_id, int regnum, u16 val);
+	int phyid;
+	int (*read)(struct mii_bus *bus, int phy_id, int regnum);
+	int (*write)(struct mii_bus *bus, int phy_id, int regnum, u16 val);
 };
 
 /**
  * struct sw_priv - Switch device private data structure
- * @hw_priv:		Pointer to hardware device structure.
  * @hw_dev:		Pointer to hardware access device structure.
  * @dev:		Pointer to Linux base device of hardware device.
  * @intr_mode:		Indicate which interrupt mode to use.
@@ -100,7 +100,6 @@ struct smi_hw_priv {
  * @sw:			Virtual switch structure.
  */
 struct sw_priv {
-	void *hw_priv;
 	void *hw_dev;
 	struct device *dev;
 	int intr_mode;

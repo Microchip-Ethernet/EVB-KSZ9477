@@ -582,13 +582,18 @@ static struct hsr_port *get_late_port(struct hsr_priv *hsr,
 
 static void hsr_notify_link_lost(struct ksz_hsr_info *info)
 {
+	static u8 lost_buf[sizeof(struct ksz_resp_msg) +
+		sizeof(struct ksz_hsr_node)];
+
 dbg_msg(" hsr: %u %u:%u %u:%u\n", info->ring,
 	info->p1_down, info->p2_down, info->p1_lost, info->p2_lost);
-	if (info->dev_info) {
-		u8 buf[sizeof(struct ksz_resp_msg) +
-			sizeof(struct ksz_hsr_node)];
-		struct ksz_resp_msg *msg = (struct ksz_resp_msg *) buf;
+	if ((info->notifications & HSR_INFO_LINK_LOST)) {
+		struct ksz_resp_msg *msg = (struct ksz_resp_msg *) lost_buf;
 		struct ksz_hsr_node active;
+		struct ksz_sw *sw = info->sw_dev;
+		struct file_dev_info *dev_info;
+		size_t n = sizeof(struct ksz_resp_msg) +
+			sizeof(struct ksz_hsr_node);
 
 		msg->module = DEV_MOD_HSR;
 		msg->cmd = DEV_INFO_HSR_LINK;
@@ -604,8 +609,14 @@ dbg_msg(" hsr: %u %u:%u %u:%u\n", info->ring,
 		memcpy(active.addr, info->src_addr, ETH_ALEN);
 		memcpy(&msg->resp.data[1], &active,
 			sizeof(struct ksz_hsr_node));
-		sw_setup_msg(info->dev_info, msg, sizeof(struct ksz_resp_msg) +
-			sizeof(struct ksz_hsr_node), NULL, NULL);
+		dev_info = sw->dev_list[0];
+		while (dev_info) {
+			if ((dev_info->notifications[DEV_MOD_HSR] &
+			    HSR_INFO_LINK_LOST))
+				file_dev_setup_msg(dev_info, msg, n, NULL,
+						   NULL);
+			dev_info = dev_info->next;
+		}
 	}
 }  /* hsr_notify_link_lost */
 
@@ -1429,7 +1440,7 @@ dbg_msg(" S ");
 		if (forward) {
 			struct ksz_sw *sw = info->sw_dev;
 
-			if (sw->tag.ports & 0x80)
+			if (get_rx_tag_ptp(&sw->tag))
 				forward = 0;
 		}
 #endif
@@ -1616,7 +1627,7 @@ static void *check_hsr_frame(u8 *data, struct hsr_frame_info *frame)
 
 static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 {
-#if 1 
+#if 1
 	struct sk_buff *new_skb;
 #endif
 	struct hsr_node *node;
@@ -2099,6 +2110,7 @@ static int hsr_dev_req(struct ksz_hsr_info *hsr, char *arg, void *info)
 	struct ksz_resp_msg *msg = (struct ksz_resp_msg *) data;
 	int err = 0;
 	int result = 0;
+	struct ksz_sw *sw = hsr->sw_dev;
 
 	get_user_data(&req_size, &req->size, info);
 	get_user_data(&maincmd, &req->cmd, info);
@@ -2123,7 +2135,6 @@ static int hsr_dev_req(struct ksz_hsr_info *hsr, char *arg, void *info)
 					6, info);
 				if (err)
 					goto dev_ioctl_done;
-				hsr->dev_info = info;
 			} else
 				result = DEV_IOC_INVALID_LEN;
 			break;
@@ -2135,20 +2146,24 @@ static int hsr_dev_req(struct ksz_hsr_info *hsr, char *arg, void *info)
 			/* Not called through char device. */
 			if (!info)
 				break;
+			file_dev_clear_notify(sw->dev_list[0], info,
+					      DEV_MOD_HSR,
+					      &hsr->notifications);
 			msg->module = DEV_MOD_HSR;
 			msg->cmd = DEV_INFO_QUIT;
 			msg->resp.data[0] = 0;
-			sw_setup_msg(info, msg, 8, NULL, NULL);
-			hsr->notifications = 0;
-			hsr->dev_info = NULL;
+			file_dev_setup_msg(info, msg, 8, NULL, NULL);
 			break;
 		case DEV_INFO_NOTIFY:
 			if (len >= 4) {
+				struct file_dev_info *dev_info = info;
 				uint *notify = (uint *) data;
 
 				_chk_ioctl_size(len, 4, 0, &req_size, &result,
 					&req->param, data, info);
-				hsr->notifications = *notify;
+				dev_info->notifications[DEV_MOD_HSR] =
+					*notify;
+				hsr->notifications |= *notify;
 			}
 			break;
 		default:

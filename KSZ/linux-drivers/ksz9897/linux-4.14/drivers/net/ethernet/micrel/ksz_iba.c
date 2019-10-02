@@ -1,7 +1,7 @@
 /**
  * Microchip IBA code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -16,6 +16,12 @@
  * GNU General Public License for more details.
  */
 
+
+#ifdef DEBUG
+#if 0
+#define SHOW_IBA
+#endif
+#endif
 
 #define ETH_P_IBA			IBA_TAG_TYPE
 
@@ -53,7 +59,7 @@ static void *iba_command(void *frame, int *size, u32 cmd, int cnt, u32 *data)
 			data[0] = cnt - 1;
 		else
 			cmd = 0;
-dbg_msg(" command: %d\n", cnt);
+dbg_msg(" command: %d"NL, cnt);
 	}
 
 	iba->cmd = htonl(cmd);
@@ -76,7 +82,7 @@ static void *iba_pre_cmd(struct ksz_iba_info *info, u16 code)
 	struct iba_frame *iba = info->frame;
 
 if (info->respid != info->seqid) {
-dbg_msg(" pre %x %x; %x; %x %x\n", info->respid, info->seqid, code,
+dbg_msg(" pre %x %x; %x; %x %x"NL, info->respid, info->seqid, code,
 last_iba_jiffies, jiffies);
 dbg_iba = 1;
 }
@@ -252,15 +258,20 @@ static void *iba_cmd_data(struct ksz_iba_info *info, u32 cmd, u32 size,
 		shift = IBA_BURST_S;
 	} else {
 		if (IBA_CMD_16 == size && 3 == (addr & 3))
-			pr_info("16-bit used with register ended with 3\n");
+			pr_info("16-bit used with register ended with 3"NL);
 
-		/* write can be 8-bit, 16-bit, or 32-bit. */
-		if (IBA_CMD_WRITE == cmd) {
-			if (REG_SW_IBA__4 <= addr && addr < REG_SW_IBA__4 + 4) {
+		/* write can be 8-bit, 16-bit, 24-bit, or 32-bit. */
+		if (IBA_CMD_READ != cmd) {
+
+#if 1
+			/* Do not allow changing IBA port. */
+			if (IBA_CMD_WRITE == cmd &&
+			    REG_SW_IBA__4 <= addr && addr < REG_SW_IBA__4 + 4) {
 				info->data[0] = info->cfg;
 				addr = REG_SW_IBA__4;
 				size = IBA_CMD_32;
 			}
+#endif
 			info->data[0] = iba_set_val(size, addr, info->data[0]);
 		}
 		size = iba_set_size(addr, size);
@@ -282,7 +293,7 @@ static void *iba_post_cmd(struct ksz_iba_info *info)
 	struct iba_frame *iba = info->frame;
 
 if (info->respid != info->seqid) {
-dbg_msg(" post %x %x\n", info->respid, info->seqid);
+dbg_msg(" post %x %x"NL, info->respid, info->seqid);
 dbg_iba = 1;
 }
 	info->cmds[info->index++].cmd = 0;
@@ -300,10 +311,11 @@ dbg_iba = 1;
  */
 static int iba_xmit(struct ksz_iba_info *info)
 {
-	int rc;
-	struct sk_buff *skb;
 	int len = ntohs(info->frame->length);
-	const struct net_device_ops *ops = info->dev->netdev_ops;
+	int rc;
+	struct net_device *netdev = info->dev;
+	const struct net_device_ops *ops = netdev->netdev_ops;
+	struct sk_buff *skb;
 
 	if (len < 60) {
 		memset(&info->packet[len], 0, 60 - len);
@@ -318,14 +330,14 @@ static int iba_xmit(struct ksz_iba_info *info)
 	memcpy(skb->data, info->packet, len);
 	skb_put(skb, len);
 	skb->protocol = htons(ETH_P_IBA);
-	skb->dev = info->dev;
+	skb->dev = netdev;
 	do {
 		struct ksz_sw *sw = info->sw_dev;
 
 		rc = ops->ndo_start_xmit(skb, skb->dev);
 		if (NETDEV_TX_BUSY == rc) {
 			rc = wait_event_interruptible_timeout(sw->queue,
-				!netif_queue_stopped(info->dev),
+				!netif_queue_stopped(netdev),
 				50 * HZ / 1000);
 
 			rc = NETDEV_TX_BUSY;
@@ -554,15 +566,15 @@ static int iba_test(struct ksz_iba_info *info, int n)
 	init_completion(&info->done);
 	rc = iba_xmit(info);
 	if (rc) {
-		dbg_msg("send err: %d\n", rc);
+		dbg_msg("send err: %d"NL, rc);
 		return rc;
 	}
 	wait = wait_for_completion_timeout(&info->done, info->delay_ticks);
-	dbg_msg("wait: %lx\n", wait);
+	dbg_msg("wait: %lx"NL, wait);
 
 	k = 0;
 	while (info->regs[k].cmd != (u32) -1) {
-		dbg_msg("%08x=%08x\n", info->regs[k].cmd,
+		dbg_msg("%08x=%08x"NL, info->regs[k].cmd,
 			info->regs[k].data[0]);
 		k++;
 	}
@@ -572,23 +584,23 @@ static int iba_test(struct ksz_iba_info *info, int n)
 		u32 status;
 
 if (mutex_is_locked(sw->reglock))
-printk(" reg locked\n");
+printk(" reg locked"NL);
 		mutex_lock(sw->reglock);
 		info->use_iba = 0;
-		status = sw_r32(sw, REG_SW_IBA_STATUS__4);
-		dbg_msg("status %08x q:%d p:%d d:%d f:%d o:%d m:%d\n", status,
+		status = sw->old->r32(sw, REG_SW_IBA_STATUS__4);
+		dbg_msg("status %08x q:%d p:%d d:%d f:%d o:%d m:%d"NL, status,
 			!!(status & SW_IBA_REQ),
 			!!(status & SW_IBA_RESP),
 			!!(status & SW_IBA_DA_MISMATCH),
 			!!(status & SW_IBA_FMT_MISMATCH),
 			!!(status & SW_IBA_CODE_ERROR),
 			!!(status & SW_IBA_CMD_ERROR));
-		status = sw_r32(sw, REG_SW_IBA_STATES__4);
-		dbg_msg("states %08x %u\n", status,
+		status = sw->old->r32(sw, REG_SW_IBA_STATES__4);
+		dbg_msg("states %08x %u"NL, status,
 			((status >> SW_IBA_PACKET_SIZE_S) &
 			SW_IBA_PACKET_SIZE_M) * 4);
-		status = sw_r32(sw, REG_SW_IBA_RESULT__4);
-		dbg_msg("result %08x %u\n", status, status >> SW_IBA_SIZE_S);
+		status = sw->old->r32(sw, REG_SW_IBA_RESULT__4);
+		dbg_msg("result %08x %u"NL, status, status >> SW_IBA_SIZE_S);
 		info->use_iba = 1;
 		mutex_unlock(sw->reglock);
 	} while (0);
@@ -607,8 +619,8 @@ static void iba_lock(struct ksz_sw *sw)
 	mutex_lock(sw->hwlock);
 	++sw->info->iba.cnt;
 	if (sw->reg != reg_ops) {
-printk(KERN_ALERT "%s changed\n", __func__);
-dbg_msg("  %s changed\n", __func__);
+printk(KERN_ALERT "%s changed"NL, __func__);
+dbg_msg("  %s changed"NL, __func__);
 		mutex_unlock(sw->hwlock);
 		sw->reg->lock(sw);
 	}
@@ -619,11 +631,10 @@ static void iba_unlock(struct ksz_sw *sw)
 	if (sw->info->iba.cnt)
 		--sw->info->iba.cnt;
 	else
-printk("wrong release\n");
+printk("wrong release"NL);
 	mutex_unlock(sw->hwlock);
 }  /* iba_unlock */
 
-#ifdef CONFIG_1588_PTP
 /**
  * This helper function is used to prepare the read registers for use with
  * the iba_r_post function.
@@ -644,22 +655,21 @@ static u32 *iba_prepare_data(u32 reg, u32 *data)
 static void assert_buf(const char *name, int i, size_t func_size, u32 *buf,
 	u32 *data, size_t buf_size)
 {
-	int assert = false;
+	int _assert = false;
 
 	if ((i + 1) > func_size / sizeof(void *)) {
-		printk(KERN_INFO "  [%s func] %u %u\n",
+		printk(KERN_INFO "  [%s func] %u %u"NL,
 			name, i, func_size / sizeof(void *));
-		assert = true;
+		_assert = true;
 	}
 	if (data > buf + buf_size / sizeof(u32)) {
-		printk(KERN_INFO "  [%s data] %u\n",
+		printk(KERN_INFO "  [%s data] %u"NL,
 			name, (data - buf));
-		assert = true;
+		_assert = true;
 	}
-	if (assert)
+	if (_assert)
 		BUG();
 }  /* assert_buf */
-#endif
 
 /**
  * iba_r_pre - IBA register read pre-processing
@@ -675,8 +685,7 @@ static void *iba_r_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 *data = in;
 
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, data[0], data[1]);
+	iba_cmd_set(info, IBA_CMD_READ, data[0], data[1], 0);
 	return info->fptr;
 }  /* iba_r_pre */
 
@@ -696,7 +705,7 @@ static int iba_r_post(struct ksz_iba_info *info, void *out, void *obj)
 	int i = 0;
 
 if (info->seqid != info->respid)
-dbg_msg(" id %x %x\n", info->seqid, info->respid);
+dbg_msg(" id %x %x"NL, info->seqid, info->respid);
 	while (info->regs[i].cmd != (u32) -1) {
 		if (IBA_CMD_READ == (info->regs[i].cmd >> IBA_CMD_S)) {
 			u32 reg = (info->regs[i].cmd & IBA_CMD_ADDR_M);
@@ -732,8 +741,7 @@ static void *iba_w_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 *data = in;
 
-	info->data[0] = data[2];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, data[0], data[1]);
+	iba_cmd_set(info, IBA_CMD_WRITE, data[0], data[1], data[2]);
 	return info->fptr;
 }  /* iba_w_pre */
 
@@ -747,7 +755,7 @@ static void sw_setup_iba(struct ksz_sw *sw)
 {
 	u32 data;
 
-	data = sw_r32(sw, REG_SW_IBA__4);
+	data = sw->old->r32(sw, REG_SW_IBA__4);
 	sw->info->iba.tag_type = (data & SW_IBA_FRAME_TPID_M);
 	data &= ~(SW_IBA_PORT_M << SW_IBA_PORT_S);
 	data |= sw->HOST_PORT << SW_IBA_PORT_S;
@@ -756,12 +764,12 @@ static void sw_setup_iba(struct ksz_sw *sw)
 #if 0
 	data |= SW_IBA_DA_MATCH;
 #endif
-	sw_w32(sw, REG_SW_IBA__4, data);
+	sw->old->w32(sw, REG_SW_IBA__4, data);
 	data &= ~SW_IBA_INIT;
 	sw->info->iba.cfg = data;
-	dbg_msg("status %08x\n", sw_r32(sw, REG_SW_IBA_STATUS__4));
-	dbg_msg("states %08x\n", sw_r32(sw, REG_SW_IBA_STATES__4));
-	dbg_msg("result %08x\n", sw_r32(sw, REG_SW_IBA_RESULT__4));
+	dbg_msg("status %08x"NL, sw->old->r32(sw, REG_SW_IBA_STATUS__4));
+	dbg_msg("states %08x"NL, sw->old->r32(sw, REG_SW_IBA_STATES__4));
+	dbg_msg("result %08x"NL, sw->old->r32(sw, REG_SW_IBA_RESULT__4));
 }  /* sw_setup_iba */
 
 /**
@@ -775,7 +783,7 @@ static void iba_to_spi(struct ksz_sw *sw, struct ksz_iba_info *info)
 {
 	if (2 <= info->use_iba) {
 if (info->use_iba != 5)
-dbg_msg(" iba stops: %x\n", info->use_iba);
+dbg_msg(" iba stops: %x"NL, info->use_iba);
 		info->use_iba = 5;
 		return;
 	}
@@ -786,7 +794,7 @@ dbg_msg(" iba stops: %x\n", info->use_iba);
 	sw_set_spi(sw, info);
 	if (sw->intr_using != 2)
 		mutex_unlock(sw->hwlock);
-	printk(KERN_ALERT "revert to SPI\n");
+	printk(KERN_ALERT "revert to SPI"NL);
 
 #if 1
 	sw_setup_iba(sw);
@@ -810,25 +818,25 @@ iba_test_override = 1;
 	if (!iba_test_override)
 		return;
 
-dbg_msg(" w seq: %x\n", info->seqid);
+dbg_msg(" w seq: %x"NL, info->seqid);
 if (sw->intr_using < 2 && mutex_is_locked(sw->reglock))
-printk(" reg locked: %d\n", sw->intr_using);
+printk(" reg locked: %d"NL, sw->intr_using);
 	if (sw->intr_using < 2)
 		mutex_lock(sw->reglock);
 	info->use_iba = 0;
-	status = sw_r32(sw, REG_SW_IBA_STATUS__4);
-	dbg_msg("status %08x q:%d p:%d d:%d f:%d o:%d m:%d\n", status,
+	status = sw->old->r32(sw, REG_SW_IBA_STATUS__4);
+	dbg_msg("status %08x q:%d p:%d d:%d f:%d o:%d m:%d"NL, status,
 		!!(status & SW_IBA_REQ),
 		!!(status & SW_IBA_RESP),
 		!!(status & SW_IBA_DA_MISMATCH),
 		!!(status & SW_IBA_FMT_MISMATCH),
 		!!(status & SW_IBA_CODE_ERROR),
 		!!(status & SW_IBA_CMD_ERROR));
-	status = sw_r32(sw, REG_SW_IBA_STATES__4);
-	dbg_msg("states %08x %u\n", status, ((status >> SW_IBA_PACKET_SIZE_S) &
+	status = sw->old->r32(sw, REG_SW_IBA_STATES__4);
+	dbg_msg("states %08x %u"NL, status, ((status >> SW_IBA_PACKET_SIZE_S) &
 		SW_IBA_PACKET_SIZE_M) * 4);
-	status = sw_r32(sw, REG_SW_IBA_RESULT__4);
-	dbg_msg("result %08x %u\n", status, status >> SW_IBA_SIZE_S);
+	status = sw->old->r32(sw, REG_SW_IBA_RESULT__4);
+	dbg_msg("result %08x %u"NL, status, status >> SW_IBA_SIZE_S);
 	info->use_iba = use_iba;
 	if (sw->intr_using < 2)
 		mutex_unlock(sw->reglock);
@@ -836,10 +844,10 @@ printk(" reg locked: %d\n", sw->intr_using);
 	for (i = 0; i < ntohs(info->frame->length); i++) {
 		dbg_msg("%02x ", info->packet[i]);
 		if (15 == (i % 16))
-			dbg_msg("\n");
+			dbg_msg(NL);
 	}
 	if (i % 16)
-		dbg_msg("\n");
+		dbg_msg(NL);
 }  /* iba_dbg_states */
 
 /**
@@ -865,14 +873,14 @@ static int iba_reqs(struct ksz_iba_info *info, void **in, void *out, void *obj,
 	void *(*prepare)(struct ksz_iba_info *info, void *in, void *obj);
 
 	if (5 == info->use_iba) {
-dbg_msg(" %s\n", __func__);
+dbg_msg(" %s"NL, __func__);
 		return 0;
 	}
 	do {
 		struct ksz_sw *sw = info->sw_dev;
 
 		if (!mutex_is_locked(sw->hwlock))
-			pr_alert("IBA not locked\n");
+			pr_alert("IBA not locked"NL);
 	} while (0);
 	memset(info->data, 0, sizeof(u32) * IBA_BURST_CNT_MAX);
 	info->fptr = iba_pre_cmd(info, code);
@@ -889,7 +897,7 @@ dbg_msg(" %s\n", __func__);
 	init_completion(&info->done);
 	rc = iba_xmit(info);
 	if (rc) {
-printk("  !! %x\n", rc);
+printk("  !! %x"NL, rc);
 		iba_dbg_states(info);
 
 #ifndef CONFIG_LAN78XX_KSZ9897_IBA
@@ -902,7 +910,7 @@ printk("  !! %x\n", rc);
 	wait = wait_for_completion_timeout(&info->done, info->delay_ticks);
 	if (!wait) {
 if (dbg_iba)
-dbg_msg("  w timeout\n");
+dbg_msg("  w timeout"NL);
 		iba_dbg_states(info);
 
 #ifndef CONFIG_LAN78XX_KSZ9897_IBA
@@ -972,10 +980,10 @@ static u32 iba_r(struct ksz_iba_info *info, unsigned reg, u32 size)
 		return 0;
 	}
 	if (4 == info->use_iba)
-		printk(KERN_WARNING " %s %x\n", __func__, reg);
+		printk(KERN_WARNING " %s %x"NL, __func__, reg);
 #if 1
 if (info->respid != info->seqid || iba_r_enter) {
-dbg_msg(" iba_r %x %x %d; %x %x; %d\n", info->respid, info->seqid, info->cnt, reg,
+dbg_msg(" iba_r %x %x %d; %x %x; %d"NL, info->respid, info->seqid, info->cnt, reg,
 last_ok_reg, iba_r_enter);
 }
 #endif
@@ -986,9 +994,9 @@ last_ok_reg, iba_r_enter);
 	data[3] = -1;
 	rc = iba_req(info, data, data + 1, NULL, iba_r_pre, iba_r_post);
 	if (!rc)
-dbg_msg("r %x %x %08x\n", reg, size, data[2]);
+dbg_msg("r %x %x %08x"NL, reg, size, data[2]);
 else if (dbg_iba)
-dbg_msg(" ?? %d %08x\n", rc, data[2]);
+dbg_msg(" ?? %d %08x"NL, rc, data[2]);
 	last_ok_reg = reg;
 	--iba_r_enter;
 	return data[2];
@@ -1061,13 +1069,13 @@ static void iba_w(struct ksz_iba_info *info, unsigned reg, unsigned val,
 		return;
 	}
 	if (4 == info->use_iba)
-		printk(KERN_WARNING " %s %x\n", __func__, reg);
+		printk(KERN_WARNING " %s %x"NL, __func__, reg);
 	data[0] = size;
 	data[1] = reg;
 	data[2] = val;
 	rc = iba_req(info, data, NULL, NULL, iba_w_pre, NULL);
 	if (!rc)
-dbg_msg("w %x %x\n", reg, size);
+dbg_msg("w %x %x"NL, reg, size);
 }  /* iba_w */
 
 /**
@@ -1228,7 +1236,7 @@ static int iba_set_post(struct ksz_iba_info *info, void *out, void *obj)
 	int i = 0;
 
 	while (info->regs[i].cmd != (u32) -1) {
-		dbg_msg("%08x=%08x\n", info->regs[i].cmd,
+		dbg_msg("%08x=%08x"NL, info->regs[i].cmd,
 			info->regs[i].data[0]);
 		i++;
 	}
@@ -1321,7 +1329,7 @@ dbg_iba_test = 1;
 	}
 	wait = wait_for_completion_timeout(&info->done, info->delay_ticks);
 	if (!wait) {
-dbg_msg("burst to\n");
+dbg_msg("burst to"NL);
 		iba_dbg_states(info);
 		iba_to_spi(info->sw_dev, info);
 		return 0;
@@ -1427,15 +1435,13 @@ static void *w_buf_pre(struct ksz_iba_info *info, void *in, void *obj)
 	val = buf_to_val(buf, 0, i);
 
 	cnt -= i;
-	info->data[0] = val;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, size, reg);
+	iba_cmd_set(info, IBA_CMD_WRITE, size, reg, val);
 	reg &= ~3;
 	size = IBA_CMD_32;
 	while (cnt >= 4) {
 		val = buf_to_val(buf, i, 4);
 		reg += 4;
-		info->data[0] = val;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, size, reg);
+		iba_cmd_set(info, IBA_CMD_WRITE, size, reg, val);
 		i += 4;
 		cnt -= 4;
 	}
@@ -1453,8 +1459,7 @@ static void *w_buf_pre(struct ksz_iba_info *info, void *in, void *obj)
 		}
 		val = buf_to_val(buf, i, cnt);
 		reg += 4;
-		info->data[0] = val;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, size, reg);
+		iba_cmd_set(info, IBA_CMD_WRITE, size, reg, val);
 	}
 	return info->fptr;
 }  /* w_buf_pre */
@@ -1482,7 +1487,7 @@ static void iba_w_buf(struct ksz_sw *sw, unsigned reg, void *buf, size_t count)
 	}
 }  /* iba_w_buf */
 
-static int iba_get(struct ksz_sw *sw, u32 reg, size_t count, char *buf)
+static int iba_get(struct ksz_sw *sw, u32 reg, size_t count, void *buf)
 {
 	int rc;
 
@@ -1498,7 +1503,7 @@ static int iba_get(struct ksz_sw *sw, u32 reg, size_t count, char *buf)
 	return rc;
 }  /* iba_get */
 
-static int iba_set(struct ksz_sw *sw, u32 reg, size_t count, char *buf)
+static int iba_set(struct ksz_sw *sw, u32 reg, size_t count, void *buf)
 {
 	return iba_burst(&sw->info->iba, reg, count, buf, 1,
 		iba_set_pre, iba_set_post);
@@ -1512,15 +1517,10 @@ static int iba_set(struct ksz_sw *sw, u32 reg, size_t count, char *buf)
  */
 static void r_mac_table_pre(struct ksz_iba_info *info)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_SW_ALU_VAL_A);
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_SW_ALU_VAL_B);
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_SW_ALU_VAL_C);
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_SW_ALU_VAL_D);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_SW_ALU_VAL_A, 0);
+	iba_cmd(info, IBA_CMD_READ, IBA_CMD_32, REG_SW_ALU_VAL_B);
+	iba_cmd(info, IBA_CMD_READ, IBA_CMD_32, REG_SW_ALU_VAL_C);
+	iba_cmd(info, IBA_CMD_READ, IBA_CMD_32, REG_SW_ALU_VAL_D);
 }  /* r_mac_table_pre */
 
 /**
@@ -1595,18 +1595,14 @@ static void w_mac_table_pre(struct ksz_iba_info *info,
 	u32 data[4];
 
 	set_mac_table_info(mac, data);
-	info->data[0] = data[0];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_VAL_A);
-	info->data[0] = data[1];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_VAL_B);
-	info->data[0] = data[2];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_VAL_C);
-	info->data[0] = data[3];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_VAL_D);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_VAL_A,
+		data[0]);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_VAL_B,
+		data[1]);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_VAL_C,
+		data[2]);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_VAL_D,
+		data[3]);
 }  /* w_mac_table_pre */
 
 /**
@@ -1627,22 +1623,19 @@ static u32 s_dyn_mac_pre(struct ksz_iba_info *info, u16 addr, u8 *src_addr,
 	ctrl = 0;
 	if (addr) {
 		data = (addr - 1) & ALU_DIRECT_INDEX_M;
-		info->data[0] = data;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_SW_ALU_INDEX_1);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_SW_ALU_INDEX_1, data);
 		ctrl |= ALU_DIRECT;
 	} else {
 		data = (u32) src_fid << ALU_FID_INDEX_S;
 		data |= ((u32) src_addr[0] << 8) | src_addr[1];
-		info->data[0] = data;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_SW_ALU_INDEX_0);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_SW_ALU_INDEX_0, data);
 		data = ((u32) src_addr[2] << 24) |
 			((u32) src_addr[3] << 16) |
 			((u32) src_addr[4] << 8) | src_addr[5];
-		info->data[0] = data;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_SW_ALU_INDEX_1);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_SW_ALU_INDEX_1, data);
 	}
 	ctrl |= ALU_START;
 	return ctrl;
@@ -1670,22 +1663,16 @@ static void *r_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 	ctrl |= ALU_READ;
 
 	/* Dynamic MAC table does not use USE_FID bit and does not clear it. */
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_VAL_B);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_CTRL__4);
-	info->data[0] = ALU_START;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32,
-		REG_SW_ALU_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_VAL_B, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_CTRL__4, ctrl);
+	iba_cmd_set(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32, REG_SW_ALU_CTRL__4,
+		ALU_START);
 	r_mac_table_pre(info);
 
 	/* Hash read. */
 	if (!addr) {
-		info->data[0] = 0;
-		info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_16,
-			REG_SW_LUE_INDEX_0__2);
+		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_16,
+			REG_SW_LUE_INDEX_0__2, 0);
 	}
 	return info->fptr;
 }  /* r_dyn_mac_pre */
@@ -1735,9 +1722,7 @@ static void *w_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 	ctrl = s_dyn_mac_pre(info, addr, src_addr, src_fid);
 	ctrl |= ALU_WRITE;
 	w_mac_table_pre(info, mac);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_CTRL__4, ctrl);
 	return info->fptr;
 }  /* w_dyn_mac_pre */
 
@@ -1780,12 +1765,8 @@ static void *start_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 	ctrl |= ALU_START;
 
 	/* Dynamic MAC table does not use USE_FID bit and does not clear it. */
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_VAL_B);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_VAL_B, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_CTRL__4, ctrl);
 	return info->fptr;
 }  /* start_dyn_mac_pre */
 
@@ -1842,12 +1823,8 @@ static int iba_g_dyn_mac_hw(struct ksz_sw *sw, struct ksz_mac_table *mac)
  */
 static void *stop_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_SW_ALU_CTRL__4);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_SW_ALU_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_SW_ALU_CTRL__4, 0);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_SW_ALU_CTRL__4, 0);
 	return info->fptr;
 }  /* stop_dyn_mac_pre */
 
@@ -1915,12 +1892,10 @@ static void *r_sta_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 	u32 *ctrl = &data[1];
 
 	do {
-		info->data[0] = *ctrl;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_SW_ALU_STAT_CTRL__4);
-		info->data[0] = ALU_STAT_START;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32,
-			REG_SW_ALU_STAT_CTRL__4);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_SW_ALU_STAT_CTRL__4, *ctrl);
+		iba_cmd_set(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32,
+			REG_SW_ALU_STAT_CTRL__4, ALU_STAT_START);
 		r_mac_table_pre(info);
 		++cnt;
 		++ctrl;
@@ -1969,12 +1944,10 @@ static void *w_sta_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 	for (cnt = 0; cnt < num; cnt++, data++) {
 		w_mac_table_pre(info, mac);
-		info->data[0] = data[1];
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_SW_ALU_STAT_CTRL__4);
-		info->data[0] = ALU_STAT_START;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32,
-			REG_SW_ALU_STAT_CTRL__4);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_SW_ALU_STAT_CTRL__4, data[1]);
+		iba_cmd_set(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32,
+			REG_SW_ALU_STAT_CTRL__4, ALU_STAT_START);
 		++mac;
 	}
 	return info->fptr;
@@ -2022,26 +1995,20 @@ static void *r_vlan_table_pre(struct ksz_iba_info *info, void *in, void *obj)
 	if (num > MAX_IBA_VLAN_ENTRIES)
 		num = MAX_IBA_VLAN_ENTRIES;
 	do {
-		info->data[0] = addr;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-			REG_SW_VLAN_ENTRY_INDEX__2);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16,
+			REG_SW_VLAN_ENTRY_INDEX__2, addr);
 		ctrl = VLAN_READ;
 		ctrl |= VLAN_START;
-		info->data[0] = ctrl;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_8,
-			REG_SW_VLAN_CTRL);
-		info->data[0] = VLAN_START << 24;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32,
-			REG_SW_VLAN_CTRL);
-		info->data[0] = 0;
-		info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-			REG_SW_VLAN_ENTRY__4);
-		info->data[0] = 0;
-		info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-			REG_SW_VLAN_ENTRY_UNTAG__4);
-		info->data[0] = 0;
-		info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-			REG_SW_VLAN_ENTRY_PORTS__4);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_8, REG_SW_VLAN_CTRL,
+			ctrl);
+		iba_cmd_set(info, IBA_CMD_WAIT_ON_0, IBA_CMD_8,
+			REG_SW_VLAN_CTRL, VLAN_START);
+		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
+			REG_SW_VLAN_ENTRY__4, 0);
+		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
+			REG_SW_VLAN_ENTRY_UNTAG__4, 0);
+		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
+			REG_SW_VLAN_ENTRY_PORTS__4, 0);
 		++cnt;
 		++addr;
 	} while (cnt < num);
@@ -2127,27 +2094,21 @@ static void *w_vlan_table_pre(struct ksz_iba_info *info, void *in,
 	if (num > MAX_IBA_VLAN_ENTRIES)
 		num = MAX_IBA_VLAN_ENTRIES;
 	for (cnt = 0; cnt < num; cnt++) {
-		info->data[0] = data[0];
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_SW_VLAN_ENTRY__4);
-		info->data[0] = data[1];
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_SW_VLAN_ENTRY_UNTAG__4);
-		info->data[0] = data[2];
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_SW_VLAN_ENTRY_PORTS__4);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_SW_VLAN_ENTRY__4, data[0]);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_SW_VLAN_ENTRY_UNTAG__4, data[1]);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_SW_VLAN_ENTRY_PORTS__4, data[2]);
 		addr = data[3];
-		info->data[0] = addr;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-			REG_SW_VLAN_ENTRY_INDEX__2);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16,
+			REG_SW_VLAN_ENTRY_INDEX__2, addr);
 		ctrl = VLAN_WRITE;
 		ctrl |= VLAN_START;
-		info->data[0] = ctrl;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_8,
-			REG_SW_VLAN_CTRL);
-		info->data[0] = VLAN_START << 24;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32,
-			REG_SW_VLAN_CTRL);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_8, REG_SW_VLAN_CTRL,
+			ctrl);
+		iba_cmd_set(info, IBA_CMD_WAIT_ON_0, IBA_CMD_8,
+			REG_SW_VLAN_CTRL, VLAN_START);
 		data += WRITE_VLAN_ENTRY_SIZE;
 	}
 	return info->fptr;
@@ -2180,7 +2141,7 @@ static void r_hsr_table_pre(struct ksz_iba_info *info)
 
 	info->data[0] = 0;
 	for (i = 0; i < 7; i++) {
-		info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
+		iba_cmd(info, IBA_CMD_READ, IBA_CMD_32,
 			REG_HSR_ALU_VAL_A + i * 4);
 	}
 }  /* r_hsr_table_pre */
@@ -2261,9 +2222,8 @@ static void w_hsr_table_pre(struct ksz_iba_info *info,
 
 	set_hsr_table_info(hsr, data);
 	for (i = 0; i < 7; i++) {
-		info->data[0] = data[i];
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_HSR_ALU_VAL_A + i * 4);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_HSR_ALU_VAL_A + i * 4, data[i]);
 	}
 }  /* w_hsr_table_pre */
 
@@ -2285,29 +2245,24 @@ static u32 s_hsr_pre(struct ksz_iba_info *info, u16 addr, u8 *src_addr,
 	ctrl = 0;
 	if (addr) {
 		data = (addr - 1) & HSR_DIRECT_INDEX_M;
-		info->data[0] = data;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_HSR_ALU_INDEX_2);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_HSR_ALU_INDEX_2, data);
 		ctrl |= HSR_DIRECT;
 	} else {
 		data = 0;
-		info->data[0] = data;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_HSR_ALU_INDEX_0);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_HSR_ALU_INDEX_0, data);
 		data = ((u32) src_addr[0] << 8) | src_addr[1];
-		info->data[0] = data;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_HSR_ALU_INDEX_1);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_HSR_ALU_INDEX_1, data);
 		data = ((u32) src_addr[2] << 24) |
 			((u32) src_addr[3] << 16) |
 			((u32) src_addr[4] << 8) | src_addr[5];
-		info->data[0] = data;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_HSR_ALU_INDEX_2);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_HSR_ALU_INDEX_2, data);
 		data = path_id & HSR_PATH_INDEX_M;
-		info->data[0] = data;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_HSR_ALU_INDEX_3);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_HSR_ALU_INDEX_3, data);
 	}
 	ctrl |= HSR_START;
 	return ctrl;
@@ -2332,12 +2287,10 @@ static void *r_hsr_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 	ctrl = s_hsr_pre(info, addr, hsr->src_mac, hsr->path_id);
 	ctrl |= HSR_READ;
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_HSR_ALU_CTRL__4);
-	info->data[0] = HSR_START;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32,
-		REG_HSR_ALU_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_HSR_ALU_CTRL__4,
+		ctrl);
+	iba_cmd_set(info, IBA_CMD_WAIT_ON_0, IBA_CMD_32, REG_HSR_ALU_CTRL__4,
+		HSR_START);
 	r_hsr_table_pre(info);
 	return info->fptr;
 }  /* r_hsr_pre */
@@ -2380,9 +2333,8 @@ static void *w_hsr_pre(struct ksz_iba_info *info, void *in, void *obj)
 	ctrl = s_hsr_pre(info, addr, hsr->src_mac, hsr->path_id);
 	ctrl |= HSR_WRITE;
 	w_hsr_table_pre(info, hsr);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_HSR_ALU_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_HSR_ALU_CTRL__4,
+		ctrl);
 	return info->fptr;
 }  /* w_hsr_pre */
 
@@ -2419,9 +2371,8 @@ static void *start_hsr_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 	ctrl = HSR_SEARCH;
 	ctrl |= HSR_START;
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_HSR_ALU_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_HSR_ALU_CTRL__4,
+		ctrl);
 	return info->fptr;
 }  /* start_hsr_pre */
 
@@ -2480,12 +2431,9 @@ static void *stop_hsr_pre(struct ksz_iba_info *info, void *in, void *obj)
 	u32 ctrl;
 
 	ctrl = 0;
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_HSR_ALU_CTRL__4);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_HSR_ALU_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_HSR_ALU_CTRL__4,
+		ctrl);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_HSR_ALU_CTRL__4, 0);
 	return info->fptr;
 }  /* stop_hsr_pre */
 
@@ -2562,15 +2510,14 @@ static void *r_mib_cnt_pre(struct ksz_iba_info *info, void *in, void *obj)
 		ctrl <<= MIB_COUNTER_INDEX_S;
 		ctrl |= MIB_COUNTER_READ;
 		ctrl |= freeze;
-		info->data[0] = ctrl;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4));
-		info->data[0] = MIB_COUNTER_VALID;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_1, IBA_CMD_32,
-			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4));
-		info->data[0] = 0;
-		info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-			PORT_CTRL_ADDR(*port, REG_PORT_MIB_DATA));
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4),
+			ctrl);
+		iba_cmd_set(info, IBA_CMD_WAIT_ON_1, IBA_CMD_32,
+			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4),
+			MIB_COUNTER_VALID);
+		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
+			PORT_CTRL_ADDR(*port, REG_PORT_MIB_DATA), 0);
 	}
 	return info->fptr;
 }  /* r_mib_cnt_pre */
@@ -2600,7 +2547,7 @@ static int r_mib_cnt_post(struct ksz_iba_info *info, void *out, void *obj)
 
 #if 1
 if (((reg >> 12) & 0xf) != *port + 1)
-dbg_msg(" ?? %s %x %x\n", __func__, reg, *port);
+dbg_msg(" ?? %s %x %x"NL, __func__, reg, *port);
 #endif
 			reg &= ((1 << 12) - 1);
 			switch (reg) {
@@ -2631,7 +2578,7 @@ dbg_msg(" ?? %s %x %x\n", __func__, reg, *port);
  * This function reads MIB counters of the port using IBA.
  */
 static int iba_r_mib_cnt_hw(struct ksz_sw *sw, uint port, u32 addr[], int num,
-	u32 data[])
+			    u32 data[])
 {
 	u32 data_in[MAX_IBA_MIB_ENTRIES + 1];
 
@@ -2663,16 +2610,14 @@ static void *r_acl_table_pre(struct ksz_iba_info *info, void *in, void *obj)
 	u32 ctrl = (addr & PORT_ACL_INDEX_M);
 	int i;
 
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_8,
-		PORT_CTRL_ADDR(*port, REG_PORT_ACL_CTRL_0));
-	info->data[0] = PORT_ACL_READ_DONE << 8;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_1, IBA_CMD_32,
-		PORT_CTRL_ADDR(*port, REG_PORT_ACL_CTRL_0 & ~3));
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_8,
+		PORT_CTRL_ADDR(*port, REG_PORT_ACL_CTRL_0), ctrl);
+	iba_cmd_set(info, IBA_CMD_WAIT_ON_1, IBA_CMD_32,
+		PORT_CTRL_ADDR(*port, REG_PORT_ACL_CTRL_0 & ~3),
+		PORT_ACL_READ_DONE << 8);
 	for (i = 0; i < 4; i++) {
-		info->data[0] = 0;
-		info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-			PORT_CTRL_ADDR(*port, REG_PORT_ACL_0 + 4 * i));
+		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
+			PORT_CTRL_ADDR(*port, REG_PORT_ACL_0 + 4 * i), 0);
 	}
 	return info->fptr;
 }  /* r_acl_table_pre */
@@ -2764,16 +2709,15 @@ static void *w_acl_table_pre(struct ksz_iba_info *info, void *in, void *obj)
 	int i;
 
 	for (i = 0; i < 4; i++) {
-		info->data[0] = be32_to_cpu(data[i]);
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			PORT_CTRL_ADDR(*port, REG_PORT_ACL_0 + 4 * i));
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			PORT_CTRL_ADDR(*port, REG_PORT_ACL_0 + 4 * i),
+			be32_to_cpu(data[i]));
 	}
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_8,
-		PORT_CTRL_ADDR(*port, REG_PORT_ACL_CTRL_0));
-	info->data[0] = PORT_ACL_WRITE_DONE << 8;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WAIT_ON_1, IBA_CMD_32,
-		PORT_CTRL_ADDR(*port, REG_PORT_ACL_CTRL_0 & ~3));
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_8,
+		PORT_CTRL_ADDR(*port, REG_PORT_ACL_CTRL_0), ctrl);
+	iba_cmd_set(info, IBA_CMD_WAIT_ON_1, IBA_CMD_32,
+		PORT_CTRL_ADDR(*port, REG_PORT_ACL_CTRL_0 & ~3),
+		PORT_ACL_WRITE_DONE << 8);
 	return info->fptr;
 }  /* w_acl_table_pre */
 
@@ -2864,8 +2808,10 @@ static int iba_rcv(struct ksz_iba_info *info, struct sk_buff *skb)
 	struct iba_frame *iba;
 	u8 *ptr;
 	int ret = 1;
+	u8 *rxdata = skb->data;
+	int rxlen = skb->len;
 
-	ptr = skb->data;
+	ptr = rxdata;
 	ptr += ETH_ALEN * 2;
 	iba = (struct iba_frame *) ptr;
 
@@ -2874,35 +2820,35 @@ static int iba_rcv(struct ksz_iba_info *info, struct sk_buff *skb)
 		goto out_drop;
 
 if (dbg_iba)
-dbg_msg(" iba rx: %x %x\n", info->seqid, iba->tag.seqid);
+dbg_msg(" iba rx: %x %x"NL, info->seqid, iba->tag.seqid);
 
 	if (!info->cmds[0].cmd)
 		goto out_drop;
 
 #if 0
-	dbg_msg("seq: %x\n", iba->tag.seqid);
+	dbg_msg("seq: %x"NL, iba->tag.seqid);
 #endif
 	if (iba->tag.seqid != info->seqid)
 		goto out_debug;
 
 	len = ntohs(iba->length);
-	cnt = skb->len;
+	cnt = rxlen;
 	if (len != cnt) {
-		if (skb->len > 61 && len + 4 != cnt)
-			dbg_msg("len: %d != %d\n", len, cnt);
+		if (rxlen > 61 && len + 4 != cnt)
+			dbg_msg("len: %d != %d"NL, len, cnt);
 		if (len > cnt)
 			len = cnt;
 	}
 	len -= ETH_ALEN * 2 + sizeof(struct iba_frame) -
 		sizeof(struct iba_cmd);
 	if (ntohs(iba->code) == IBA_CODE_NORMAL) {
-#if 0
-		dbg_msg("normal\n");
+#ifdef SHOW_IBA
+		dbg_msg("normal"NL);
 #endif
 		cmd_shift = IBA_CMD_S;
 	} else {
-#if 0
-		dbg_msg("burst\n");
+#ifdef SHOW_IBA
+		dbg_msg("burst"NL);
 #endif
 		cmd_shift = IBA_BURST_S;
 	}
@@ -2912,7 +2858,7 @@ dbg_msg(" iba rx: %x %x\n", info->seqid, iba->tag.seqid);
 	while (len >= 4 && frame->cmd) {
 		cmd = ntohl(frame->cmd);
 		if (0xdeadbeef == cmd) {
-dbg_msg("apb: %08x\n", last_iba_addr);
+dbg_msg("apb: %08x"NL, last_iba_addr);
 			break;
 		}
 		cmds = cmd;
@@ -2921,14 +2867,14 @@ dbg_msg("apb: %08x\n", last_iba_addr);
 		data = ntohl(frame->data[i++]);
 		if (cmd != info->cmds[j].cmd || (IBA_BURST_S == cmd_shift
 				&& data != info->cmds[j].data[0]))
-			dbg_msg("?cmd %x=%x %x=%x\n", info->cmds[j].cmd, cmd,
+			dbg_msg("?cmd %x=%x %x=%x"NL, info->cmds[j].cmd, cmd,
 				info->cmds[j].data[0], data);
 		cmd >>= cmd_shift;
 		if (IBA_BURST_S == cmd_shift) {
 			cnt = data;
 			if (IBA_BURST_WRITE == cmd) {
-#if 0
-				dbg_msg("w: %08x=%d\n", addr, cnt);
+#ifdef SHOW_IBA
+				dbg_msg("w: %08x=%d"NL, addr, cnt);
 #endif
 #if 0
 				i += cnt;
@@ -2937,18 +2883,18 @@ dbg_msg("apb: %08x\n", last_iba_addr);
 					data = ntohl(frame->data[i]);
 					iba_chk_regs(info->sw_dev, cmds, data);
 					cmds += 4;
-#if 0
+#ifdef SHOW_IBA
 					dbg_msg("%08x ", data);
 #endif
 				}
-#if 0
+#ifdef SHOW_IBA
 				if (cnt)
-					dbg_msg("\n");
+					dbg_msg(NL);
 #endif
 #endif
 			} else if (IBA_BURST_READ == cmd) {
-#if 0
-				dbg_msg("r: %08x=%d\n", addr, cnt);
+#ifdef SHOW_IBA
+				dbg_msg("r: %08x=%d"NL, addr, cnt);
 #endif
 				info->regs[k].cmd = cmds;
 				for (; i <= cnt; i++) {
@@ -2956,13 +2902,13 @@ dbg_msg("apb: %08x\n", last_iba_addr);
 					info->regs[k++].data[0] = data;
 					info->regs[k].cmd =
 						info->regs[k - 1].cmd + 4;
-#if 0
+#ifdef SHOW_IBA
 					dbg_msg("%08x ", data);
 #endif
 				}
-#if 0
+#ifdef SHOW_IBA
 				if (cnt)
-					dbg_msg("\n");
+					dbg_msg(NL);
 #endif
 			} else
 				break;
@@ -2972,76 +2918,76 @@ dbg_msg("apb: %08x\n", last_iba_addr);
 			case IBA_CMD_READ:
 				info->regs[k].cmd = cmds;
 				info->regs[k++].data[0] = data;
-#if 0
+#ifdef SHOW_IBA
 				dbg_msg("r: ");
 #endif
 				break;
 			case IBA_CMD_WRITE:
 				iba_chk_regs(info->sw_dev, cmds, data);
-#if 0
+#ifdef SHOW_IBA
 				dbg_msg("w: ");
 #endif
 				break;
 			case IBA_CMD_WAIT_ON_0:
 				info->regs[k].cmd = cmds;
 				info->regs[k++].data[0] = data;
-#if 0
+#ifdef SHOW_IBA
 				dbg_msg("z: ");
 #endif
 				break;
 			case IBA_CMD_WAIT_ON_1:
 				info->regs[k].cmd = cmds;
 				info->regs[k++].data[0] = data;
-#if 0
+#ifdef SHOW_IBA
 				dbg_msg("s: ");
 #endif
 				break;
 			case IBA_CMD_WRITE_0:
 				info->regs[k].cmd = cmds;
 				info->regs[k++].data[0] = data;
-#if 0
+#ifdef SHOW_IBA
 				dbg_msg("0: ");
 #endif
 				break;
 			case IBA_CMD_WRITE_1:
 				info->regs[k].cmd = cmds;
 				info->regs[k++].data[0] = data;
-#if 0
+#ifdef SHOW_IBA
 				dbg_msg("1: ");
 #endif
 				break;
 			}
-#if 0
-			dbg_msg("%08x=%08x\n", addr, data);
+#ifdef SHOW_IBA
+			dbg_msg("%08x=%08x"NL, addr, data);
 #endif
 		}
 		j++;
 		len -= sizeof(struct iba_cmd);
 		frame = (struct iba_cmd *) &frame->data[i];
 	}
-#if 0
-	dbg_msg("\n");
+#ifdef SHOW_IBA
+	dbg_msg(NL);
 #endif
-	ptr = skb->data;
+	ptr = rxdata;
 	if (len != 4)
-		dbg_msg("?len: %d\n", len);
+		dbg_msg("?len: %d"NL, len);
 	if (info->cmds[j].cmd != 0)
-		dbg_msg("? %x\n", info->cmds[j].cmd);
+		dbg_msg("? %x"NL, info->cmds[j].cmd);
 	if (len != 4 && info->cmds[j].cmd != 0) {
-		for (i = 0; i < skb->len + ETH_ALEN * 2 + 2; i++) {
+		for (i = 0; i < rxlen + ETH_ALEN * 2 + 2; i++) {
 			dbg_msg("%02x ", ptr[i]);
 			if (15 == (i % 16))
-				dbg_msg("\n");
+				dbg_msg(NL);
 		}
 		if (15 != (i % 16))
-			dbg_msg("\n");
+			dbg_msg(NL);
 	}
 	info->cmds[0].cmd = 0;
 	info->regs[k].cmd = (u32) -1;
 	info->respid = iba->tag.seqid;
 if (dbg_iba) {
 dbg_iba = 0;
-dbg_msg("ok %x %x\n", info->seqid, last_ok_iba);
+dbg_msg("ok %x %x"NL, info->seqid, last_ok_iba);
 }
 last_ok_iba = info->respid;
 
@@ -3051,35 +2997,51 @@ last_ok_iba = info->respid;
 
 out_debug:
 dbg_iba = 1;
-dbg_msg("last ok: %x\n", last_ok_iba);
-	dbg_msg("seq: %x\n", info->seqid);
+dbg_msg("last ok: %x"NL, last_ok_iba);
+	dbg_msg("seq: %x"NL, info->seqid);
 #if 0
 	for (i = 0; i < sizeof(struct iba_frame) + 14; i++) {
 		dbg_msg("%02x ", ptr[i]);
 		if (15 == (i % 16))
-			dbg_msg("\n");
+			dbg_msg(NL);
 	}
 	if (15 != (i % 16))
-		dbg_msg("\n");
+		dbg_msg(NL);
 #endif
 	for (i = 0; i < ntohs(info->frame->length); i++) {
 		dbg_msg("%02x ", info->packet[i]);
 		if (15 == (i % 16))
-			dbg_msg("\n");
+			dbg_msg(NL);
 	}
 	if (15 != (i % 16))
-		dbg_msg("\n");
-	for (i = 0; i < skb->len; i++) {
-		dbg_msg("%02x ", skb->data[i]);
+		dbg_msg(NL);
+	for (i = 0; i < rxlen; i++) {
+		dbg_msg("%02x ", rxdata[i]);
 		if (15 == (i % 16))
-			dbg_msg("\n");
+			dbg_msg(NL);
 	}
 	if (15 != (i % 16))
-		dbg_msg("\n");
+		dbg_msg(NL);
 
 out_drop:
 	return ret;
 }  /* iba_rcv */
+
+static struct iba_ops common_iba_ops = {
+	.get_val		= iba_get_val,
+	.cmd_data		= iba_cmd_data,
+	.prepare_data		= iba_prepare_data,
+	.assert			= assert_buf,
+	.r_pre			= iba_r_pre,
+	.r_post			= iba_r_post,
+	.w_pre			= iba_w_pre,
+	.get_post_be		= iba_get_post_be,
+	.get_post_le		= iba_get_post_le,
+	.get_pre		= iba_get_pre,
+	.req			= iba_req,
+	.reqs			= iba_reqs,
+	.burst			= iba_burst,
+};
 
 static void ksz_iba_init(struct ksz_iba_info *iba, struct ksz_sw *sw)
 {
@@ -3087,11 +3049,15 @@ static void ksz_iba_init(struct ksz_iba_info *iba, struct ksz_sw *sw)
 	u16 tag_type;
 
 	/* Running nuttcp UDP TX can affect IBA communication if too short. */
-	iba->delay_ticks = msecs_to_jiffies(200);
+	data = 200;
+#ifdef CONFIG_KSZ_IBA_ONLY
+	data = 800;
+#endif
+	iba->delay_ticks = msecs_to_jiffies(data);
 
 	if (!iba->use_iba) {
 		sw->ops->acquire(sw);
-		data = sw_r32(sw, REG_SW_IBA__4);
+		data = sw->old->r32(sw, REG_SW_IBA__4);
 		tag_type = (data & SW_IBA_FRAME_TPID_M);
 		sw->ops->release(sw);
 	} else
@@ -3113,8 +3079,10 @@ static void ksz_iba_init(struct ksz_iba_info *iba, struct ksz_sw *sw)
 	iba->dst[3] = 0x00;
 	iba->dst[4] = 0x01;
 	iba->dst[5] = 0x81;
+#ifndef CONFIG_KSZ_IBA_ONLY
 #ifndef CAPTURE_IBA
 	memcpy(iba->dst, sw->info->mac_addr, ETH_ALEN);
+#endif
 #endif
 	iba->src[0] = 0x00;
 #ifdef CAPTURE_IBA
@@ -3125,9 +3093,12 @@ static void ksz_iba_init(struct ksz_iba_info *iba, struct ksz_sw *sw)
 	iba->src[3] = 0x98;
 	iba->src[4] = 0x97;
 	iba->src[5] = 0x81;
+
 	init_completion(&iba->done);
 	init_waitqueue_head(&iba->queue);
 	mutex_init(&iba->lock);
+
+	iba->ops = &common_iba_ops;
 
 	iba_info = iba;
 }  /* ksz_iba_init */
@@ -3140,8 +3111,4 @@ static void ksz_iba_exit(struct ksz_iba_info *iba)
 	kfree(iba->buf);
 	kfree(iba->packet);
 }  /* ksz_iba_exit */
-
-#ifdef CONFIG_1588_PTP
-#include "ksz_ptp_iba.c"
-#endif
 

@@ -58,8 +58,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Jan 23, 2019"
-#define SW_DRV_VERSION			"1.2.0"
+#define SW_DRV_RELDATE			"Sep 23, 2019"
+#define SW_DRV_VERSION			"1.2.1"
 
 /* -------------------------------------------------------------------------- */
 
@@ -76,6 +76,8 @@
 
 /* -------------------------------------------------------------------------- */
 
+#define I2C_CMD_LEN			1
+
 /*
  * I2C register read/write calls.
  *
@@ -86,7 +88,7 @@
 
 /**
  * i2c_wrreg - issue write register command
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @buf:	The data buffer to write.
  * @txl:	The length of data.
@@ -94,86 +96,85 @@
  * This is the low level write call that issues the necessary i2c message(s)
  * to write data to the register specified in @reg.
  */
-static void i2c_wrreg(struct i2c_hw_priv *ks, u8 reg, void *buf, unsigned txl)
+static void i2c_wrreg(struct sw_priv *priv, u8 reg, void *buf, size_t txl)
 {
+	struct i2c_hw_priv *hw_priv = priv->hw_dev;
 	struct i2c_msg msg;
-	u8 rxd[10];
-	struct i2c_client *i2c = ks->i2cdev;
+	struct i2c_client *i2c = hw_priv->i2cdev;
 	struct i2c_adapter *adapter = i2c->adapter;
 
-	rxd[0] = reg;
-	memcpy(&rxd[1], buf, txl);
+	hw_priv->txd[0] = reg;
+
+	/* Own transmit buffer is not being used. */
+	if (buf != hw_priv->txd)
+		memcpy(&hw_priv->txd[I2C_CMD_LEN], buf, txl);
 
 	msg.addr = i2c->addr;
 	msg.flags = 0;
-	msg.len = SW_SIZE + txl;
-	msg.buf = rxd;
+	msg.len = txl + I2C_CMD_LEN;
+	msg.buf = hw_priv->txd;
 
 	if (i2c_transfer(adapter, &msg, 1) != 1)
 		pr_alert("i2c_transfer() failed\n");
 }
 
+static void i2c_wrreg_size(struct sw_priv *priv, u8 reg, unsigned val,
+			   size_t size)
+{
+	struct i2c_hw_priv *hw_priv = priv->hw_dev;
+	u8 *txb = hw_priv->txd;
+	int i = I2C_CMD_LEN;
+	size_t cnt = size;
+
+	do {
+		txb[i++] = (u8)(val >> (8 * (cnt - 1)));
+		cnt--;
+	} while (cnt);
+	i2c_wrreg(priv, reg, txb, size);
+}
+
 /**
  * i2c_wrreg32 - write 32bit register value to chip
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @val:	The value to write.
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void i2c_wrreg32(struct i2c_hw_priv *ks, u8 reg, unsigned val)
+static void i2c_wrreg32(struct sw_priv *priv, u8 reg, unsigned val)
 {
-	int cnt = 4;
-	int i = 0;
-	u8 *txb = (u8 *) ks->txd;
-
-	while (cnt) {
-		txb[i++] = (u8)(val >> (8 * (cnt - 1)));
-		cnt--;
-	}
-	i2c_wrreg(ks, reg, txb, 4);
+	i2c_wrreg_size(priv, reg, val, 4);
 }
 
 /**
  * i2c_wrreg16 - write 16bit register value to chip
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @val:	The value to write.
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void i2c_wrreg16(struct i2c_hw_priv *ks, u8 reg, unsigned val)
+static void i2c_wrreg16(struct sw_priv *priv, u8 reg, unsigned val)
 {
-	int cnt = 2;
-	int i = 0;
-	u8 *txb = (u8 *) ks->txd;
-
-	while (cnt) {
-		txb[i++] = (u8)(val >> (8 * (cnt - 1)));
-		cnt--;
-	}
-	i2c_wrreg(ks, reg, txb, 2);
+	i2c_wrreg_size(priv, reg, val, 2);
 }
 
 /**
  * i2c_wrreg8 - write 8bit register value to chip
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @val:	The value to write.
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void i2c_wrreg8(struct i2c_hw_priv *ks, u8 reg, unsigned val)
+static void i2c_wrreg8(struct sw_priv *priv, u8 reg, unsigned val)
 {
-	u8 *txb = (u8 *) ks->txd;
-
-	*txb = (u8) val;
-	i2c_wrreg(ks, reg, txb, 1);
+	i2c_wrreg_size(priv, reg, val, 1);
 }
 
 /**
  * i2c_rdreg - issue read register command and return the data
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @rxb:	The RX buffer to return the result into.
  * @rxl:	The length of data expected.
@@ -181,15 +182,16 @@ static void i2c_wrreg8(struct i2c_hw_priv *ks, u8 reg, unsigned val)
  * This is the low level read call that issues the necessary i2c message(s)
  * to read data from the register specified in @reg.
  */
-static void i2c_rdreg(struct i2c_hw_priv *ks, u8 reg, void *rxb, unsigned rxl)
+static void i2c_rdreg(struct sw_priv *priv, u8 reg, void *rxb, unsigned rxl)
 {
+	struct i2c_hw_priv *hw_priv = priv->hw_dev;
 	struct i2c_msg msg[2];
-	struct i2c_client *i2c = ks->i2cdev;
+	struct i2c_client *i2c = hw_priv->i2cdev;
 	struct i2c_adapter *adapter = i2c->adapter;
 
 	msg[0].addr = i2c->addr;
 	msg[0].flags = 0;
-	msg[0].len = SW_SIZE;
+	msg[0].len = I2C_CMD_LEN;
 	msg[0].buf = &reg;
 
 	msg[1].addr = i2c->addr;
@@ -203,48 +205,48 @@ static void i2c_rdreg(struct i2c_hw_priv *ks, u8 reg, void *rxb, unsigned rxl)
 
 /**
  * i2c_rdreg8 - read 8 bit register from device
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  *
  * Read a 8bit register from the chip, returning the result.
  */
-static u8 i2c_rdreg8(struct i2c_hw_priv *ks, u8 reg)
+static u8 i2c_rdreg8(struct sw_priv *priv, u8 reg)
 {
 	u8 rxb[1];
 
-	i2c_rdreg(ks, reg, rxb, 1);
+	i2c_rdreg(priv, reg, rxb, 1);
 	return rxb[0];
 }
 
 /**
  * i2c_rdreg16 - read 16 bit register from device
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  *
  * Read a 16bit register from the chip, returning the result.
  */
-static u16 i2c_rdreg16(struct i2c_hw_priv *ks, u8 reg)
+static u16 i2c_rdreg16(struct sw_priv *priv, u8 reg)
 {
 	__le16 rx = 0;
 
-	i2c_rdreg(ks, reg, &rx, 2);
+	i2c_rdreg(priv, reg, &rx, 2);
 	return be16_to_cpu(rx);
 }
 
 /**
  * i2c_rdreg32 - read 32 bit register from device
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  *
  * Read a 32bit register from the chip.
  *
  * Note, this read requires the address be aligned to 4 bytes.
  */
-static u32 i2c_rdreg32(struct i2c_hw_priv *ks, u8 reg)
+static u32 i2c_rdreg32(struct sw_priv *priv, u8 reg)
 {
 	__le32 rx = 0;
 
-	i2c_rdreg(ks, reg, &rx, 4);
+	i2c_rdreg(priv, reg, &rx, 4);
 	return be32_to_cpu(rx);
 }
 
@@ -299,6 +301,9 @@ static struct ksz_sw_reg_ops sw_reg_ops = {
 	.w16			= sw_w16,
 	.w32			= sw_w32,
 
+	.r			= sw_r8,
+	.w			= sw_w8,
+
 	.get			= sw_reg_get,
 	.set			= sw_reg_set,
 };
@@ -311,35 +316,35 @@ static int ksz8863_probe(struct i2c_client *i2c,
 	const struct i2c_device_id *i2c_id)
 {
 	struct i2c_hw_priv *hw_priv;
-	struct sw_priv *ks;
+	struct sw_priv *priv;
 
-	ks = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
-	if (!ks)
+	priv = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
+	if (!priv)
 		return -ENOMEM;
 
-	ks->hw_dev = kzalloc(sizeof(struct i2c_hw_priv), GFP_KERNEL);
-	if (!ks->hw_dev) {
-		kfree(ks);
+	priv->hw_dev = kzalloc(sizeof(struct i2c_hw_priv), GFP_KERNEL);
+	if (!priv->hw_dev) {
+		kfree(priv);
 		return -ENOMEM;
 	}
-	hw_priv = ks->hw_dev;
+	hw_priv = priv->hw_dev;
 
 	hw_priv->i2cdev = i2c;
 
-	ks->dev = &i2c->dev;
+	priv->dev = &i2c->dev;
 
-	ks->sw.reg = &sw_reg_ops;
+	priv->sw.reg = &sw_reg_ops;
 
-	ks->irq = i2c->irq;
+	priv->irq = i2c->irq;
 
-	return ksz_probe(ks);
+	return ksz_probe(priv);
 }
 
 static int ksz8863_remove(struct i2c_client *i2c)
 {
-	struct sw_priv *ks = dev_get_drvdata(&i2c->dev);
+	struct sw_priv *priv = dev_get_drvdata(&i2c->dev);
 
-	return ksz_remove(ks);
+	return ksz_remove(priv);
 }
 
 #define I2C_SWITCH_NAME			"ksz8863"

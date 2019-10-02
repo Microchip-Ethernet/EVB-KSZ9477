@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common header
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -617,20 +617,6 @@ struct ptp_hw_ts {
 	int sending;
 };
 
-struct ptp_dev_info {
-	void *ptp;
-	unsigned int minor;
-	u8 *write_buf;
-	u8 *read_buf;
-	size_t read_max;
-	size_t read_len;
-	size_t write_len;
-	struct semaphore sem;
-	struct mutex lock;
-	wait_queue_head_t wait_udp;
-	struct ptp_dev_info *next;
-};
-
 struct ptp_tx_ts {
 	struct ptp_id id;
 	struct ptp_ts ts;
@@ -641,7 +627,7 @@ struct ptp_tx_ts {
 		u8 buf[MAX_TSM_UDP_LEN];
 		int len;
 	} data;
-	struct ptp_dev_info *dev;
+	struct file_dev_info *dev;
 	struct sk_buff *skb;
 	struct ptp_msg *msg;
 	struct ptp_msg_hdr hdr;
@@ -710,7 +696,7 @@ struct ptp_work {
 		struct ptp_delay_values delay;
 		u8 data[8];
 	} param;
-	struct ptp_dev_info *dev_info;
+	struct file_dev_info *dev_info;
 };
 
 #define PTP_WORK_NUM			(1 << 4)
@@ -757,6 +743,7 @@ struct ptp_reg_ops {
 struct ptp_ops {
 	void (*acquire)(struct ptp_info *ptp);
 	void (*release)(struct ptp_info *ptp);
+	void (*use_iba)(struct ptp_info *ptp, bool iba);
 
 	void (*init)(struct ptp_info *ptp, u8 *mac_addr);
 	void (*exit)(struct ptp_info *ptp);
@@ -770,9 +757,10 @@ struct ptp_ops {
 			      u16 ports);
 	int (*ixxat_ioctl)(struct ptp_info *ptp, unsigned int cmd,
 		struct ifreq *ifr);
-	int (*dev_req)(struct ptp_info *ptp, int start, char *arg,
-		struct ptp_dev_info *info);
+	int (*dev_req)(struct ptp_info *ptp, char *arg,
+		struct file_dev_info *info);
 	void (*proc_intr)(struct ptp_info *ptp);
+	void (*proc_tx_intr)(struct ptp_info *ptp, uint port);
 #ifdef ETHTOOL_GET_TS_INFO
 	int (*get_ts_info)(struct ptp_info *ptp, struct net_device *dev,
 		struct ethtool_ts_info *info);
@@ -831,12 +819,9 @@ struct ptp_ops {
 #define PTP_UPDATE_DST_PORT		(1 << 31)
 
 struct ptp_info {
+	void *parent;
 	struct mutex lock;
 	struct ptp_access hw_access;
-	struct {
-		u8 buf[MAX_TSM_UDP_LEN];
-		int len;
-	} udp[MAX_TSM_UDP_CNT];
 
 	/* current system time. */
 	struct ptp_utime cur_time;
@@ -863,7 +848,7 @@ struct ptp_info {
 	u32 get_delay;
 	u32 set_delay;
 	int pps_offset;
-	struct ptp_dev_info *gps_dev;
+	struct file_dev_info *gps_dev;
 	unsigned long gps_req_time;
 	unsigned long gps_resp_time;
 	u8 gps_gpi;
@@ -953,12 +938,10 @@ struct ptp_info {
 	struct ptp_clock_identity masterIdentity;
 	struct ptp_event events[MAX_TIMESTAMP_UNIT];
 	struct ptp_output outputs[MAX_TRIG_UNIT + 1];
-	int udp_head;
-	int udp_tail;
 	int dev_major;
-	struct ptp_dev_info *dev[2];
-	struct ptp_dev_info *tsi_dev[MAX_TIMESTAMP_UNIT];
-	struct ptp_dev_info *tso_dev[MAX_TRIG_UNIT];
+	struct file_dev_info *dev[2];
+	struct file_dev_info *tsi_dev[MAX_TIMESTAMP_UNIT];
+	struct file_dev_info *tso_dev[MAX_TRIG_UNIT];
 	char dev_name[2][20];
 	wait_queue_head_t wait_ts[MAX_PTP_PORT];
 	wait_queue_head_t wait_intr;
@@ -985,6 +968,8 @@ struct ptp_info {
 	uint features;
 	uint overrides;
 
+	u32 clk_add:1;
+
 	struct work_struct adj_clk;
 	struct work_struct set_latency;
 
@@ -994,7 +979,7 @@ struct ptp_info {
 
 	struct workqueue_struct *access;
 
-	struct device *parent;
+	struct device *dev_parent;
 #ifdef CONFIG_PTP_1588_CLOCK
 	void *clock_info;
 	u32 clock_events;

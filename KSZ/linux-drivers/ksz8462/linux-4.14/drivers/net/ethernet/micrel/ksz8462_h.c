@@ -23,7 +23,7 @@
  * KSZ8462/KSZ8441 16bit HLI chip from Micrel Inc.
  */
 
-#if 1
+#if 0
 #define DEBUG
 #endif
 
@@ -113,8 +113,8 @@
 
 #define DRV_NAME			"ksz8462_hli"
 #define DRV_VERSION			"1.1.0"
-#define SW_DRV_VERSION			"1.2.0"
-#define SW_DRV_RELDATE			"Jan 23, 2019"
+#define SW_DRV_VERSION			"1.2.1"
+#define SW_DRV_RELDATE			"Sep 23, 2019"
 
 #define MAX_RECV_FRAMES			180 /* 32 */
 #define MAX_BUF_SIZE			2048
@@ -274,9 +274,6 @@ struct ksz_hw {
 
 #include "ksz_sw.h"
 
-#define HW_R(ks, reg)		ks_rdreg16(&(ks)->hw, reg)
-#define HW_W(ks, reg, val)	ks_wrreg16(&(ks)->hw, reg, val)
-
 /**
  * struct dev_priv - Network device private data structure
  * @adapter:		Adapter device information.
@@ -361,9 +358,9 @@ struct dev_info {
  */
 struct ks_net {
 	struct net_device *netdev;
-	struct sw_priv *adapter;
+	struct dev_info *hw_priv;
+	struct sw_priv *sw_priv;
 	struct ksz_port port;
-	struct net_device_stats stats;
 
 	int id;
 
@@ -598,7 +595,9 @@ static void sw_ena_intr(struct ksz_sw *sw)
 
 static int sw_chk_id(struct ksz_sw *sw, u16 *id)
 {
-	struct ksz_hw *hw = sw->dev;
+	struct sw_priv *sw_priv = sw->dev;
+	struct dev_info *hw_priv = sw_priv->hw_dev;
+	struct ksz_hw *hw = &hw_priv->hw;
 	int cnt;
 
 	*id = ks_rdreg16(hw, KS_CIDER);
@@ -614,32 +613,56 @@ static int sw_chk_id(struct ksz_sw *sw, u16 *id)
 
 static u8 sw_r8(struct ksz_sw *sw, unsigned reg)
 {
-	return ks_rdreg8(sw->dev, reg);
+	struct sw_priv *sw_priv = sw->dev;
+	struct dev_info *hw_priv = sw_priv->hw_dev;
+	struct ksz_hw *hw = &hw_priv->hw;
+
+	return ks_rdreg8(hw, reg);
 }
 
 static u16 sw_r16(struct ksz_sw *sw, unsigned reg)
 {
-	return ks_rdreg16(sw->dev, reg);
+	struct sw_priv *sw_priv = sw->dev;
+	struct dev_info *hw_priv = sw_priv->hw_dev;
+	struct ksz_hw *hw = &hw_priv->hw;
+
+	return ks_rdreg16(hw, reg);
 }
 
 static u32 sw_r32(struct ksz_sw *sw, unsigned reg)
 {
-	return ks_rdreg32(sw->dev, reg);
+	struct sw_priv *sw_priv = sw->dev;
+	struct dev_info *hw_priv = sw_priv->hw_dev;
+	struct ksz_hw *hw = &hw_priv->hw;
+
+	return ks_rdreg32(hw, reg);
 }
 
 static void sw_w8(struct ksz_sw *sw, unsigned reg, unsigned val)
 {
-	ks_wrreg8(sw->dev, reg, val);
+	struct sw_priv *sw_priv = sw->dev;
+	struct dev_info *hw_priv = sw_priv->hw_dev;
+	struct ksz_hw *hw = &hw_priv->hw;
+
+	ks_wrreg8(hw, reg, val);
 }
 
 static void sw_w16(struct ksz_sw *sw, unsigned reg, unsigned val)
 {
-	ks_wrreg16(sw->dev, reg, val);
+	struct sw_priv *sw_priv = sw->dev;
+	struct dev_info *hw_priv = sw_priv->hw_dev;
+	struct ksz_hw *hw = &hw_priv->hw;
+
+	ks_wrreg16(hw, reg, val);
 }
 
 static void sw_w32(struct ksz_sw *sw, unsigned reg, unsigned val)
 {
-	ks_wrreg32(sw->dev, reg, val);
+	struct sw_priv *sw_priv = sw->dev;
+	struct dev_info *hw_priv = sw_priv->hw_dev;
+	struct ksz_hw *hw = &hw_priv->hw;
+
+	ks_wrreg32(hw, reg, val);
 }
 
 #ifdef CONFIG_1588_PTP
@@ -670,7 +693,7 @@ static void get_private_data_(struct device *d, struct semaphore **proc_sem,
 {
 	struct net_device *dev = to_net_dev(d);
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
+	struct sw_priv *sw_priv = priv->sw_priv;
 
 	*proc_sem = &sw_priv->proc_sem;
 	*sw = &sw_priv->sw;
@@ -1072,8 +1095,8 @@ static ssize_t net_show(struct device *d, struct device_attribute *attr,
 {
 	struct net_device *dev = to_net_dev(d);
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct sw_priv *sw_priv = priv->sw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	ssize_t len = -EINVAL;
 	int proc_num;
@@ -1109,8 +1132,8 @@ static ssize_t net_store(struct device *d, struct device_attribute *attr,
 {
 	struct net_device *dev = to_net_dev(d);
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct sw_priv *sw_priv = priv->sw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	ssize_t ret = -EINVAL;
 	int changes;
@@ -1271,8 +1294,7 @@ static int ks_phy_reg(int reg)
 static int ks_phy_read(struct net_device *netdev, int phy_addr, int reg)
 {
 	struct ks_net *priv = netdev_priv(netdev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *ks = &hw_priv->hw;
 	struct ksz_port *port = &priv->port;
 	int ksreg;
@@ -1294,8 +1316,7 @@ static void ks_phy_write(struct net_device *netdev, int phy, int reg,
 	int value)
 {
 	struct ks_net *priv = netdev_priv(netdev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *ks = &hw_priv->hw;
 	struct ksz_port *port = &priv->port;
 	int ksreg;
@@ -1859,8 +1880,8 @@ static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 
 	/* Update receive statistics. */
 	priv = netdev_priv(dev);
-	priv->stats.rx_packets++;
-	priv->stats.rx_bytes += len;
+	dev->stats.rx_packets++;
+	dev->stats.rx_bytes += len;
 
 	if (sw_is_switch(sw))
 		extra_skb |= sw->net_ops->port_vlan_rx(sw, dev, parent_dev,
@@ -1876,24 +1897,6 @@ static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 			netif_rx(skb);
 	}
 
-	if (parent_skb) {
-		struct dev_priv *parent_priv = netdev_priv(parent_dev);
-
-dbg_msg(" parent\n");
-		/* Update receive statistics. */
-		parent_priv->stats.rx_packets++;
-		parent_priv->stats.rx_bytes += len;
-
-#ifdef CONFIG_1588_PTP
-		if (ptp_tag && (ptp->rx_en & 1))
-			ptp->ops->get_rx_tstamp(ptp, parent_skb);
-#endif
-		parent_skb->protocol = eth_type_trans(parent_skb, parent_dev);
-		if (hw_priv->use_napi)
-			netif_receive_skb(parent_skb);
-		else
-			netif_rx(parent_skb);
-	}
 	return tcp;
 }
 
@@ -2265,8 +2268,7 @@ static void ks_setup_int(struct ksz_hw *hw)
 static void netdev_netpoll(struct net_device *dev)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 
 	ks_disable_int(hw);
@@ -2391,8 +2393,7 @@ static int netdev_open_before(struct net_device *dev, struct dev_priv *priv,
 static int ks_net_open(struct net_device *dev)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	struct ksz_sw *sw = hw_priv->sw;
 	struct ksz_port *port = &priv->port;
@@ -2403,7 +2404,7 @@ static int ks_net_open(struct net_device *dev)
 	priv->promiscuous = 0;
 
 	/* Reset device statistics. */
-	memset(&priv->stats, 0, sizeof(struct net_device_stats));
+	memset(&dev->stats, 0, sizeof(struct net_device_stats));
 
 	if (!(hw_priv->opened)) {
 		err = netdev_open_before(dev, priv, hw_priv, hw);
@@ -2441,8 +2442,7 @@ static int ks_net_open(struct net_device *dev)
 static int ks_net_stop(struct net_device *dev)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	struct ksz_sw *sw = hw_priv->sw;
 
@@ -2492,8 +2492,7 @@ static int ks_net_stop(struct net_device *dev)
 static void ks_tx_timeout(struct net_device *dev)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 
 	if (hw_priv->hw.oper_state & OPER_STATE_TX_RESET)
 		return;
@@ -2549,8 +2548,7 @@ static int ks_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	unsigned long flags;
 	int retv = NETDEV_TX_OK;
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	struct ksz_sw *sw = hw_priv->sw;
 	int len;
@@ -2602,8 +2600,8 @@ static int ks_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			ks_dbg_dumpkkt(priv, skb->data, skb->len, 1);
 
 		/* Update transmit statistics. */
-		priv->stats.tx_packets++;
-		priv->stats.tx_bytes += skb->len;
+		dev->stats.tx_packets++;
+		dev->stats.tx_bytes += skb->len;
 
 #ifdef CONFIG_1588_PTP_
 		/* Still waiting for tx timestamp. */
@@ -2791,8 +2789,7 @@ static void ks_rxctrl_work(struct work_struct *work)
 static void ks_set_rx_mode(struct net_device *dev)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *ks = &hw_priv->hw;
 	struct ksz_sw *sw = hw_priv->sw;
 	int flags = dev->flags;
@@ -2861,8 +2858,7 @@ static void ks_set_rx_mode(struct net_device *dev)
 static int ks_set_mac_address(struct net_device *dev, void *addr)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	struct ksz_sw *sw = hw_priv->sw;
 	struct sockaddr *sa = addr;
@@ -2902,8 +2898,7 @@ static int ks_set_mac_address(struct net_device *dev, void *addr)
 static int netdev_add_vid(struct net_device *dev, __be16 proto, u16 vid)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_sw *sw = hw_priv->sw;
 
 	if ((sw->features & VLAN_PORT) && vid >= VLAN_PORT_START) {
@@ -2917,8 +2912,7 @@ static int netdev_add_vid(struct net_device *dev, __be16 proto, u16 vid)
 static int netdev_kill_vid(struct net_device *dev, __be16 proto, u16 vid)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_sw *sw = hw_priv->sw;
 
 	if ((sw->features & VLAN_PORT) && vid >= VLAN_PORT_START) {
@@ -2952,51 +2946,51 @@ static struct net_device_stats *ks_net_query_statistics(struct net_device *dev)
 {
 	struct ks_net *priv = netdev_priv(dev);
 	struct ksz_port *port = &priv->port;
-	struct ksz_sw *sw = &priv->adapter->sw;
+	struct ksz_sw *sw = &priv->sw_priv->sw;
 	struct ksz_port_mib *mib;
 	int i;
 	int p;
 
 	/* Reset to zero to add count later. */
-	priv->stats.multicast = 0;
-	priv->stats.collisions = 0;
-	priv->stats.rx_length_errors = 0;
-	priv->stats.rx_crc_errors = 0;
-	priv->stats.rx_frame_errors = 0;
-	priv->stats.tx_window_errors = 0;
+	dev->stats.multicast = 0;
+	dev->stats.collisions = 0;
+	dev->stats.rx_length_errors = 0;
+	dev->stats.rx_crc_errors = 0;
+	dev->stats.rx_frame_errors = 0;
+	dev->stats.tx_window_errors = 0;
 
 	for (i = 0, p = port->first_port; i < port->mib_port_cnt; i++, p++) {
 		mib = &sw->port_mib[p];
 
-		priv->stats.multicast += (unsigned long)
+		dev->stats.multicast += (unsigned long)
 			mib->counter[MIB_COUNTER_RX_MULTICAST];
 
-		priv->stats.collisions += (unsigned long)
+		dev->stats.collisions += (unsigned long)
 			mib->counter[MIB_COUNTER_TX_TOTAL_COLLISION];
 
-		priv->stats.rx_length_errors += (unsigned long)(
+		dev->stats.rx_length_errors += (unsigned long)(
 			mib->counter[MIB_COUNTER_RX_UNDERSIZE] +
 			mib->counter[MIB_COUNTER_RX_FRAGMENT] +
 			mib->counter[MIB_COUNTER_RX_OVERSIZE] +
 			mib->counter[MIB_COUNTER_RX_JABBER]);
-		priv->stats.rx_crc_errors += (unsigned long)
+		dev->stats.rx_crc_errors += (unsigned long)
 			mib->counter[MIB_COUNTER_RX_CRC_ERR];
-		priv->stats.rx_frame_errors += (unsigned long)(
+		dev->stats.rx_frame_errors += (unsigned long)(
 			mib->counter[MIB_COUNTER_RX_ALIGNMENT_ERR] +
 			mib->counter[MIB_COUNTER_RX_SYMBOL_ERR]);
 
-		priv->stats.tx_window_errors += (unsigned long)
+		dev->stats.tx_window_errors += (unsigned long)
 			mib->counter[MIB_COUNTER_TX_LATE_COLLISION];
 	}
 
-	return &priv->stats;
+	return &dev->stats;
 }
 
 static int ks_net_ioctl(struct net_device *dev, struct ifreq *req, int cmd)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct sw_priv *sw_priv = priv->sw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 #ifdef CONFIG_1588_PTP
 	struct ksz_sw *sw = hw_priv->sw;
 	struct ptp_info *ptp = &sw->ptp_hw;
@@ -3019,7 +3013,7 @@ static int ks_net_ioctl(struct net_device *dev, struct ifreq *req, int cmd)
 	case SIOCDEVPRIVATE + 15:
 		result = -EOPNOTSUPP;
 		if (sw->features & PTP_HW)
-			result = ptp->ops->dev_req(ptp, 0, req->ifr_data,
+			result = ptp->ops->dev_req(ptp, req->ifr_data,
 				NULL);
 		break;
 #endif
@@ -3059,7 +3053,7 @@ static u32 ks_get_msglevel(struct net_device *dev)
 static void ks_set_msglevel(struct net_device *dev, u32 to)
 {
 	struct ks_net *ks = netdev_priv(dev);
-	struct sw_priv *hw_priv = ks->adapter;
+	struct sw_priv *hw_priv = ks->sw_priv;
 	struct ksz_sw *sw = &hw_priv->sw;
 
 	sw->msg_enable = to;
@@ -3128,8 +3122,7 @@ static void ks_get_regs(struct net_device *dev, struct ethtool_regs *regs,
 	void *ptr)
 {
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	char *buf = ptr;
 	struct sw_regs *range = sw_regs_range;
@@ -3170,8 +3163,7 @@ static void ks_get_wol(struct net_device *dev,
 	struct ethtool_wolinfo *wol)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 
 	wol->supported = hw_priv->wol_support;
 	wol->wolopts = hw_priv->wol_enable;
@@ -3191,8 +3183,7 @@ static int ks_set_wol(struct net_device *dev,
 	struct ethtool_wolinfo *wol)
 {
 	struct ks_net *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 
 	/* Need to find a way to retrieve the device IP address. */
 	u8 net_addr[] = { 192, 168, 1, 1 };
@@ -3261,8 +3252,8 @@ static struct {
 static void ks_get_strings(struct net_device *dev, u32 stringset, u8 *buf)
 {
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *hw_priv = priv->adapter;
-	struct ksz_sw *sw = &hw_priv->sw;
+	struct sw_priv *sw_priv = priv->sw_priv;
+	struct ksz_sw *sw = &sw_priv->sw;
 
 	if (ETH_SS_STATS == stringset)
 		memcpy(buf, &ethtool_stats_keys,
@@ -3281,8 +3272,8 @@ static void ks_get_strings(struct net_device *dev, u32 stringset, u8 *buf)
 static int ks_get_sset_count(struct net_device *dev, int sset)
 {
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *hw_priv = priv->adapter;
-	struct ksz_sw *sw = &hw_priv->sw;
+	struct sw_priv *sw_priv = priv->sw_priv;
+	struct ksz_sw *sw = &sw_priv->sw;
 
 	switch (sset) {
 	case ETH_SS_STATS:
@@ -3304,7 +3295,7 @@ static void ks_get_ethtool_stats(struct net_device *dev,
 	struct ethtool_stats *stats, u64 *data)
 {
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *hw_priv = priv->adapter;
+	struct sw_priv *hw_priv = priv->sw_priv;
 	struct ksz_sw *sw = &hw_priv->sw;
 	struct ksz_port *port = &priv->port;
 	int n_stats = stats->n_stats;
@@ -3365,8 +3356,7 @@ static int ks_set_eeprom(struct net_device *dev,
 	struct ethtool_eeprom *ee, u8 *data)
 {
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *ks = sw_priv->hw_priv;
+	struct dev_info *ks = priv->hw_priv;
 	int offset = ee->offset;
 	int len = ee->len;
 	u16 tmp;
@@ -3408,8 +3398,7 @@ static int ks_get_eeprom(struct net_device *dev,
 	struct ethtool_eeprom *ee, u8 *data)
 {
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *ks = sw_priv->hw_priv;
+	struct dev_info *ks = priv->hw_priv;
 	int offset = ee->offset;
 	int len = ee->len;
 
@@ -3431,8 +3420,7 @@ static int ks_get_eeprom(struct net_device *dev,
 static int ks_get_eeprom_len(struct net_device *dev)
 {
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = priv->hw_priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 
 	/* currently, we assume it is an 93C46 attached, so return 128 */
@@ -3444,7 +3432,7 @@ static int netdev_get_ts_info(struct net_device *dev,
 	struct ethtool_ts_info *info)
 {
 	struct dev_priv *priv = netdev_priv(dev);
-	struct sw_priv *sw_priv = priv->adapter;
+	struct sw_priv *sw_priv = priv->sw_priv;
 	struct ksz_sw *sw = &sw_priv->sw;
 	struct ptp_info *ptp = &sw->ptp_hw;
 
@@ -3532,7 +3520,7 @@ static char *macaddr = ":";
 static int netdev_init(struct net_device *netdev)
 {
 	struct ks_net *ks = netdev_priv(netdev);
-	struct sw_priv *hw_priv = ks->adapter;
+	struct sw_priv *hw_priv = ks->sw_priv;
 	struct ksz_sw *sw = &hw_priv->sw;
 
 	mutex_init(&ks->lock);
@@ -3584,13 +3572,6 @@ static void netdev_free(struct net_device *dev)
 	free_netdev(dev);
 }
 
-#if 0
-struct platform_info {
-	struct dev_info dev_info;
-	struct net_device *netdev[TOTAL_PORT_NUM];
-};
-#endif
-
 static int net_device_present;
 
 static int ks846x_probe(struct platform_device *pdev)
@@ -3600,7 +3581,7 @@ static int ks846x_probe(struct platform_device *pdev)
 	struct resource *io_d, *io_c;
 	struct net_device *netdev;
 	struct ks_net *priv;
-	struct sw_priv *ks;
+	struct sw_priv *sw_priv;
 	struct dev_info *info;
 	struct ksz_hw *hw;
 	struct ksz_sw *sw;
@@ -3624,23 +3605,23 @@ static int ks846x_probe(struct platform_device *pdev)
 	if (!request_mem_region(io_c->start, resource_size(io_c), DRV_NAME))
 		goto err_mem_region_cmd;
 
-	ks = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
-	if (!ks)
+	sw_priv = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
+	if (!sw_priv)
 		goto err_devinfo;
 
-	ks->hw_priv = kzalloc(sizeof(struct dev_info), GFP_KERNEL);
-	if (!ks->hw_priv) {
-		kfree(ks);
+	info = kzalloc(sizeof(struct dev_info), GFP_KERNEL);
+	if (!info) {
+		kfree(sw_priv);
 		goto err_devinfo;
 	}
-	info = ks->hw_priv;
-	info->parent = ks;
+
+	info->parent = sw_priv;
 	hw = &info->hw;
 
-	ks->dev = &pdev->dev;
-	ks->hw_dev = hw;
+	sw_priv->dev = &pdev->dev;
+	sw_priv->hw_dev = info;
 
-	ks->sw.reg = &sw_reg_ops;
+	sw_priv->sw.reg = &sw_reg_ops;
 
 	info->pdev = pdev;
 
@@ -3654,12 +3635,19 @@ static int ks846x_probe(struct platform_device *pdev)
 
 	ks_read_config(hw);
 
-	err = ksz_probe(ks);
-	if (err < 0)
-		goto err_hw;
+	err = ksz_probe(sw_priv);
+	if (err < 0) {
 
-	info->lock = &ks->lock;
-	info->sw = &ks->sw;
+		/* These are deleted when probing fails. */
+		info = NULL;
+		sw_priv = NULL;
+		goto err_hw;
+	}
+
+	sw = &sw_priv->sw;
+	info->lock = &sw_priv->lock;
+	info->sw = sw;
+
 	id = ks_rdreg16(hw, KS_CIDER);
 
 #define	MHEADER_SIZE	(sizeof(struct type_frame_head) * MAX_RECV_FRAMES)
@@ -3700,8 +3688,6 @@ static int ks846x_probe(struct platform_device *pdev)
 		"Found chip, family: 0x%x, id: 0x%x, rev: 0x%x, irq: %d\n",
 		(id >> 8) & 0xff, (id >> 4) & 0xf, (id >> 1) & 0x7, irq);
 
-	sw = &ks->sw;
-	sw->dev = hw;
 	dev_count = 1;
 	port_count = 1;
 	mib_port_count = 1;
@@ -3742,7 +3728,8 @@ static int ks846x_probe(struct platform_device *pdev)
 		priv = netdev_priv(netdev);
 		priv->netdev = netdev;
 		priv->dev = &pdev->dev;
-		priv->adapter = ks;
+		priv->hw_priv = info;
+		priv->sw_priv = sw_priv;
 		priv->id = net_device_present;
 
 		priv->phy_addr = sw->net_ops->setup_dev(sw, netdev, dev_name,
@@ -3771,7 +3758,7 @@ static int ks846x_probe(struct platform_device *pdev)
 	}
 
 	netdev = sw->netdev[0];
-	ks->dev = &netdev->dev;
+	sw_priv->dev = &netdev->dev;
 
 	if (rx_max < 1)
 		rx_max = 1;
@@ -3799,7 +3786,7 @@ static int ks846x_probe(struct platform_device *pdev)
 		sw->ops->release(sw);
 	}
 
-	ksz_probe_last(ks);
+	ksz_probe_last(sw_priv);
 
 #ifdef CONFIG_1588_PTP_
 	if (sw->features & PTP_HW) {
@@ -3813,9 +3800,9 @@ static int ks846x_probe(struct platform_device *pdev)
 #endif
 
 	/* Nothing to do for monitor. */
-	ksz_stop_timer(&ks->monitor_timer_info);
+	ksz_stop_timer(&sw_priv->monitor_timer_info);
 
-	platform_set_drvdata(pdev, ks);
+	platform_set_drvdata(pdev, sw_priv);
 	return 0;
 
 err_register:
@@ -3836,8 +3823,10 @@ err_ioremap_cmd:
 	iounmap(hw->hw_addr);
 
 err_ioremap_data:
-	kfree(info);
-	kfree(ks);
+	if (info)
+		kfree(info);
+	if (sw_priv)
+		kfree(sw_priv);
 
 err_devinfo:
 	release_mem_region(io_c->start, resource_size(io_c));
@@ -3854,7 +3843,7 @@ static int ks846x_remove(struct platform_device *pdev)
 	int i;
 	struct resource *iomem;
 	struct sw_priv *sw_priv = platform_get_drvdata(pdev);
-	struct dev_info *hw_priv = sw_priv->hw_priv;
+	struct dev_info *hw_priv = sw_priv->hw_dev;
 	struct ksz_hw *hw = &hw_priv->hw;
 	struct ksz_sw *sw = &sw_priv->sw;
 

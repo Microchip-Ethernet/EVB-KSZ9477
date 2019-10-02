@@ -1,7 +1,7 @@
 /**
  * Microchip RSTP code
  *
- * Copyright (c) 2016-2018 Microchip Technology Inc.
+ * Copyright (c) 2016-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -1207,7 +1207,7 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 	struct ksz_port_info *info = get_port_info(sw, port);
 
 	/* Do not send if network device is not ready. */
-	if (!netif_running(stp->dev) || !netif_carrier_ok(stp->dev))
+	if (!netif_running(stp->dev))
 		return 0;
 
 	ports = (1 << port);
@@ -2982,7 +2982,7 @@ static void stp_role_tr_root_p_init(struct ksz_stp_port *p)
 	} while (0);
 	role = ROLE_ROOT;
 	rrWhile = FwdDelay;
-#ifdef CONFIG_KSZ_MRP
+#ifdef CONFIG_KSZ_MSRP
 	if (mrp_10_1_8a_hack)
 		rrWhile = to_stp_timer(4);
 #endif
@@ -2993,7 +2993,7 @@ static void stp_role_tr_root_p_next(struct ksz_stp_port *p,
 {
 	int delay = FwdDelay;
 
-#ifdef CONFIG_KSZ_MRP
+#ifdef CONFIG_KSZ_MSRP
 	if (mrp_10_1_8a_hack)
 		delay = to_stp_timer(4);
 #endif
@@ -4966,6 +4966,8 @@ static void ksz_stp_init(struct ksz_stp_info *stp, struct ksz_sw *sw)
 		br->bridgeEnabled = TRUE;
 
 	br->port_cnt = sw->port_cnt;
+	if (br->port_cnt > SWITCH_PORT_NUM)
+		br->port_cnt = SWITCH_PORT_NUM;
 
 	/* Can turn off ports.  Useful for using one port for telnet. */
 	num = sw->stp;

@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common sysfs code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2011-2014 Micrel, Inc.
@@ -64,7 +64,7 @@ static ssize_t netlan_show(struct device *d, struct device_attribute *attr,
 		goto netlan_show_done;
 #endif
 
-#ifdef CONFIG_KSZ_MRP
+#ifdef CONFIG_KSZ_AVB
 	len = sw->ops->sysfs_mrp_read(sw, proc_num, len, buf);
 	if (len)
 		goto netlan_show_done;
@@ -115,7 +115,7 @@ static ssize_t netlan_store(struct device *d, struct device_attribute *attr,
 		goto netlan_store_done;
 #endif
 
-#ifdef CONFIG_KSZ_MRP
+#ifdef CONFIG_KSZ_AVB
 	if (sw->ops->sysfs_mrp_write(sw, proc_num, num, buf))
 		goto netlan_store_done;
 #endif
@@ -140,16 +140,20 @@ static ssize_t netsw_show(struct device *d, struct device_attribute *attr,
 	struct ksz_sw *sw;
 	struct semaphore *proc_sem;
 	ssize_t len = -EINVAL;
+	int cnt;
 	int num;
 	uint port;
 
 	if (attr->attr.name[1] != '_')
 		return len;
 	port = attr->attr.name[0] - '0';
-	if (port >= TOTAL_PORT_NUM)
-		return len;
 
 	get_private_data(d, &proc_sem, &sw, NULL);
+	cnt = TOTAL_PORT_NUM;
+	if (sw->overrides & SYSFS_1_BASE)
+		cnt++;
+	if (port >= cnt)
+		return len;
 	if (down_interruptible(proc_sem))
 		return -ERESTARTSYS;
 
@@ -169,7 +173,7 @@ static ssize_t netsw_show(struct device *d, struct device_attribute *attr,
 		goto netsw_show_done;
 #endif
 
-#ifdef CONFIG_KSZ_MRP
+#ifdef CONFIG_KSZ_AVB
 	len = sw->ops->sysfs_mrp_port_read(sw, num, port, len, buf);
 	if (len)
 		goto netsw_show_done;
@@ -191,6 +195,7 @@ static ssize_t netsw_store(struct device *d, struct device_attribute *attr,
 	struct ksz_sw *sw;
 	struct semaphore *proc_sem;
 	ssize_t ret = -EINVAL;
+	int cnt;
 	int num;
 	uint port;
 	int proc_num;
@@ -198,10 +203,13 @@ static ssize_t netsw_store(struct device *d, struct device_attribute *attr,
 	if (attr->attr.name[1] != '_')
 		return ret;
 	port = attr->attr.name[0] - '0';
-	if (port >= TOTAL_PORT_NUM)
-		return ret;
 	num = get_num_val(buf);
 	get_private_data(d, &proc_sem, &sw, NULL);
+	cnt = TOTAL_PORT_NUM;
+	if (sw->overrides & SYSFS_1_BASE)
+		cnt++;
+	if (port >= cnt)
+		return ret;
 	if (down_interruptible(proc_sem))
 		return -ERESTARTSYS;
 
@@ -216,7 +224,7 @@ static ssize_t netsw_store(struct device *d, struct device_attribute *attr,
 		goto netsw_store_done;
 #endif
 
-#ifdef CONFIG_KSZ_MRP
+#ifdef CONFIG_KSZ_AVB
 	if (sw->ops->sysfs_mrp_port_write(sw, proc_num, port, num, buf))
 		goto netsw_store_done;
 #endif
@@ -354,6 +362,7 @@ NETLAN_WR_ENTRY(pme_polarity);
 NETLAN_RD_ENTRY(host_port);
 NETLAN_RD_ENTRY(ports);
 NETLAN_RD_ENTRY(dev_start);
+NETLAN_RD_ENTRY(port_start);
 NETLAN_RD_ENTRY(vlan_start);
 NETLAN_RD_ENTRY(avb);
 NETLAN_RD_ENTRY(stp);
@@ -404,12 +413,13 @@ NETLAN_WR_ENTRY(stp_mstp_name);
 #endif
 #endif
 
-#ifdef CONFIG_KSZ_MRP
 #ifdef CONFIG_KSZ_MSRP
 NETLAN_WR_ENTRY(msrp_info);
 NETLAN_WR_ENTRY(msrpEnabled);
-NETLAN_WR_ENTRY(msrp_sr_a);
 #endif
+
+#ifdef CONFIG_KSZ_AVB
+NETLAN_WR_ENTRY(msrp_sr_a);
 #endif
 
 #ifdef CONFIG_KSZ_HSR
@@ -617,24 +627,30 @@ NETSW_WR_ENTRY(mmrp_reg);
 NETSW_WR_ENTRY(mvrpEnabled);
 NETSW_WR_ENTRY(mvrp_vid);
 NETSW_WR_ENTRY(mvrp_reg);
+#endif
 
 #ifdef CONFIG_KSZ_MSRP
-NETSW_WR_ENTRY(asCapable);
 NETSW_WR_ENTRY(msrpEnabled);
+#endif
+
+#ifdef CONFIG_KSZ_AVB
+NETSW_WR_ENTRY(asCapable);
 NETSW_WR_ENTRY(q_delta);
 NETSW_WR_ENTRY(q_admin_mbps);
 NETSW_WR_ENTRY(q_admin_slope);
 NETSW_RD_ENTRY(q_oper_slope);
 NETSW_WR_ENTRY(q_alg);
-NETSW_RD_ENTRY(sr_0_rx_prio);
-NETSW_WR_ENTRY(sr_0_tx_prio);
-NETSW_RD_ENTRY(sr_0_boundary);
-NETSW_WR_ENTRY(sr_0_latency);
-NETSW_RD_ENTRY(sr_1_rx_prio);
-NETSW_WR_ENTRY(sr_1_tx_prio);
-NETSW_RD_ENTRY(sr_1_boundary);
-NETSW_WR_ENTRY(sr_1_latency);
-#endif
+NETSW_RD_ENTRY(sr_a_rx_prio);
+NETSW_WR_ENTRY(sr_a_tx_prio);
+NETSW_RD_ENTRY(sr_a_boundary);
+NETSW_WR_ENTRY(sr_a_latency);
+NETSW_RD_ENTRY(sr_b_rx_prio);
+NETSW_WR_ENTRY(sr_b_tx_prio);
+NETSW_RD_ENTRY(sr_b_boundary);
+NETSW_WR_ENTRY(sr_b_latency);
+NETSW_WR_ENTRY(max_frame_size);
+NETSW_WR_ENTRY(max_int_frames);
+NETSW_WR_ENTRY(class_prio);
 #endif
 
 NETSW_WR_ENTRY(linkmd);
@@ -712,6 +728,7 @@ static struct attribute *lan_attrs[] = {
 	&lan_attr_host_port.attr,
 	&lan_attr_ports.attr,
 	&lan_attr_dev_start.attr,
+	&lan_attr_port_start.attr,
 	&lan_attr_vlan_start.attr,
 	&lan_attr_avb.attr,
 	&lan_attr_stp.attr,
@@ -762,12 +779,13 @@ static struct attribute *lan_attrs[] = {
 #endif
 #endif
 
-#ifdef CONFIG_KSZ_MRP
 #ifdef CONFIG_KSZ_MSRP
 	&lan_attr_msrp_info.attr,
 	&lan_attr_msrpEnabled.attr,
-	&lan_attr_msrp_sr_a.attr,
 #endif
+
+#ifdef CONFIG_KSZ_AVB
+	&lan_attr_msrp_sr_a.attr,
 #endif
 
 #ifdef CONFIG_KSZ_HSR
@@ -983,24 +1001,30 @@ static struct attribute *sw_attrs[] = {
 	&sw_attr_mvrpEnabled.attr,
 	&sw_attr_mvrp_vid.attr,
 	&sw_attr_mvrp_reg.attr,
+#endif
 
 #ifdef CONFIG_KSZ_MSRP
-	&sw_attr_asCapable.attr,
 	&sw_attr_msrpEnabled.attr,
+#endif
+
+#ifdef CONFIG_KSZ_AVB
+	&sw_attr_asCapable.attr,
 	&sw_attr_q_delta.attr,
 	&sw_attr_q_admin_mbps.attr,
 	&sw_attr_q_admin_slope.attr,
 	&sw_attr_q_oper_slope.attr,
 	&sw_attr_q_alg.attr,
-	&sw_attr_sr_0_rx_prio.attr,
-	&sw_attr_sr_0_tx_prio.attr,
-	&sw_attr_sr_0_boundary.attr,
-	&sw_attr_sr_0_latency.attr,
-	&sw_attr_sr_1_rx_prio.attr,
-	&sw_attr_sr_1_tx_prio.attr,
-	&sw_attr_sr_1_boundary.attr,
-	&sw_attr_sr_1_latency.attr,
-#endif
+	&sw_attr_sr_a_rx_prio.attr,
+	&sw_attr_sr_a_tx_prio.attr,
+	&sw_attr_sr_a_boundary.attr,
+	&sw_attr_sr_a_latency.attr,
+	&sw_attr_sr_b_rx_prio.attr,
+	&sw_attr_sr_b_tx_prio.attr,
+	&sw_attr_sr_b_boundary.attr,
+	&sw_attr_sr_b_latency.attr,
+	&sw_attr_max_frame_size.attr,
+	&sw_attr_max_int_frames.attr,
+	&sw_attr_class_prio.attr,
 #endif
 
 	&sw_attr_linkmd.attr,
@@ -1035,14 +1059,18 @@ static void exit_sw_sysfs(struct ksz_sw *sw, struct ksz_sw_sysfs *info,
 	struct device *dev)
 {
 	int i;
+	int j;
 	uint n;
 
 	if (sw->overrides & SYSFS_PHY_PORT)
 		n = sw->port_cnt;
 	else
 		n = sw->mib_port_cnt + 1;
+	j = 0;
+	if (sw->overrides & SYSFS_1_BASE)
+		j = 1;
 	for (i = 0; i < n; i++) {
-		sw_group.name = sw_name[i];
+		sw_group.name = sw_name[i + j];
 		sw_group.attrs = info->port_attrs[i];
 		sysfs_remove_group(&dev->kobj, &sw_group);
 		kfree(info->port_attrs[i]);
@@ -1059,6 +1087,7 @@ static int init_sw_sysfs(struct ksz_sw *sw, struct ksz_sw_sysfs *info,
 {
 	int err;
 	int i;
+	int j;
 	uint n;
 	uint p;
 	char *file;
@@ -1070,6 +1099,9 @@ static int init_sw_sysfs(struct ksz_sw *sw, struct ksz_sw_sysfs *info,
 		n = sw->port_cnt;
 	else
 		n = sw->mib_port_cnt + 1;
+	j = 0;
+	if (sw->overrides & SYSFS_1_BASE)
+		j = 1;
 	for (i = 0; i < n; i++) {
 		p = i;
 		if (!(sw->overrides & SYSFS_PHY_PORT))
@@ -1078,12 +1110,12 @@ static int init_sw_sysfs(struct ksz_sw *sw, struct ksz_sw_sysfs *info,
 		if (p >= sw->phy_port_cnt || p == sw->HOST_PORT)
 			file = "0_linkmd";
 		err = alloc_dev_attr(sw_attrs,
-			sizeof(sw_attrs) / sizeof(void *), i,
+			sizeof(sw_attrs) / sizeof(void *), i + j,
 			&info->ksz_port_attrs[i], &info->port_attrs[i],
 			file, &ksz_sw_dev_attrs_ptr);
 		if (err)
 			return err;
-		sw_group.name = sw_name[i];
+		sw_group.name = sw_name[i + j];
 		sw_group.attrs = info->port_attrs[i];
 		err = sysfs_create_group(&dev->kobj, &sw_group);
 		if (err)

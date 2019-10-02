@@ -22,6 +22,10 @@ config KSZ_DSA
 	bool
 	default n
 
+config KSZ_SMI
+	bool
+	default n
+
 config KSZ_SWITCH_EMBEDDED
 	bool
 	default n
@@ -44,13 +48,14 @@ config SPI_KSZ8895
 	---help---
 	  Supports the Microchip KSZ8895 switch.
 
-config KSZ8895_EMBEDDED
-	bool "Microchip KSZ8895 switch support in network controller"
-	depends on SPI_KSZ8895 = n && !NET_DSA_TAG_TAIL
+config SMI_KSZ8895
+	bool "SMI driver for Microchip KSZ8895 switch"
+	depends on SPI_KSZ8895 = n
 	select KSZ_SWITCH_EMBEDDED
-	select HAVE_SPI_KSZ8895
+	select KSZ_SMI
+	select HAVE_KSZ8895
 	---help---
-	  Supports the Microchip KSZ8895 switch used within a network controller .
+	  Supports the Microchip KSZ8895 switch in SMI mode.
 
 endif
 

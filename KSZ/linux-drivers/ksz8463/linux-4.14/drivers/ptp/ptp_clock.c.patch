@@ -1,18 +1,18 @@
---- ptp_clock.c.orig	2019-01-07 09:56:55.750852276 -0800
-+++ ptp_clock.c	2019-01-07 11:00:16.146837779 -0800
-@@ -153,6 +153,17 @@
+--- ptp_clock.c.orig	2019-09-25 18:59:31.575722119 -0700
++++ ptp_clock.c	2019-09-18 17:40:42.768285863 -0700
+@@ -157,6 +157,17 @@
  		ptp->dialed_frequency = tx->freq;
  	} else if (tx->modes == 0) {
  		tx->freq = ptp->dialed_frequency;
-+#if defined(CONFIG_KSZ_PTP)
++#if defined(CONFIG_KSZ_PTP) || defined(CONFIG_LAN937X_PTP)
 +		do {
-+			long freq;
++			s64 freq;
 +
 +			err = ops->gettime64(ops, NULL);
 +			freq = err;
 +			freq <<= 13;
-+			freq /= 125;
-+			tx->freq = freq;
++			freq = div64_s64(freq, 125);
++			tx->freq = (s32) freq;
 +		} while (0);
 +#endif
  		err = 0;

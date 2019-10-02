@@ -1,7 +1,7 @@
 /**
  * Microchip MRP driver header
  *
- * Copyright (c) 2015-2018 Microchp Technology Inc.
+ * Copyright (c) 2015-2019 Microchp Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2014-2015 Micrel, Inc.
@@ -22,12 +22,6 @@
 
 #include "ksz_mrp_api.h"
 
-#if 1
-/* Process MRP in driver. */
-#define PROC_MRP
-#endif
-
-#ifdef PROC_MRP
 #if 0
 #define DBG_MRP
 #endif
@@ -46,11 +40,7 @@
 #if 0
 #define MRP_BASIC
 #endif
-#if 0
-#define MRP_PASSTHRU
-#endif
 #include "mrp.h"
-#endif
 
 
 struct mrp_node {
@@ -77,11 +67,6 @@ struct SRP_bridge_port {
 	uint Failed_Registrations;
 	u8 Last_PDU_Origin[ETH_ALEN];
 	u16 SR_PVID;
-};
-
-struct SRP_latency_parameter {
-	u8 traffic_class;
-	u32 portTcMaxLatency;
 };
 
 struct SRP_reserv;
@@ -129,6 +114,7 @@ struct SRP_reserv {
 
 	uint dropped_frames;
 	u64 streamAge;
+	unsigned long ticks;
 
 	struct SRP_stream *stream;
 	struct SRP_reserv *pair;
@@ -136,7 +122,9 @@ struct SRP_reserv {
 	struct SRP_reserv *next;
 	struct SRP_reserv *prev;
 };
+#endif
 
+#ifdef CONFIG_KSZ_AVB
 struct SRP_bandwidth_availability_parameter {
 	u8 traffic_class;
 	int deltaBandwidth;
@@ -144,15 +132,20 @@ struct SRP_bandwidth_availability_parameter {
 	u32 operIdleSlope;
 };
 
-struct SRP_transmission_selection_algorithm {
+struct SRP_latency_parameter {
 	u8 traffic_class;
-	int algorithm;
+	u32 portTcMaxLatency;
 };
 
 struct SRP_priority_regeneration_override {
 	u8 received_priority;
 	u8 regenerated_priority;
 	int SRPdomainBoundaryPort;
+};
+
+struct SRP_transmission_selection_algorithm {
+	u8 traffic_class;
+	int algorithm;
 };
 
 struct mrp_traffic_info {
@@ -166,8 +159,10 @@ struct mrp_traffic_info {
 	u32 max_frame_size;
 	u8 queue;
 
+#ifdef CONFIG_KSZ_MSRP
 	struct mrp_node_anchor active;
 	struct mrp_node_anchor passive;
+#endif
 };
 #endif
 
@@ -197,7 +192,7 @@ struct mrp_mac_info {
 	u16 rx_ports;
 	u16 tx_ports;
 	u8 index;
-	unsigned long jiffies;
+	unsigned long ticks;
 };
 
 struct mrp_vlan_info {
@@ -219,12 +214,14 @@ struct srp_stream_info {
 	u8 mark:1;
 };
 
-#ifdef CONFIG_KSZ_MSRP	
+#ifdef CONFIG_KSZ_AVB
 struct mrp_port_info {
 	u32 bandwidth_max;
 	u32 bandwidth_left;
 	u32 bandwidth_used;
 	u32 speed;
+	u32 max_frame_size;
+	u32 max_interval_frames;
 	u64 age;
 	u32 link:1;
 	u32 duplex:1;
@@ -233,14 +230,17 @@ struct mrp_port_info {
 	int deltaBandwidth;
 	struct mrp_traffic_info traffic[2];
 
-	struct SRP_bridge_port status;
-	struct SRP_latency_parameter latency[2];
 	struct SRP_bandwidth_availability_parameter bandwidth[PRIO_QUEUES];
-	struct SRP_transmission_selection_algorithm algorithm[PRIO_QUEUES];
+	struct SRP_latency_parameter latency[2];
 	struct SRP_priority_regeneration_override priority[SR_CLASS_NUM];
+	struct SRP_transmission_selection_algorithm algorithm[PRIO_QUEUES];
+
+#ifdef CONFIG_KSZ_MSRP
+	struct SRP_bridge_port status;
 
 	struct SRP_reserv declared;
 	struct SRP_reserv registered;
+#endif
 };
 #endif
 
@@ -279,7 +279,7 @@ struct mrp_access {
 struct mrp_ops {
 	void (*init)(struct mrp_info *mrp);
 	void (*exit)(struct mrp_info *mrp);
-	int (*dev_req)(struct mrp_info *mrp, int start, char *arg);
+	int (*dev_req)(struct mrp_info *mrp, char *arg);
 
 	void (*from_backup)(struct mrp_info *mrp, uint p);
 	void (*to_backup)(struct mrp_info *mrp, uint p);
@@ -294,6 +294,7 @@ struct mrp_ops {
 };
 
 struct mrp_info {
+	void *parent;
 	struct mutex lock;
 	struct mrp_access hw_access;
 	struct workqueue_struct *access;
@@ -322,7 +323,7 @@ struct mrp_info {
 
 	const struct mrp_ops *ops;
 
-#ifdef CONFIG_KSZ_MSRP
+#ifdef CONFIG_KSZ_AVB
 	const u8 *id;
 	u8 tc[8];
 	u8 prio[SR_CLASS_NUM];
@@ -331,10 +332,12 @@ struct mrp_info {
 	u16 mcast_ports;
 	int mcast_port_cnt;
 
-	struct SRP_bridge_base status;
 	struct mrp_port_info port_info[TOTAL_PORT_NUM];
 
 	struct SRP_domain_class domain[2];
+
+#ifdef CONFIG_KSZ_MSRP
+	struct SRP_bridge_base status;
 
 	struct SRP_stream stream_by_id;
 	struct SRP_stream stream_by_dest;
@@ -344,13 +347,15 @@ struct mrp_info {
 	struct mrp_node_anchor vlan_down;
 	struct mrp_node_anchor vlan_up;
 #endif
+#endif
+
+#ifdef CONFIG_KSZ_MRP
 	struct mrp_node_anchor mac_list;
 	struct mrp_node_anchor vlan_list;
 
 	struct mrp_report *report_head;
 	struct mrp_report *report_tail;
 
-#ifdef PROC_MRP
 	struct mrp_port mrp_ports[TOTAL_PORT_NUM];
 	int mac_tx[TOTAL_PORT_NUM];
 	int vlan_tx[TOTAL_PORT_NUM];

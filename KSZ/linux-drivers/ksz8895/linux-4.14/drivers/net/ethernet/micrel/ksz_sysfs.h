@@ -1,7 +1,7 @@
 /**
  * Microchip switch common sysfs header
  *
- * Copyright (c) 2016-2018 Microchip Technology Inc.
+ * Copyright (c) 2016-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -37,17 +37,12 @@ static void get_private_data_(struct device *d, struct semaphore **proc_sem,
 {
 	if (d->bus && (
 #if defined(__LINUX_SPI_H)
-	    d->bus == &spi_bus_type
-#endif
-#if defined(__LINUX_SPI_H) && defined(_LINUX_I2C_H)
-	    ||
+	    d->bus == &spi_bus_type ||
 #endif
 #if defined(_LINUX_I2C_H)
-	    d->bus == &i2c_bus_type
+	    d->bus == &i2c_bus_type ||
 #endif
-#if !defined(__LINUX_SPI_H) && !defined(_LINUX_I2C_H)
-	    d->bus
-#endif
+	    d->bus == &platform_bus_type
 	    )) {
 		struct sw_priv *hw_priv;
 

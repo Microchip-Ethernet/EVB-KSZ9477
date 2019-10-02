@@ -95,7 +95,6 @@ struct ksz_hsr_info {
 	u16 p2_lost:1;
 	u16 redbox_up:1;
 
-	struct sw_dev_info *dev_info;
 	uint notifications;
 
 	uint overrides;

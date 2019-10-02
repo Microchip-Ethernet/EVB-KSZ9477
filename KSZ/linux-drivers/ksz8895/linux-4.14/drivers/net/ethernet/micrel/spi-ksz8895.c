@@ -56,8 +56,8 @@
 
 #define KS8895_DEV			"ksz8895"
 
-#define SW_DRV_RELDATE			"Jan 23, 2019"
-#define SW_DRV_VERSION			"1.2.0"
+#define SW_DRV_RELDATE			"Sep 23, 2019"
+#define SW_DRV_VERSION			"1.2.1"
 
 /* -------------------------------------------------------------------------- */
 
@@ -90,17 +90,17 @@
 
 /**
  * spi_wrreg - issue write register command
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @buf:	The data buffer to write.
- * @rxl:	The length of data.
+ * @txl:	The length of data.
  *
  * This is the low level write call that issues the necessary spi message(s)
  * to write data to the register specified in @reg.
  */
-static void spi_wrreg(struct sw_priv *ks, u8 reg, void *buf, size_t txl)
+static void spi_wrreg(struct sw_priv *priv, u8 reg, void *buf, size_t txl)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_dev;
+	struct spi_hw_priv *hw_priv = priv->hw_dev;
 	struct spi_device *spi = hw_priv->spidev;
 	u8 *txb = (u8 *) hw_priv->txd;
 	struct spi_transfer *xfer;
@@ -108,7 +108,7 @@ static void spi_wrreg(struct sw_priv *ks, u8 reg, void *buf, size_t txl)
 	int ret;
 
 #ifdef DEBUG
-	if (!mutex_is_locked(&ks->lock))
+	if (!mutex_is_locked(&priv->lock))
 		pr_alert("W not locked: %02X\n", reg);
 #endif
 	txb[0] = KS_SPIOP_WR;
@@ -141,10 +141,10 @@ static void spi_wrreg(struct sw_priv *ks, u8 reg, void *buf, size_t txl)
 		pr_alert("spi_sync() failed: %x %u\n", reg, txl);
 }
 
-static void spi_wrreg_size(struct sw_priv *ks, u8 reg, unsigned val,
+static void spi_wrreg_size(struct sw_priv *priv, u8 reg, unsigned val,
 			   size_t size)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_dev;
+	struct spi_hw_priv *hw_priv = priv->hw_dev;
 	u8 *txb = hw_priv->txd;
 	int i = SPI_CMD_LEN;
 	size_t cnt = size;
@@ -153,51 +153,51 @@ static void spi_wrreg_size(struct sw_priv *ks, u8 reg, unsigned val,
 		txb[i++] = (u8)(val >> (8 * (cnt - 1)));
 		cnt--;
 	} while (cnt);
-	spi_wrreg(ks, reg, txb, size);
+	spi_wrreg(priv, reg, txb, size);
 }
 
 /**
  * spi_wrreg32 - write 32bit register value to chip
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @val:	The value to write.
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg32(struct sw_priv *ks, u8 reg, unsigned val)
+static void spi_wrreg32(struct sw_priv *priv, u8 reg, unsigned val)
 {
-	spi_wrreg_size(ks, reg, val, 4);
+	spi_wrreg_size(priv, reg, val, 4);
 }
 
 /**
  * spi_wrreg16 - write 16bit register value to chip
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @val:	The value to write.
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg16(struct sw_priv *ks, u8 reg, unsigned val)
+static void spi_wrreg16(struct sw_priv *priv, u8 reg, unsigned val)
 {
-	spi_wrreg_size(ks, reg, val, 2);
+	spi_wrreg_size(priv, reg, val, 2);
 }
 
 /**
  * spi_wrreg8 - write 8bit register value to chip
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @val:	The value to write.
  *
  * Issue a write to put the value @val into the register specified in @reg.
  */
-static void spi_wrreg8(struct sw_priv *ks, u8 reg, unsigned val)
+static void spi_wrreg8(struct sw_priv *priv, u8 reg, unsigned val)
 {
-	spi_wrreg_size(ks, reg, val, 1);
+	spi_wrreg_size(priv, reg, val, 1);
 }
 
 /**
  * ksz_rx_1msg - select whether to use one or two messages for spi read
- * @ks:		The device structure.
+ * @hw_priv:	The hardware device structure.
  *
  * Return whether to generate a single message with a tx and rx buffer
  * supplied to spi_sync(), or alternatively send the tx and rx buffers
@@ -209,14 +209,14 @@ static void spi_wrreg8(struct sw_priv *ks, u8 reg, unsigned val)
  * This currently always returns false until we add some per-device data passed
  * from the platform code to specify which mode is better.
  */
-static inline bool ksz_rx_1msg(struct spi_hw_priv *ks)
+static inline bool ksz_rx_1msg(struct spi_hw_priv *hw_priv)
 {
-	return ks->rx_1msg;
+	return hw_priv->rx_1msg;
 }
 
 /**
  * spi_rdreg - issue read register command and return the data
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  * @rxb:	The RX buffer to return the result into.
  * @rxl:	The length of data expected.
@@ -224,10 +224,10 @@ static inline bool ksz_rx_1msg(struct spi_hw_priv *ks)
  * This is the low level read call that issues the necessary spi message(s)
  * to read data from the register specified in @reg.
  */
-static void spi_rdreg(struct sw_priv *ks, u8 reg, void *rxb, void **rx,
+static void spi_rdreg(struct sw_priv *priv, u8 reg, void *rxb, void **rx,
 		      size_t rxl)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_dev;
+	struct spi_hw_priv *hw_priv = priv->hw_dev;
 	struct spi_device *spi = hw_priv->spidev;
 	u8 *txb = (u8 *) hw_priv->txd;
 	struct spi_transfer *xfer;
@@ -235,7 +235,7 @@ static void spi_rdreg(struct sw_priv *ks, u8 reg, void *rxb, void **rx,
 	int ret;
 
 #ifdef DEBUG
-	if (!mutex_is_locked(&ks->lock))
+	if (!mutex_is_locked(&priv->lock))
 		pr_alert("R not locked: %02X\n", reg);
 #endif
 	txb[0] = KS_SPIOP_RD;
@@ -282,59 +282,59 @@ static void spi_rdreg(struct sw_priv *ks, u8 reg, void *rxb, void **rx,
 		memcpy(rxb, hw_priv->rxd + SPI_CMD_LEN, rxl);
 }
 
-static void *spi_rdreg_size(struct sw_priv *ks, u8 reg, size_t size)
+static void *spi_rdreg_size(struct sw_priv *priv, u8 reg, size_t size)
 {
-	struct spi_hw_priv *hw_priv = ks->hw_dev;
+	struct spi_hw_priv *hw_priv = priv->hw_dev;
 	void *r;
 
-	spi_rdreg(ks, reg, hw_priv->rxd, &r, size);
+	spi_rdreg(priv, reg, hw_priv->rxd, &r, size);
 	return r;
 }
 
 /**
  * spi_rdreg8 - read 8 bit register from device
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  *
  * Read a 8bit register from the chip, returning the result.
  */
-static u8 spi_rdreg8(struct sw_priv *ks, u8 reg)
+static u8 spi_rdreg8(struct sw_priv *priv, u8 reg)
 {
 	u8 *rx;
 
-	rx = spi_rdreg_size(ks, reg, 1);
+	rx = spi_rdreg_size(priv, reg, 1);
 	return rx[0];
 }
 
 /**
  * spi_rdreg16 - read 16 bit register from device
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  *
  * Read a 16bit register from the chip, returning the result.
  */
-static u16 spi_rdreg16(struct sw_priv *ks, u8 reg)
+static u16 spi_rdreg16(struct sw_priv *priv, u8 reg)
 {
 	u16 *rx;
 
-	rx = spi_rdreg_size(ks, reg, 2);
+	rx = spi_rdreg_size(priv, reg, 2);
 	return be16_to_cpu(*rx);
 }
 
 /**
  * spi_rdreg32 - read 32 bit register from device
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  * @reg:	The register address.
  *
  * Read a 32bit register from the chip.
  *
  * Note, this read requires the address be aligned to 4 bytes.
  */
-static u32 spi_rdreg32(struct sw_priv *ks, u8 reg)
+static u32 spi_rdreg32(struct sw_priv *priv, u8 reg)
 {
 	u32 *rx;
 
-	rx = spi_rdreg_size(ks, reg, 4);
+	rx = spi_rdreg_size(priv, reg, 4);
 	return be32_to_cpu(*rx);
 }
 
@@ -349,18 +349,16 @@ static u32 spi_rdreg32(struct sw_priv *ks, u8 reg)
 
 #define MIB_READ_INTERVAL		(HZ / 2)
 
-static int sw_r(struct ksz_sw *sw, u32 reg, void *buf, unsigned len)
+static void sw_r(struct ksz_sw *sw, unsigned reg, void *buf, size_t cnt)
 {
-	if (len - SPI_CMD_LEN > 128)
-		len = 128 - SPI_CMD_LEN;
-	spi_rdreg(sw->dev, reg, buf, NULL, len);
-	return 0;
+	if (cnt - SPI_CMD_LEN > 128)
+		cnt = 128 - SPI_CMD_LEN;
+	spi_rdreg(sw->dev, reg, buf, NULL, cnt);
 }
 
-static int sw_w(struct ksz_sw *sw, u32 reg, void *buf, unsigned len)
+static void sw_w(struct ksz_sw *sw, unsigned reg, void *buf, size_t cnt)
 {
-	spi_wrreg(sw->dev, reg, buf, len);
-	return 0;
+	spi_wrreg(sw->dev, reg, buf, cnt);
 }
 
 static u8 sw_r8(struct ksz_sw *sw, unsigned reg)
@@ -420,27 +418,27 @@ static int spi_bus;
 static int ksz8895_probe(struct spi_device *spi)
 {
 	struct spi_hw_priv *hw_priv;
-	struct sw_priv *ks;
+	struct sw_priv *priv;
 
 	spi->bits_per_word = 8;
 
-	ks = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
-	if (!ks)
+	priv = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
+	if (!priv)
 		return -ENOMEM;
 
-	ks->hw_dev = kzalloc(sizeof(struct spi_hw_priv), GFP_KERNEL);
-	if (!ks->hw_dev) {
-		kfree(ks);
+	priv->hw_dev = kzalloc(sizeof(struct spi_hw_priv), GFP_KERNEL);
+	if (!priv->hw_dev) {
+		kfree(priv);
 		return -ENOMEM;
 	}
-	hw_priv = ks->hw_dev;
+	hw_priv = priv->hw_dev;
 
 	hw_priv->rx_1msg = rx_1msg;
 	hw_priv->spidev = spi;
 
-	ks->dev = &spi->dev;
+	priv->dev = &spi->dev;
 
-	ks->sw.reg = &sw_reg_ops;
+	priv->sw.reg = &sw_reg_ops;
 
 	/* initialise pre-made spi transfer messages */
 
@@ -451,16 +449,16 @@ static int ksz8895_probe(struct spi_device *spi)
 	spi_message_add_tail(&hw_priv->spi_xfer2[0], &hw_priv->spi_msg2);
 	spi_message_add_tail(&hw_priv->spi_xfer2[1], &hw_priv->spi_msg2);
 
-	ks->irq = spi->irq;
+	priv->irq = spi->irq;
 
-	return ksz_probe(ks);
+	return ksz_probe(priv);
 }
 
 static int ksz8895_remove(struct spi_device *spi)
 {
-	struct sw_priv *ks = dev_get_drvdata(&spi->dev);
+	struct sw_priv *priv = dev_get_drvdata(&spi->dev);
 
-	return ksz_remove(ks);
+	return ksz_remove(priv);
 }
 
 static const struct of_device_id ksz8895_dt_ids[] = {

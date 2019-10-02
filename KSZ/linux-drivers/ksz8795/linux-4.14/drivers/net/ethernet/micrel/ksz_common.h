@@ -1,7 +1,7 @@
 /**
  * Microchip Ethernet driver common header
  *
- * Copyright (c) 2015 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2011 Micrel, Inc.
@@ -22,6 +22,10 @@
 
 #ifndef KSZ_COMMON_H
 #define KSZ_COMMON_H
+
+
+#define NL  "\n"
+#define PER_CHAR  "%%"
 
 
 /* Used to indicate type of flow control support. */
@@ -77,6 +81,30 @@ struct ksz_counter_info {
 struct ksz_dev_attr {
 	struct device_attribute dev_attr;
 	char dev_name[DEV_NAME_SIZE];
+};
+
+struct file_dev_info {
+	void *dev;
+	uint minor;
+	u8 *read_buf;
+	u8 *read_in;
+	u8 *write_buf;
+	size_t read_max;
+	size_t read_tmp;
+	size_t read_len;
+	size_t write_len;
+	struct semaphore sem;
+	struct mutex lock;
+	wait_queue_head_t wait_msg;
+	uint notifications[8];
+	struct file_dev_info *next;
+
+	void (*dev_free)(struct file_dev_info *info);
+	int (*dev_ioctl)(struct file_dev_info *info, void *arg);
+	ssize_t (*dev_read)(struct file_dev_info *info, u8 *buf, size_t count,
+			    size_t *offp);
+	ssize_t (*dev_write)(struct file_dev_info *info, u8 *buf, size_t count,
+			     size_t *offp);
 };
 
 #endif

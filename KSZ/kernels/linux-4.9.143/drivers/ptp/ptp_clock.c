@@ -155,13 +155,13 @@ static int ptp_clock_adjtime(struct posix_clock *pc, struct timex *tx)
 		tx->freq = ptp->dialed_frequency;
 #if defined(CONFIG_KSZ_PTP)
 		do {
-			long freq;
+			s64 freq;
 
 			err = ops->gettime64(ops, NULL);
 			freq = err;
 			freq <<= 13;
-			freq /= 125;
-			tx->freq = freq;
+			freq = div64_s64(freq, 125);
+			tx->freq = (s32) freq;
 		} while (0);
 #endif
 		err = 0;

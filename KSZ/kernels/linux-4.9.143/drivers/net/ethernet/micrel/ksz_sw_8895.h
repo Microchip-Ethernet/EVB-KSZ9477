@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common header
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -46,21 +46,6 @@
 
 /* Host port can only be last of them. */
 #define SWITCH_PORT_NUM			(TOTAL_PORT_NUM - 1)
-
-
-struct sw_dev_info {
-	void *sw;
-	unsigned int minor;
-	u8 *write_buf;
-	u8 *read_buf;
-	size_t read_max;
-	size_t read_len;
-	size_t write_len;
-	struct semaphore sem;
-	struct mutex lock;
-	wait_queue_head_t wait_msg;
-	struct sw_dev_info *next;
-};
 
 
 #include "ksz_sw_api.h"
@@ -316,8 +301,8 @@ struct ksz_sw_reg_ops {
 	void (*w16)(struct ksz_sw *sw, unsigned reg, unsigned val);
 	void (*w32)(struct ksz_sw *sw, unsigned reg, unsigned val);
 
-	int (*r)(struct ksz_sw *sw, u32 reg, void *buf, unsigned len);
-	int (*w)(struct ksz_sw *sw, u32 reg, void *buf, unsigned len);
+	void (*r)(struct ksz_sw *sw, unsigned reg, void *buf, size_t cnt);
+	void (*w)(struct ksz_sw *sw, unsigned reg, void *buf, size_t cnt);
 
 	int (*get)(struct ksz_sw *sw, u32 reg, size_t count, char *buf);
 	int (*set)(struct ksz_sw *sw, u32 reg, size_t count, char *buf);
@@ -326,6 +311,7 @@ struct ksz_sw_reg_ops {
 struct ksz_sw_net_ops {
 	void (*setup_special)(struct ksz_sw *sw, int *port_cnt,
 		int *mib_port_cnt, int *dev_cnt);
+	void (*setup_mdiobus)(struct ksz_sw *sw, void *bus);
 	int (*setup_dev)(struct ksz_sw *sw, struct net_device *dev,
 		char *dev_name, struct ksz_port *port, int i, int port_cnt,
 		int mib_port_cnt);
@@ -384,8 +370,8 @@ struct ksz_sw_net_ops {
 struct ksz_sw_ops {
 	void (*init)(struct ksz_sw *sw);
 	void (*exit)(struct ksz_sw *sw);
-	int (*dev_req)(struct ksz_sw *sw, int start, char *arg,
-		struct sw_dev_info *info);
+	int (*dev_req)(struct ksz_sw *sw, char *arg,
+		struct file_dev_info *info);
 
 	uint (*get_phy_port)(struct ksz_sw *sw, uint n);
 	uint (*get_log_port)(struct ksz_sw *sw, uint p);
@@ -464,12 +450,6 @@ struct ksz_sw_ops {
 	void (*to_designated)(struct ksz_sw *sw, uint p);
 	void (*tc_detected)(struct ksz_sw *sw, uint p);
 	int (*get_tcDetected)(struct ksz_sw *sw, uint p);
-
-	int (*get_id)(struct ksz_sw *sw, u8 *id1, u8 *id2, char *name);
-	void (*cfg_tail_tag)(struct ksz_sw *sw, bool enable);
-	void (*cfg_each_port)(struct ksz_sw *sw, uint p, bool cpu);
-	int (*port_to_phy_addr)(struct ksz_sw *sw, uint p);
-	void (*set_port_addr)(struct ksz_sw *sw, uint p, u8 *addr);
 
 	void (*cfg_src_filter)(struct ksz_sw *sw, bool set);
 	void (*flush_table)(struct ksz_sw *sw, uint port);
@@ -609,8 +589,7 @@ struct ksz_sw {
 
 	int dev_major;
 	u8 *msg_buf;
-	struct sw_dev_info *dev_list[2];
-	struct sw_dev_info *dev_info;
+	struct file_dev_info *dev_list[2];
 	uint notifications;
 	char dev_name[20];
 
@@ -673,6 +652,7 @@ struct ksz_port {
 	u8 duplex;
 	u8 speed;
 	u8 force_link;
+	u16 link_ports;
 
 	struct ksz_port_info *linked;
 

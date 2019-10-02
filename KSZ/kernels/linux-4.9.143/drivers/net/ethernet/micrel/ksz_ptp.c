@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -1186,34 +1186,7 @@ static inline void dbp_tx_ts(char *name, u8 port, u32 timestamp)
 	dbg_msg("%s p:%d c:%u %08x:%s\n", name, port, overflow, timestamp, ts);
 }  /* dbp_tx_ts */
 
-static void ptp_setup_udp_msg(struct ptp_dev_info *info, u8 *data, int len,
-	void (*func)(u8 *data, void *param), void *param)
-{
-	u8 buf[MAX_TSM_UDP_LEN];
-	int in_intr = in_interrupt();
-
-	if (len > MAX_TSM_UDP_LEN)
-		len = MAX_TSM_UDP_LEN;
-	if (!in_intr)
-		mutex_lock(&info->lock);
-	memcpy(buf, data, len);
-	if (func)
-		func(buf, param);
-	len += 2;
-	if (info->read_len + len <= info->read_max) {
-		u16 *udp_len = (u16 *) &info->read_buf[info->read_len];
-
-		*udp_len = len;
-		udp_len++;
-		memcpy(udp_len, buf, len - 2);
-		info->read_len += len;
-	}
-	if (!in_intr)
-		mutex_unlock(&info->lock);
-	wake_up_interruptible(&info->wait_udp);
-}  /* ptp_setup_udp_msg */
-
-static void ptp_tsm_resp(u8 *data, void *param)
+static void ptp_tsm_resp(void *data, void *param)
 {
 	struct tsm_db *db = (struct tsm_db *) data;
 	struct ptp_ts *ts = param;
@@ -1228,7 +1201,7 @@ static void ptp_tsm_resp(u8 *data, void *param)
 	db->cur_nsec = db->timestamp;
 }  /* ptp_tsm_resp */
 
-static void ptp_tsm_get_time_resp(u8 *data, void *param)
+static void ptp_tsm_get_time_resp(void *data, void *param)
 {
 	struct tsm_get_time *get = (struct tsm_get_time *) data;
 	struct ptp_utime *t = param;
@@ -1282,7 +1255,7 @@ static void save_tx_ts(struct ptp_info *ptp, struct ptp_tx_ts *tx,
 						port, diff, msg,
 						ntohs(db->seqid));
 				if (tx->dev) {
-					ptp_setup_udp_msg(tx->dev,
+					file_dev_setup_msg(tx->dev,
 						tx->data.buf, tx->data.len,
 						ptp_tsm_resp, &tx->ts);
 					tx->dev = NULL;
@@ -1801,11 +1774,11 @@ static void init_tx_ts(struct ptp_tx_ts *ts)
 	ts->missed = false;
 }  /* init_tx_ts */
 
-static struct ptp_dev_info *find_minor_dev(struct ptp_dev_info *info)
+static struct file_dev_info *find_minor_dev(struct file_dev_info *info)
 {
-	struct ptp_info *ptp = info->ptp;
-	struct ptp_dev_info *dev;
-	struct ptp_dev_info *prev;
+	struct ptp_info *ptp = info->dev;
+	struct file_dev_info *dev;
+	struct file_dev_info *prev;
 
 	dev = ptp->dev[info->minor ^ 1];
 	prev = ptp->dev[info->minor];
@@ -1830,9 +1803,6 @@ static void ptp_init_state(struct ptp_info *ptp)
 		return;
 	}
 	mutex_lock(&ptp->lock);
-	ptp->udp_head = ptp->udp_tail = 0;
-	for (reg = 0; reg < MAX_TSM_UDP_CNT; reg++)
-		ptp->udp[reg].len = 0;
 	mutex_unlock(&ptp->lock);
 
 	if (!ptp->started)
@@ -2602,9 +2572,9 @@ static int check_expired_rx_unit(struct ptp_info *ptp, int tsi)
 	return 0;
 }  /* check_expired_rx_unit */
 
-static int proc_dev_rx_event(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_rx_event(struct file_dev_info *info, u8 *data)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	struct ptp_tsi_options *cmd = (struct ptp_tsi_options *) data;
 	u8 event;
 	int first;
@@ -2750,9 +2720,9 @@ static int find_avail_tx_unit(struct ptp_info *ptp, int total, int *unit)
 	return 0;
 }  /* find_avail_tx_unit */
 
-static int proc_dev_tx_event(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_tx_event(struct file_dev_info *info, u8 *data)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	struct ptp_tso_options *cmd = (struct ptp_tso_options *) data;
 	int gpo;
 	int intr;
@@ -3017,14 +2987,14 @@ static void proc_tsm_get_gps(struct ptp_info *ptp, u8 *data)
 	get->seqid = htons(ptp->gps_seqid);
 	get->sec = htonl(ptp->gps_time.sec);
 	get->nsec = htonl(ptp->gps_time.nsec);
-	ptp_setup_udp_msg(ptp->gps_dev, data, sizeof(struct tsm_get_gps),
+	file_dev_setup_msg(ptp->gps_dev, data, sizeof(struct tsm_get_gps),
 		NULL, NULL);
 	ptp->gps_dev = NULL;
 }  /* proc_tsm_get_gps */
 
-static int proc_dev_get_event(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_get_event(struct file_dev_info *info, u8 *data)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	int len;
 	struct ptp_tsi_info *in = (struct ptp_tsi_info *) data;
 	u8 buf[sizeof(struct ptp_utime) * MAX_TIMESTAMP_EVENT_UNIT +
@@ -3043,7 +3013,7 @@ static int proc_dev_get_event(struct ptp_dev_info *info, u8 *data)
 	len = sizeof(struct ptp_utime) * out->num;
 	memcpy(out->t, ptp->events[in->unit].t, len);
 	len += sizeof(struct ptp_tsi_info);
-	ptp_setup_udp_msg(info, buf, len, NULL, NULL);
+	file_dev_setup_msg(info, buf, len, NULL, NULL);
 	return 0;
 }  /* proc_dev_get_event */
 
@@ -3082,15 +3052,15 @@ static int proc_ptp_get_trig(struct ptp_info *ptp, u8 *data, u16 done,
 	memcpy(out->t, &cur->trig, len);
 	len += sizeof(struct ptp_tsi_info);
 	if (ptp->tso_dev[tso]) {
-		ptp_setup_udp_msg(ptp->tso_dev[tso], buf, len, NULL, NULL);
+		file_dev_setup_msg(ptp->tso_dev[tso], buf, len, NULL, NULL);
 		return 0;
 	}
 	return -1;
 }  /* proc_ptp_get_trig */
 
-static int proc_dev_poll_event(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_poll_event(struct file_dev_info *info, u8 *data)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	struct ptp_tsi_info *in = (struct ptp_tsi_info *) data;
 
 	if (in->unit >= MAX_TIMESTAMP_UNIT)
@@ -3307,7 +3277,7 @@ static void ptp_tx_done(struct ptp_info *ptp, int tso)
 }  /* ptp_tx_done */
 
 static struct ptp_tx_ts *proc_get_ts(struct ptp_info *ptp, u8 port, u8 msg,
-	u16 seqid, u8 *mac, struct ptp_dev_info *info, int len)
+	u16 seqid, u8 *mac, struct file_dev_info *info, int len)
 {
 	struct ptp_tx_ts *tx;
 	int from_stack = false;
@@ -3370,7 +3340,7 @@ static struct ptp_tx_ts *proc_get_ts(struct ptp_info *ptp, u8 port, u8 msg,
 }  /* proc_get_ts */
 
 static int proc_ptp_get_timestamp(struct ptp_info *ptp, u8 *data,
-	struct ptp_dev_info *info)
+	struct file_dev_info *info)
 {
 	struct ptp_ts_options *opt = (struct ptp_ts_options *) data;
 
@@ -3410,9 +3380,9 @@ static int proc_ptp_get_timestamp(struct ptp_info *ptp, u8 *data,
 	return 0;
 }  /* proc_ptp_get_timestamp */
 
-static int parse_tsm_msg(struct ptp_dev_info *info, int len)
+static int parse_tsm_msg(struct file_dev_info *info, int len)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	u8 *data = info->write_buf;
 	u8 cmd = data[0] & 0xf0;
 	u8 msg = data[0] & 0x03;
@@ -3432,7 +3402,7 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 			ptp->reg->get_time(ptp, &ts.t);
 			ptp->ops->release(ptp);
 		}
-		ptp_setup_udp_msg(info, data, len, ptp_tsm_get_time_resp,
+		file_dev_setup_msg(info, data, len, ptp_tsm_get_time_resp,
 			&ts.t);
 		break;
 	}
@@ -3447,7 +3417,7 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 			tx = proc_get_ts(ptp, port, msg, ntohs(db->seqid),
 				db->mac, info, len);
 			if (tx) {
-				ptp_setup_udp_msg(info, data, len,
+				file_dev_setup_msg(info, data, len,
 					ptp_tsm_resp, &tx->ts);
 				tx->ts.timestamp = 0;
 				tx->req_time = 0;
@@ -3579,20 +3549,23 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 
 static struct ptp_info *ptp_priv;
 
-static struct ptp_dev_info *alloc_dev_info(unsigned int minor)
+static struct file_dev_info *alloc_dev_info(uint minor)
 {
-	struct ptp_dev_info *info;
+	struct file_dev_info *info;
 
-	info = kzalloc(sizeof(struct ptp_dev_info), GFP_KERNEL);
+	info = kzalloc(sizeof(struct file_dev_info), GFP_KERNEL);
 	if (info) {
-		info->ptp = ptp_priv;
+		info->dev = ptp_priv;
 		sema_init(&info->sem, 1);
 		mutex_init(&info->lock);
-		init_waitqueue_head(&info->wait_udp);
+		init_waitqueue_head(&info->wait_msg);
+		info->read_max = 60000;
+		info->read_tmp = MAX_TSM_UDP_LEN;
+		info->read_buf = kzalloc(info->read_max + info->read_tmp,
+			GFP_KERNEL);
+		info->read_in = &info->read_buf[info->read_max];
 		info->write_len = 1000;
 		info->write_buf = kzalloc(info->write_len, GFP_KERNEL);
-		info->read_max = 60000;
-		info->read_buf = kzalloc(info->read_max, GFP_KERNEL);
 
 		info->minor = minor;
 		info->next = ptp_priv->dev[minor];
@@ -3601,32 +3574,36 @@ static struct ptp_dev_info *alloc_dev_info(unsigned int minor)
 	return info;
 }  /* alloc_dev_info */
 
-static void free_dev_info(struct ptp_dev_info *info)
+static void free_dev_info(struct file_dev_info *info)
 {
 	if (info) {
-		struct ptp_info *ptp = info->ptp;
-		unsigned int minor = info->minor;
-		struct ptp_dev_info *prev = ptp->dev[minor];
+		int i;
+		struct ptp_info *ptp = info->dev;
+		uint minor = info->minor;
 
-		if (prev == info) {
-			ptp->dev[minor] = info->next;
-		} else {
-			while (prev && prev->next != info)
-				prev = prev->next;
-			if (prev)
-				prev->next = info->next;
+		for (i = 0; i < MAX_TIMESTAMP_UNIT; i++) {
+			if (ptp->tsi_dev[i] == info) {
+				cancel_rx_unit(ptp, i);
+			}
 		}
-		kfree(info->read_buf);
-		kfree(info->write_buf);
-		kfree(info);
+		for (i = 0; i < MAX_TRIG_UNIT; i++) {
+			if (ptp->tso_dev[i] == info) {
+				ptp->ops->acquire(ptp);
+				ptp_tso_off(ptp, i, (1 << i));
+				ptp->ops->release(ptp);
+			}
+		}
+		if (ptp->gps_dev == info)
+			ptp->gps_dev = NULL;
+		file_gen_dev_release(info, &ptp->dev[minor]);
 	}
 }  /* free_dev_info */
 
 static int ptp_dev_open(struct inode *inode, struct file *filp)
 {
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
-	unsigned int minor = MINOR(inode->i_rdev);
+	uint minor = MINOR(inode->i_rdev);
 
 	if (minor > 1)
 		return -ENODEV;
@@ -3642,7 +3619,7 @@ static int ptp_dev_open(struct inode *inode, struct file *filp)
 
 static int ptp_dev_release(struct inode *inode, struct file *filp)
 {
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 
 	free_dev_info(info);
@@ -3666,7 +3643,7 @@ static void proc_ptp_work(struct work_struct *work)
 	struct ptp_work *parent =
 		container_of(work, struct ptp_work, work);
 	struct ptp_info *ptp = parent->ptp;
-	struct ptp_dev_info *info = parent->dev_info;
+	struct file_dev_info *info = parent->dev_info;
 	u8 *data = parent->param.data;
 	uint port;
 	u32 reg;
@@ -3803,7 +3780,7 @@ skip:
 }  /* proc_ptp_work */
 
 static int proc_ptp_hw_access(struct ptp_info *ptp, int cmd, int subcmd,
-	int option, void *data, size_t len, struct ptp_dev_info *info,
+	int option, void *data, size_t len, struct file_dev_info *info,
 	int *output, int wait)
 {
 	struct ptp_access *access;
@@ -4090,7 +4067,7 @@ static void proc_ptp_intr(struct ptp_info *ptp)
 	int i;
 	int tsi;
 	int last;
-	union ktime cur_ktime;
+	ktime_t cur_ktime;
 	struct timespec ts;
 	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
 
@@ -4452,8 +4429,8 @@ static int ixxat_ptp_ioctl(struct ptp_info *ptp, unsigned int cmd,
 	return err;
 }
 
-static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
-	struct ptp_dev_info *info)
+static int ptp_dev_req(struct ptp_info *ptp, char *arg,
+	struct file_dev_info *info)
 {
 	struct ksz_request *req = (struct ksz_request *) arg;
 	int len;
@@ -4463,7 +4440,7 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 	int subcmd;
 	int output;
 	u8 data[PARAM_DATA_SIZE];
-	struct ptp_dev_info *dev;
+	struct file_dev_info *dev;
 	int err = 0;
 	int result = 0;
 
@@ -4521,8 +4498,8 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 			data[0] = 0xF0;
 			dev = find_minor_dev(info);
 			if (dev)
-				ptp_setup_udp_msg(dev, data, 4, NULL, NULL);
-			ptp_setup_udp_msg(info, data, 4, NULL, NULL);
+				file_dev_setup_msg(dev, data, 4, NULL, NULL);
+			file_dev_setup_msg(info, data, 4, NULL, NULL);
 			break;
 		case DEV_INFO_RESET:
 			if (output < 3) {
@@ -4812,9 +4789,9 @@ static int ptp_dev_ioctl(struct inode *inode, struct file *filp,
 	unsigned int cmd, unsigned long arg)
 #endif
 {
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	int err = 0;
 
 	if (_IOC_TYPE(cmd) != DEV_IOC_MAGIC)
@@ -4832,7 +4809,7 @@ static int ptp_dev_ioctl(struct inode *inode, struct file *filp,
 	if (down_interruptible(&info->sem))
 		return -ERESTARTSYS;
 
-	err = ptp_dev_req(ptp, 0, (char *) arg, info);
+	err = ptp_dev_req(ptp, (char *) arg, info);
 	up(&info->sem);
 	return err;
 }  /* ptp_dev_ioctl */
@@ -4840,14 +4817,14 @@ static int ptp_dev_ioctl(struct inode *inode, struct file *filp,
 static ssize_t ptp_dev_read(struct file *filp, char *buf, size_t count,
 	loff_t *offp)
 {
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 	ssize_t result = 0;
 	int rc;
 
 	if (!info->read_len) {
 		*offp = 0;
-		rc = wait_event_interruptible(info->wait_udp,
+		rc = wait_event_interruptible(info->wait_msg,
 			0 != info->read_len);
 
 		/* Cannot continue if ERESTARTSYS. */
@@ -4890,7 +4867,7 @@ dev_read_done:
 static ssize_t ptp_dev_write(struct file *filp, const char *buf, size_t count,
 	loff_t *offp)
 {
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 	ssize_t result = 0;
 	size_t size;

@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8795 switch common code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -293,17 +293,6 @@ static uint get_log_port_zero(struct ksz_sw *sw, uint p)
 		n = sw->mib_port_cnt;
 	return n;
 }
-
-#if 0
-static u8 get_phy_mask(struct ksz_sw *sw, uint n)
-{
-if (n > sw->mib_port_cnt + 1)
-dbg_msg("  !!! %s %d\n", __func__, n);
-	if (n >= sw->mib_port_cnt + 1)
-		n = 0;
-	return sw->port_info[n].phy_m;
-}
-#endif
 
 static uint get_phy_mask_from_log(struct ksz_sw *sw, uint log_m)
 {
@@ -893,6 +882,7 @@ static ssize_t sw_d_sta_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 	return len;
 }  /* sw_d_sta_mac_table */
 
+#ifdef DEBUG
 static ssize_t sw_d_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 {
 #if 0
@@ -924,6 +914,7 @@ static ssize_t sw_d_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 #endif
 	return len;
 }  /* sw_d_mac_table */
+#endif
 
 /* -------------------------------------------------------------------------- */
 
@@ -1403,55 +1394,6 @@ static void port_cfg(struct ksz_sw *sw, uint port, int offset, SW_D bits,
 		data &= ~bits;
 	SW_W(sw, addr, data);
 }  /* port_cfg */
-
-#if 0
-/**
- * port_chk_shift - check port bit
- * @sw:		The switch instance.
- * @port:	The port index.
- * @offset:	The offset of the register.
- * @shift:	Number of bits to shift.
- *
- * This function checks whether the specified port is set in the register or
- * not.
- *
- * Return 0 if the port is not set.
- */
-static int port_chk_shift(struct ksz_sw *sw, uint port, u32 addr, int shift)
-{
-	SW_D data;
-	SW_D bit = 1 << port;
-
-	data = SW_R(sw, addr);
-	data >>= shift;
-	return (data & bit) == bit;
-}
-
-/**
- * port_cfg_shift - set port bit
- * @sw:		The switch instance.
- * @port:	The port index.
- * @offset:	The offset of the register.
- * @shift:	Number of bits to shift.
- * @set:	The flag indicating whether the port is to be set or not.
- *
- * This routine sets or resets the specified port in the register.
- */
-static void port_cfg_shift(struct ksz_sw *sw, uint port, u32 addr, int shift,
-	bool set)
-{
-	SW_D data;
-	SW_D bits = 1 << port;
-
-	data = SW_R(sw, addr);
-	bits <<= shift;
-	if (set)
-		data |= bits;
-	else
-		data &= ~bits;
-	SW_W(sw, addr, data);
-}
-#endif
 
 /**
  * port_r8 - read byte from port register
@@ -4475,33 +4417,6 @@ static void bridge_change(struct ksz_sw *sw)
 
 #define MAX_SW_LEN			1500
 
-static void sw_setup_msg(struct sw_dev_info *info, void *data, int len,
-	void (*func)(void *data, void *param), void *param)
-{
-	struct ksz_sw *sw = info->sw;
-	int in_intr = in_interrupt();
-
-	if (len > MAX_SW_LEN)
-		len = MAX_SW_LEN;
-	if (!in_intr)
-		mutex_lock(&info->lock);
-	memcpy(sw->msg_buf, data, len);
-	if (func)
-		func(sw->msg_buf, param);
-	len += 2;
-	if (info->read_len + len <= info->read_max) {
-		u16 *msg_len = (u16 *) &info->read_buf[info->read_len];
-
-		*msg_len = len;
-		msg_len++;
-		memcpy(msg_len, sw->msg_buf, len - 2);
-		info->read_len += len;
-	}
-	if (!in_intr)
-		mutex_unlock(&info->lock);
-	wake_up_interruptible(&info->wait_msg);
-}  /* sw_setup_msg */
-
 #ifdef CONFIG_KSZ_STP
 #include "ksz_stp.c"
 #endif
@@ -4582,6 +4497,72 @@ static u8 sw_determine_flow_ctrl(struct ksz_sw *sw, struct ksz_port *port,
 #endif
 	return flow;
 }  /* sw_determine_flow_ctrl */
+
+static void sw_notify_link_change(struct ksz_sw *sw, uint ports)
+{
+	static u8 link_buf[sizeof(struct ksz_info_opt) +
+		sizeof(struct ksz_info_speed) * TOTAL_PORT_NUM +
+		sizeof(struct ksz_resp_msg)];
+
+	if ((sw->notifications & SW_INFO_LINK_CHANGE)) {
+		struct ksz_resp_msg *msg = (struct ksz_resp_msg *) link_buf;
+		struct ksz_info_opt *opt = (struct ksz_info_opt *)
+			&msg->resp.data;
+		struct ksz_port_info *info;
+		struct ksz_info_speed *speed;
+		struct file_dev_info *dev_info;
+		int c;
+		int n;
+		int p;
+		int q;
+
+		/* Check whether only 1 port has change. */
+		c = 0;
+		q = 0;
+		for (n = 1; n <= sw->mib_port_cnt; n++) {
+			p = get_phy_port(sw, n);
+			if (ports & (1 << p)) {
+				q = n;
+				c++;
+			}
+		}
+		if (c > 1) {
+			c = sw->mib_port_cnt;
+			q = 1;
+		}
+		msg->module = DEV_MOD_BASE;
+		msg->cmd = DEV_INFO_SW_LINK;
+		opt->num = (u8) c;
+		opt->port = (u8) q;
+		speed = &opt->data.speed;
+		for (n = 1; n <= opt->num; n++, q++) {
+			p = get_phy_port(sw, q);
+			info = get_port_info(sw, p);
+			if (info->state == media_connected) {
+				speed->tx_rate = info->tx_rate;
+				speed->duplex = info->duplex;
+				speed->flow_ctrl = info->flow_ctrl;
+			} else {
+				speed->tx_rate = 0;
+				speed->duplex = 0;
+				speed->flow_ctrl = 0;
+			}
+			++speed;
+		}
+		n = opt->num * sizeof(struct ksz_info_speed);
+		n += 2;
+		n += sizeof(struct ksz_resp_msg);
+		n -= 4;
+		dev_info = sw->dev_list[0];
+		while (dev_info) {
+			if ((dev_info->notifications[DEV_MOD_BASE] &
+			    SW_INFO_LINK_CHANGE))
+				file_dev_setup_msg(dev_info, msg, n, NULL,
+						   NULL);
+			dev_info = dev_info->next;
+		}
+	}
+}  /* sw_notify_link_change */
 
 static int port_chk_force_link(struct ksz_sw *sw, uint p, SW_D local,
 	SW_D remote, SW_D status)
@@ -4771,8 +4752,10 @@ static int port_get_link_speed(struct ksz_port *port)
 	if (change)
 		dbp_link(port, sw, change);
 #endif
-	if (change)
+	if (change) {
+		port->link_ports |= change;
 		schedule_work(&port->link_update);
+	}
 	return change;
 }  /* port_get_link_speed */
 
@@ -4900,9 +4883,6 @@ static void sw_enable(struct ksz_sw *sw)
 	struct ksz_port_info *info;
 	int state = STP_STATE_FORWARDING;
 
-	if (sw->features & DSA_SUPPORT)
-		state = STP_STATE_SIMPLE;
-
 	/* Manually change default membership when not all ports are used. */
 	fewer = false;
 	for (port = 0; port < sw->port_cnt; port++) {
@@ -4919,7 +4899,7 @@ dbg_msg(" fewer: %d %d\n", fewer, sw->eth_cnt);
 	if (fewer)
 		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
 	if ((sw->dev_count > 1 && !sw->dev_offset) ||
-	    (sw->features & (STP_SUPPORT | DSA_SUPPORT))) {
+	    (sw->features & STP_SUPPORT)) {
 		u8 member;
 
 		for (n = 1; n <= sw->mib_port_cnt; n++) {
@@ -6076,8 +6056,6 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 		len += sprintf(buf + len, "\t%08x = DLR support\n",
 			DLR_HW);
 #endif
-		len += sprintf(buf + len, "\t%08x = DSA support\n",
-			DSA_SUPPORT);
 		len += sprintf(buf + len, "\t%08x = different MAC addresses\n",
 			DIFF_MAC_ADDR);
 		break;
@@ -6099,7 +6077,9 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 		break;
 	case PROC_STATIC:
 		len = sw_d_sta_mac_table(sw, buf, len);
+#ifdef DEBUG
 		len = sw_d_mac_table(sw, buf, len);
+#endif
 		break;
 	case PROC_VLAN:
 		len = sw_d_vlan_table(sw, buf, len);
@@ -7932,7 +7912,7 @@ static void sw_free_fid(struct ksz_sw *sw, u16 fid)
 
 static const u8 *sw_get_br_id(struct ksz_sw *sw)
 {
-	u8 id[8];
+	static u8 id[8];
 	const u8* ret = id;
 
 	memcpy(&id[2], sw->info->mac_addr, ETH_ALEN);
@@ -8028,57 +8008,11 @@ enum {
 	KSZ8765_SW_CHIP,
 };
 
-static int sw_get_id(struct ksz_sw *sw, u8 *id1, u8 *id2, char *name)
-{
-	int id;
-	int i;
-	int j;
-
-	id = sw->reg->r16(sw, REG_CHIP_ID0);
-	i = id;
-	j = i & SW_CHIP_ID_M;
-	i >>= 8;
-	*id1 = (u8) i;
-	*id2 = (u8) j;
-	if (sw->chip_id == KSZ8795_SW_CHIP)
-		strcat(name, "8795");
-	else if (sw->chip_id == KSZ8794_SW_CHIP)
-		strcat(name, "8794");
-	else if (sw->chip_id == KSZ8765_SW_CHIP)
-		strcat(name, "8765");
-	else
-		strcat(name, "87xx");
-	return id;
-}  /* sw_get_id */
-
 static void sw_cfg_tail_tag(struct ksz_sw *sw, bool enable)
 {
 	/* Switch marks the maximum frame with extra byte as oversize. */
 	sw_cfg(sw, REG_SW_CTRL_2, SW_LEGAL_PACKET_DISABLE, enable);
 	sw_cfg(sw, S_TAIL_TAG_CTRL, SW_TAIL_TAG_ENABLE, enable);
-}
-
-static void sw_cfg_each_port(struct ksz_sw *sw, uint p, bool cpu)
-{
-	if (cpu)
-		p = sw->HOST_PORT;
-	else {
-		p = get_phy_port(sw, p + 1);
-		sw->info->port_cfg[p].vid_member = (1 << p);
-	}
-	port_set_stp_state(sw, p, STP_STATE_SIMPLE);
-}
-
-static int sw_port_to_phy_addr(struct ksz_sw *sw, uint p)
-{
-	p = get_phy_port(sw, p + 1);
-	if (p <= sw->mib_port_cnt)
-		return p;
-	return -1;
-}
-
-static void sw_set_port_addr(struct ksz_sw *sw, uint p, u8 *addr)
-{
 }
 
 static void sw_set_multi(struct ksz_sw *sw, struct net_device *dev,
@@ -8160,15 +8094,20 @@ static void sw_set_multi(struct ksz_sw *sw, struct net_device *dev,
 static struct net_device *sw_rx_dev(struct ksz_sw *sw, u8 *data, u32 *len,
 	int *tag, int *port)
 {
-	u16 proto;
-	u16* proto_loc;
-	struct net_device *dev;
 	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *) data;
+	struct net_device *dev;
+	u16* proto_loc;
+	u16 proto;
 	int index = -1;
 	int vid = 0;
 
 	proto_loc = &vlan->h_vlan_proto;
 	proto = htons(*proto_loc);
+
+	/* Ignore PAUSE frame sent by switch. */
+	if (!memcmp(vlan->h_source, sw->info->mac_addr, ETH_ALEN) &&
+	    proto == ETH_P_PAUSE)
+		return NULL;
 
 	/* Get received port number. */
 	if (sw->overrides & TAIL_TAGGING) {
@@ -8389,7 +8328,7 @@ static int sw_get_mtu(struct ksz_sw *sw)
 		need_tail_tag = true;
 	if (sw->features & VLAN_PORT_TAGGING)
 		need_tail_tag = true;
-	if (sw->features & (STP_SUPPORT | DSA_SUPPORT))
+	if (sw->features & STP_SUPPORT)
 		need_tail_tag = true;
 	if (need_tail_tag)
 		mtu += 1;
@@ -8718,7 +8657,7 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 			port_cfg_ins_tag(sw, sw->HOST_PORT, true);
 		need_vlan = true;
 	}
-	if (sw->features & (STP_SUPPORT | DSA_SUPPORT))
+	if (sw->features & STP_SUPPORT)
 		need_tail_tag = true;
 	if (sw->features & (DLR_HW))
 		need_vlan = true;
@@ -8864,6 +8803,8 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 			}
 		}
 	}
+	info = get_port_info(sw, sw->HOST_PORT);
+	info->report = true;
 
 	sw->ops->acquire(sw);
 
@@ -9075,20 +9016,23 @@ static u8 sw_set_mac_addr(struct ksz_sw *sw, struct net_device *dev,
 
 static struct ksz_sw *sw_priv;
 
-static struct sw_dev_info *alloc_sw_dev_info(unsigned int minor)
+static struct file_dev_info *alloc_sw_dev_info(uint minor)
 {
-	struct sw_dev_info *info;
+	struct file_dev_info *info;
 
-	info = kzalloc(sizeof(struct sw_dev_info), GFP_KERNEL);
+	info = kzalloc(sizeof(struct file_dev_info), GFP_KERNEL);
 	if (info) {
-		info->sw = sw_priv;
+		info->dev = sw_priv;
 		sema_init(&info->sem, 1);
 		mutex_init(&info->lock);
 		init_waitqueue_head(&info->wait_msg);
+		info->read_max = 60000;
+		info->read_tmp = MAX_SW_LEN;
+		info->read_buf = kzalloc(info->read_max + info->read_tmp,
+			GFP_KERNEL);
+		info->read_in = &info->read_buf[info->read_max];
 		info->write_len = 1000;
 		info->write_buf = kzalloc(info->write_len, GFP_KERNEL);
-		info->read_max = 60000;
-		info->read_buf = kzalloc(info->read_max, GFP_KERNEL);
 
 		info->minor = minor;
 		info->next = sw_priv->dev_list[minor];
@@ -9097,32 +9041,23 @@ static struct sw_dev_info *alloc_sw_dev_info(unsigned int minor)
 	return info;
 }  /* alloc_sw_dev_info */
 
-static void free_sw_dev_info(struct sw_dev_info *info)
+static void free_sw_dev_info(struct file_dev_info *info)
 {
 	if (info) {
-		struct ksz_sw *sw = info->sw;
-		unsigned int minor = info->minor;
-		struct sw_dev_info *prev = sw->dev_list[minor];
+		struct ksz_sw *sw = info->dev;
+		uint minor = info->minor;
 
-		if (prev == info) {
-			sw->dev_list[minor] = info->next;
-		} else {
-			while (prev && prev->next != info)
-				prev = prev->next;
-			if (prev)
-				prev->next = info->next;
-		}
-		kfree(info->read_buf);
-		kfree(info->write_buf);
-		kfree(info);
+		file_dev_clear_notify(sw->dev_list[minor], info, DEV_MOD_BASE,
+				      &sw->notifications);
+		file_gen_dev_release(info, &sw->dev_list[minor]);
 	}
 }  /* free_sw_dev_info */
 
 static int sw_dev_open(struct inode *inode, struct file *filp)
 {
-	struct sw_dev_info *info = (struct sw_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
-	unsigned int minor = MINOR(inode->i_rdev);
+	uint minor = MINOR(inode->i_rdev);
 
 	if (minor > 1)
 		return -ENODEV;
@@ -9138,7 +9073,7 @@ static int sw_dev_open(struct inode *inode, struct file *filp)
 
 static int sw_dev_release(struct inode *inode, struct file *filp)
 {
-	struct sw_dev_info *info = (struct sw_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 
 	free_sw_dev_info(info);
@@ -9151,9 +9086,9 @@ static int sw_get_attrib(struct ksz_sw *sw, int subcmd, int size,
 {
 	struct ksz_info_opt *opt = (struct ksz_info_opt *) data;
 	struct ksz_info_cfg *cfg = &opt->data.cfg;
-	int i;
-	int n;
-	int p;
+	uint i;
+	uint n;
+	uint p;
 
 	*len = 0;
 	*output = 0;
@@ -9164,6 +9099,9 @@ static int sw_get_attrib(struct ksz_sw *sw, int subcmd, int size,
 		if (!n)
 			n = 1;
 		*len = 2 + n * sizeof(struct ksz_info_cfg);
+		if (n > sw->mib_port_cnt ||
+		    p > sw->mib_port_cnt)
+			return DEV_IOC_INVALID_CMD;
 		break;
 	}
 	if (!*len)
@@ -9174,8 +9112,10 @@ static int sw_get_attrib(struct ksz_sw *sw, int subcmd, int size,
 	}
 	switch (subcmd) {
 	case DEV_SW_CFG:
+		n = opt->port;
 		sw->ops->acquire(sw);
-		for (i = 0; i < opt->num; i++, p++) {
+		for (i = 0; i < opt->num; i++, n++) {
+			p = get_phy_port(sw, n);
 			cfg->on_off = 0;
 			if (cfg->set & SP_LEARN) {
 				if (!port_chk_dis_learn(sw, p))
@@ -9211,9 +9151,9 @@ static int sw_set_attrib(struct ksz_sw *sw, int subcmd, int size,
 	struct ksz_info_opt *opt = (struct ksz_info_opt *) data;
 	struct ksz_info_cfg *cfg = &opt->data.cfg;
 	int len;
-	int i;
-	int n;
-	int p;
+	uint i;
+	uint n;
+	uint p;
 
 	*output = 0;
 	switch (subcmd) {
@@ -9225,8 +9165,13 @@ static int sw_set_attrib(struct ksz_sw *sw, int subcmd, int size,
 		len = 2 + n * sizeof(struct ksz_info_cfg);
 		if (size < len)
 			goto not_enough;
+		if (n > sw->mib_port_cnt ||
+		    p > sw->mib_port_cnt)
+			return DEV_IOC_INVALID_CMD;
+		n = opt->port;
 		sw->ops->acquire(sw);
-		for (i = 0; i < opt->num; i++, p++) {
+		for (i = 0; i < opt->num; i++, n++) {
+			p = get_phy_port(sw, n);
 			if (cfg->set & SP_LEARN)
 				port_cfg_dis_learn(sw, p,
 					!(cfg->on_off & SP_LEARN));
@@ -9256,6 +9201,55 @@ not_enough:
 	*req_size = len + SIZEOF_ksz_request;
 	return DEV_IOC_INVALID_LEN;
 }  /* sw_set_attrib */
+
+static int sw_get_info(struct ksz_sw *sw, int subcmd, int size,
+	int *req_size, size_t *len, u8 *data)
+{
+	struct ksz_info_opt *opt = (struct ksz_info_opt *) data;
+	struct ksz_info_speed *speed = &opt->data.speed;
+	struct ksz_port_info *info;
+	uint i;
+	uint n;
+	uint p;
+
+	*len = 0;
+	switch (subcmd) {
+	case DEV_INFO_SW_LINK:
+		n = opt->num;
+		p = opt->port;
+		if (!n)
+			n = 1;
+		*len = 2 + n * sizeof(struct ksz_info_speed);
+		if (n > sw->mib_port_cnt ||
+		    p > sw->mib_port_cnt)
+			return DEV_IOC_INVALID_CMD;
+		break;
+	}
+	if (!*len)
+		return DEV_IOC_INVALID_CMD;
+	if (size < *len) {
+		*req_size = *len + SIZEOF_ksz_request;
+		return DEV_IOC_INVALID_LEN;
+	}
+	switch (subcmd) {
+	case DEV_INFO_SW_LINK:
+		n = p;
+		for (i = 0; i < opt->num; i++, n++) {
+			p = get_phy_port(sw, n);
+			info = get_port_info(sw, p);
+			if (info->state == media_connected) {
+				speed->tx_rate = info->tx_rate;
+				speed->duplex = info->duplex;
+				speed->flow_ctrl = info->flow_ctrl;
+			} else {
+				memset(speed, 0, sizeof(struct ksz_info_speed));
+			}
+			++speed;
+		}
+		break;
+	}
+	return DEV_IOC_OK;
+}  /* sw_get_info */
 
 static int base_dev_req(struct ksz_sw *sw, char *arg, void *info)
 {
@@ -9288,12 +9282,12 @@ static int base_dev_req(struct ksz_sw *sw, char *arg, void *info)
 				data[1] = 'i';
 				data[2] = 'c';
 				data[3] = 'r';
-				data[4] = 0;
+				data[4] = 1;
+				data[5] = sw->mib_port_cnt;
 				err = write_user_data(data, req->param.data,
 					6, info);
 				if (err)
 					goto dev_ioctl_done;
-				sw->dev_info = info;
 			} else
 				result = DEV_IOC_INVALID_LEN;
 			break;
@@ -9305,21 +9299,39 @@ static int base_dev_req(struct ksz_sw *sw, char *arg, void *info)
 			/* Not called through char device. */
 			if (!info)
 				break;
+			file_dev_clear_notify(sw->dev_list[0], info,
+					      DEV_MOD_BASE,
+					      &sw->notifications);
 			msg->module = DEV_MOD_BASE;
 			msg->cmd = DEV_INFO_QUIT;
 			msg->resp.data[0] = 0;
-			sw_setup_msg(info, msg, 8, NULL, NULL);
-			sw->notifications = 0;
-			sw->dev_info = NULL;
+			file_dev_setup_msg(info, msg, 8, NULL, NULL);
 			break;
 		case DEV_INFO_NOTIFY:
 			if (len >= 4) {
+				struct file_dev_info *dev_info = info;
 				uint *notify = (uint *) data;
 
 				_chk_ioctl_size(len, 4, 0, &req_size, &result,
 					&req->param, data, info);
-				sw->notifications = *notify;
+				dev_info->notifications[DEV_MOD_BASE] =
+					*notify;
+				sw->notifications |= *notify;
 			}
+			break;
+		case DEV_INFO_SW_LINK:
+			if (_chk_ioctl_size(len, len, 0, &req_size, &result,
+			    &req->param, data, info))
+				goto dev_ioctl_resp;
+			result = sw_get_info(sw, subcmd, len, &req_size,
+					     &param_size, data);
+			if (result)
+				goto dev_ioctl_resp;
+			err = write_user_data(data, req->param.data,
+					      param_size, info);
+			if (err)
+				goto dev_ioctl_done;
+			req_size = param_size + SIZEOF_ksz_request;
 			break;
 		default:
 			result = DEV_IOC_INVALID_CMD;
@@ -9367,8 +9379,8 @@ dev_ioctl_done:
 	return err;
 }  /* base_dev_req */
 
-static int sw_dev_req(struct ksz_sw *sw, int start, char *arg,
-	struct sw_dev_info *info)
+static int sw_dev_req(struct ksz_sw *sw, char *arg,
+	struct file_dev_info *info)
 {
 	struct ksz_request *req = (struct ksz_request *) arg;
 	int maincmd;
@@ -9426,7 +9438,7 @@ dev_ioctl_done:
 static ssize_t sw_dev_read(struct file *filp, char *buf, size_t count,
 	loff_t *offp)
 {
-	struct sw_dev_info *info = (struct sw_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 	ssize_t result = 0;
 	int rc;
@@ -9481,9 +9493,9 @@ static int sw_dev_ioctl(struct inode *inode, struct file *filp,
 	unsigned int cmd, unsigned long arg)
 #endif
 {
-	struct sw_dev_info *info = (struct sw_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
-	struct ksz_sw *sw = info->sw;
+	struct ksz_sw *sw = info->dev;
 	int err = 0;
 
 	if (_IOC_TYPE(cmd) != DEV_IOC_MAGIC)
@@ -9501,7 +9513,7 @@ static int sw_dev_ioctl(struct inode *inode, struct file *filp,
 	if (down_interruptible(&info->sem))
 		return -ERESTARTSYS;
 
-	err = sw_dev_req(sw, 0, (char *) arg, info);
+	err = sw_dev_req(sw, (char *) arg, info);
 	up(&info->sem);
 	return err;
 }  /* sw_dev_ioctl */
@@ -9509,7 +9521,7 @@ static int sw_dev_ioctl(struct inode *inode, struct file *filp,
 static ssize_t sw_dev_write(struct file *filp, const char *buf, size_t count,
 	loff_t *offp)
 {
-	struct sw_dev_info *info = (struct sw_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 	ssize_t result = 0;
 	size_t size;
@@ -9621,6 +9633,8 @@ static void link_update_work(struct work_struct *work)
 	}
 #endif
 
+	sw_notify_link_change(sw, port->link_ports);
+
 	for (i = 1; i <= sw->mib_port_cnt; i++) {
 		p = get_phy_port(sw, i);
 		info = get_port_info(sw, p);
@@ -9661,6 +9675,7 @@ static void link_update_work(struct work_struct *work)
 		stp->ops->link_change(stp, true);
 	}
 #endif
+	port->link_ports = 0;
 
 	/* The switch is always linked; speed and duplex are also fixed. */
 	phydev = NULL;
@@ -9682,17 +9697,23 @@ static void link_update_work(struct work_struct *work)
 			phy_link = (port->linked->state == media_connected);
 		link = netif_carrier_ok(dev);
 		if (link != phy_link) {
-			if (phy_link)
-				netif_carrier_on(dev);
-			else
-				netif_carrier_off(dev);
 			if (netif_msg_link(sw))
 				pr_info("%s link %s\n",
 					dev->name,
 					phy_link ? "on" : "off");
 		}
-		if (phydev->adjust_link && phydev->attached_dev)
+		if (phydev->adjust_link && phydev->attached_dev &&
+		    info->report) {
 			phydev->adjust_link(phydev->attached_dev);
+			info->report = false;
+		}
+		link = netif_carrier_ok(dev);
+		if (link != phy_link) {
+			if (phy_link)
+				netif_carrier_on(dev);
+			else
+				netif_carrier_off(dev);
+		}
 	}
 }  /* link_update_work */
 
@@ -9802,7 +9823,7 @@ static struct ksz_port_mapping port_mappings[] = {
 
 static u8 port_map[8];
 
-static void sw_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
+static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 {
 	struct ksz_port_mapping *map;
 	struct ksz_port_info *info;
@@ -9847,7 +9868,7 @@ static void sw_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		}
 		info->log_p = l;
 		info->log_m = 0;
-		info->phy_id = l;
+		info->phy_id = p + 1;
 	}
 	n = (1 << cnt) - 1;
 	ports &= n;
@@ -9925,7 +9946,7 @@ dbg_msg("   eth_maps: %d=%x\n", i, sw->eth_maps[i].mask);
 dbg_msg(" dlr member: %d:%d %x\n", dlr->ports[0], dlr->ports[1], dlr->member);
 	}
 #endif
-}  /* sw_setup_logical_ports */
+}  /* ksz_setup_logical_ports */
 
 static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 {
@@ -10469,7 +10490,7 @@ static struct ksz_sw_ops sw_ops = {
 	.dev_req		= sw_dev_req,
 
 	.get_phy_port		= get_phy_port,
-	.get_log_port		= get_log_port_zero,
+	.get_log_port		= get_log_port,
 
 	.acquire		= sw_acquire,
 	.release		= sw_release,
@@ -10528,12 +10549,6 @@ static struct ksz_sw_ops sw_ops = {
 	.tc_detected		= sw_tc_detected,
 	.get_tcDetected		= sw_get_tcDetected,
 
-	.get_id			= sw_get_id,
-	.cfg_tail_tag		= sw_cfg_tail_tag,
-	.cfg_each_port		= sw_cfg_each_port,
-	.port_to_phy_addr	= sw_port_to_phy_addr,
-	.set_port_addr		= sw_set_port_addr,
-
 	.cfg_src_filter		= sw_cfg_src_filter,
 	.flush_table		= sw_flush_dyn_mac_table,
 	.fwd_unk_vid		= sw_fwd_unk_vid,
@@ -10548,15 +10563,15 @@ static int state_show(struct seq_file *seq, void *v)
 	int i;
 	int j;
 	SW_D data[16 / SW_SIZE];
-	struct sw_priv *ks = seq->private;
-	struct ksz_sw *sw = &ks->sw;
+	struct sw_priv *priv = seq->private;
+	struct ksz_sw *sw = &priv->sw;
 
 	for (i = 0; i < 0x100; i += 16) {
 		seq_printf(seq, SW_SIZE_STR":\t", i);
-		mutex_lock(&ks->lock);
+		mutex_lock(&priv->lock);
 		for (j = 0; j < 16 / SW_SIZE; j++)
 			data[j] = sw->reg->r8(sw, i + j * SW_SIZE);
-		mutex_unlock(&ks->lock);
+		mutex_unlock(&priv->lock);
 		for (j = 0; j < 16 / SW_SIZE; j++)
 			seq_printf(seq, SW_SIZE_STR" ", data[j]);
 		seq_printf(seq, "\n");
@@ -10579,17 +10594,17 @@ static const struct file_operations state_fops = {
 
 /**
  * create_debugfs - create debugfs directory and files
- * @ks:		The switch device structure.
+ * @priv:	The switch device structure.
  *
  * Create the debugfs entries for the specific device.
  */
-static void create_debugfs(struct sw_priv *ks)
+static void create_debugfs(struct sw_priv *priv)
 {
 	struct dentry *root;
 	char root_name[32];
 
 	snprintf(root_name, sizeof(root_name), "%s",
-		 dev_name(ks->dev));
+		 dev_name(priv->dev));
 
 	root = debugfs_create_dir(root_name, NULL);
 	if (IS_ERR(root)) {
@@ -10597,17 +10612,17 @@ static void create_debugfs(struct sw_priv *ks)
 		return;
 	}
 
-	ks->debug_root = root;
-	ks->debug_file = debugfs_create_file("state", 0444, root,
-		ks, &state_fops);
-	if (IS_ERR(ks->debug_file))
+	priv->debug_root = root;
+	priv->debug_file = debugfs_create_file("state", 0444, root,
+		priv, &state_fops);
+	if (IS_ERR(priv->debug_file))
 		pr_err("cannot create debugfs state file\n");
 }
 
-static void delete_debugfs(struct sw_priv *ks)
+static void delete_debugfs(struct sw_priv *priv)
 {
-	debugfs_remove(ks->debug_file);
-	debugfs_remove(ks->debug_root);
+	debugfs_remove(priv->debug_file);
+	debugfs_remove(priv->debug_root);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -10962,7 +10977,7 @@ static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 			port = phydata->port;
 		}
 		phy_id = port->linked->phy_id;
-		sw_r_phy(&ks->sw, phy_id, regnum, &data);
+		sw_r_phy(sw, phy_id, regnum, &data);
 		ret = data;
 	}
 	mutex_unlock(&ks->lock);
@@ -11221,13 +11236,12 @@ static void ksz8795_mib_read_work(struct work_struct *work)
 	int cnt = 0;
 
 	/* Find out how many ports are connected. */
-	for (n = 0; n <= sw->mib_port_cnt; n++) {
+	for (n = 1; n <= sw->mib_port_cnt; n++) {
 		p = get_phy_port(sw, n);
 		if (media_connected == sw->port_state[p].state)
 			++cnt;
 	}
-	if (!cnt)
-		cnt++;
+	cnt++;
 	interval = MIB_READ_INTERVAL * 2 / cnt;
 	if (time_before(sw->next_jiffies, jiffies)) {
 		sw->next_jiffies = jiffies;
@@ -11237,22 +11251,7 @@ static void ksz8795_mib_read_work(struct work_struct *work)
 		p = get_phy_port(sw, n);
 		mib = get_port_mib(sw, p);
 
-		/* Reading MIB counters or requested to read. */
 		if (mib->cnt_ptr || 1 == hw_priv->counter[p].read) {
-
-			/* Need to process interrupt. */
-			if (port_r_cnt(sw, p))
-				return;
-			hw_priv->counter[p].read = 0;
-
-			/* Finish reading counters. */
-			if (0 == mib->cnt_ptr) {
-				hw_priv->counter[p].read = 2;
-				wake_up_interruptible(
-					&hw_priv->counter[p].counter);
-				if (p != sw->HOST_PORT)
-					determine_rate(sw, mib);
-			}
 		} else if (time_after_eq(jiffies, hw_priv->counter[p].time)) {
 			hw_priv->counter[p].time = sw->next_jiffies;
 			/* Only read MIB counters when the port is connected. */
@@ -11271,6 +11270,24 @@ static void ksz8795_mib_read_work(struct work_struct *work)
 
 			/* Read counters one last time after link is lost. */
 			hw_priv->counter[p].read = 1;
+		}
+
+		/* Reading MIB counters or requested to read. */
+		if (mib->cnt_ptr || 1 == hw_priv->counter[p].read) {
+
+			/* Need to process interrupt. */
+			if (port_r_cnt(sw, p))
+				return;
+			hw_priv->counter[p].read = 0;
+
+			/* Finish reading counters. */
+			if (0 == mib->cnt_ptr) {
+				hw_priv->counter[p].read = 2;
+				wake_up_interruptible(
+					&hw_priv->counter[p].counter);
+				if (p != sw->HOST_PORT)
+					determine_rate(sw, mib);
+			}
 		}
 	}
 }  /* ksz8795_mib_read_work */
@@ -11473,16 +11490,16 @@ static int ksz_probe(struct sw_priv *ks)
 	sw->PORT_INTR_MASK = (1 << port_count) - 1;
 	sw->PORT_MASK = (1 << mib_port_count) - 1;
 
+	sw->id = sw_device_present;
+
 	sw->HOST_PORT = port_count - 1;
 	sw->HOST_MASK = (1 << sw->HOST_PORT);
+
+	sw->dev_count = 1;
 
 	sw->mib_cnt = TOTAL_SWITCH_COUNTER_NUM;
 	sw->mib_port_cnt = mib_port_count;
 	sw->port_cnt = port_count;
-
-	sw->id = sw_device_present;
-
-	sw->dev_count = 1;
 
 #ifdef DEBUG
 	sw->verbose = 1;
@@ -11503,7 +11520,7 @@ dbg_msg("ports: %x\n", ports);
 
 	ports = sw_setup_zone(sw, ports);
 
-	sw_setup_logical_ports(sw, sku, ports);
+	ksz_setup_logical_ports(sw, sku, ports);
 
 	sw->PORT_MASK |= sw->HOST_MASK;
 dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);

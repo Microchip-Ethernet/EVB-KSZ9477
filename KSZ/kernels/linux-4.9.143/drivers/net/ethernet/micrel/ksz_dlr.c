@@ -1,7 +1,7 @@
 /**
  * Microchip DLR code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -1534,10 +1534,15 @@ static void setup_dir(struct ksz_dlr_info *info, int port)
 
 static void dlr_notify_link_lost(struct ksz_dlr_info *dlr)
 {
-	if (dlr->dev_info) {
-		u8 buf[sizeof(struct ksz_resp_msg) +
-			sizeof(struct ksz_dlr_active_node) * 2];
-		struct ksz_resp_msg *msg = (struct ksz_resp_msg *) buf;
+	static u8 lost_buf[sizeof(struct ksz_resp_msg) +
+		sizeof(struct ksz_dlr_active_node) * 2];
+
+	if ((dlr->notifications & DLR_INFO_LINK_LOST)) {
+		struct ksz_resp_msg *msg = (struct ksz_resp_msg *) lost_buf;
+		struct ksz_sw *sw = dlr->sw_dev;
+		struct file_dev_info *dev_info;
+		size_t n = sizeof(struct ksz_resp_msg) +
+			sizeof(struct ksz_dlr_active_node) * 2;
 
 		msg->module = DEV_MOD_DLR;
 		msg->cmd = DEV_INFO_DLR_LINK;
@@ -1552,21 +1557,36 @@ static void dlr_notify_link_lost(struct ksz_dlr_info *dlr)
 			msg->resp.data[0] |= 0x08;
 		memcpy(&msg->resp.data[1], dlr->attrib.last_active,
 			sizeof(struct ksz_dlr_active_node) * 2);
-		sw_setup_msg(dlr->dev_info, msg, sizeof(struct ksz_resp_msg) +
-			sizeof(struct ksz_dlr_active_node) * 2, NULL, NULL);
+		dev_info = sw->dev_list[0];
+		while (dev_info) {
+			if ((dev_info->notifications[DEV_MOD_DLR] &
+			    DLR_INFO_LINK_LOST))
+				file_dev_setup_msg(dev_info, msg, n, NULL,
+						   NULL);
+			dev_info = dev_info->next;
+		}
 	}
 }  /* dlr_notify_link_lost */
 
 static void dlr_notify_cfg_change(struct ksz_dlr_info *dlr, int notify)
 {
-	if (dlr->dev_info) {
+	if ((dlr->notifications & DLR_INFO_CFG_CHANGE)) {
 		struct ksz_resp_msg msg;
+		struct ksz_sw *sw = dlr->sw_dev;
+		struct file_dev_info *dev_info;
+		size_t n = sizeof(msg);
 
 		msg.module = DEV_MOD_DLR;
 		msg.cmd = DEV_INFO_DLR_CFG;
 		msg.resp.data[0] = notify;
-		sw_setup_msg(dlr->dev_info, &msg, sizeof(struct ksz_resp_msg),
-			NULL, NULL);
+		dev_info = sw->dev_list[0];
+		while (dev_info) {
+			if ((dev_info->notifications[DEV_MOD_DLR] &
+			    DLR_INFO_CFG_CHANGE))
+				file_dev_setup_msg(dev_info, &msg, n, NULL,
+						   NULL);
+			dev_info = dev_info->next;
+		}
 	}
 }  /* dlr_notify_cfg_change */
 
@@ -4464,6 +4484,7 @@ static int dlr_dev_req(struct ksz_dlr_info *dlr, char *arg, void *info)
 	struct ksz_resp_msg *msg = (struct ksz_resp_msg *) data;
 	int err = 0;
 	int result = 0;
+	struct ksz_sw *sw = dlr->sw_dev;
 
 	get_user_data(&req_size, &req->size, info);
 	get_user_data(&maincmd, &req->cmd, info);
@@ -4488,7 +4509,6 @@ static int dlr_dev_req(struct ksz_dlr_info *dlr, char *arg, void *info)
 					6, info);
 				if (err)
 					goto dev_ioctl_done;
-				dlr->dev_info = info;
 			} else
 				result = DEV_IOC_INVALID_LEN;
 			break;
@@ -4500,20 +4520,24 @@ static int dlr_dev_req(struct ksz_dlr_info *dlr, char *arg, void *info)
 			/* Not called through char device. */
 			if (!info)
 				break;
+			file_dev_clear_notify(sw->dev_list[0], info,
+					      DEV_MOD_DLR,
+					      &dlr->notifications);
 			msg->module = DEV_MOD_DLR;
 			msg->cmd = DEV_INFO_QUIT;
 			msg->resp.data[0] = 0;
-			sw_setup_msg(info, msg, 8, NULL, NULL);
-			dlr->notifications = 0;
-			dlr->dev_info = NULL;
+			file_dev_setup_msg(info, msg, 8, NULL, NULL);
 			break;
 		case DEV_INFO_NOTIFY:
 			if (len >= 4) {
+				struct file_dev_info *dev_info = info;
 				uint *notify = (uint *) data;
 
 				_chk_ioctl_size(len, 4, 0, &req_size, &result,
 					&req->param, data, info);
-				dlr->notifications = *notify;
+				dev_info->notifications[DEV_MOD_DLR] =
+					*notify;
+				dlr->notifications |= *notify;
 			}
 			break;
 		default:

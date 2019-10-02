@@ -117,16 +117,7 @@ config SPI_KSZ8463
 	select KSZ_SWITCH
 	select HAVE_KSZ8463
 	---help---
-	  Supports the Microchip KSZ8463 switch.
-
-config KSZ8463_EMBEDDED
-	bool "Microchip KSZ8463 switch support in network controller"
-	depends on HAVE_KSZ8863 = n
-	depends on SPI_KSZ8463 = n
-	select KSZ_SWITCH_EMBEDDED
-	select HAVE_KSZ8463
-	---help---
-	  Supports the Microchip KSZ8463 switch used within a network controller.
+	  Supports the Microchip KSZ8463 switch in SPI mode.
 
 config HAVE_KSZ8863
 	bool
@@ -137,26 +128,18 @@ config I2C_KSZ8863
 	select KSZ_SWITCH
 	select HAVE_KSZ8863
 	---help---
-	  Supports the Microchip KSZ8863 switch in SPI mode.
+	  Supports the Microchip KSZ8863 switch in I2C mode.
 
 config SPI_KSZ8863
 	tristate "SPI driver for Microchip KSZ8863 switch"
 	select KSZ_SWITCH
 	select HAVE_KSZ8863
 	---help---
-	  Supports the Microchip KSZ8863 switch in I2C mode.
-
-config KSZ8863_EMBEDDED
-	bool "Microchip KSZ8863 switch support in network controller"
-	depends on SPI_KSZ8863 = n
-	select KSZ_SWITCH_EMBEDDED
-	select HAVE_KSZ8863
-	---help---
-	  Supports the Microchip KSZ8863 switch used within a network controller.
+	  Supports the Microchip KSZ8863 switch in SPI mode.
 
 config SMI_KSZ8863
 	bool "SMI driver for Microchip KSZ8863 switch"
-	depends on SPI_KSZ8863 = n && KSZ8863_EMBEDDED = n
+	depends on SPI_KSZ8863 = n && I2C_KSZ8863 = n
 	select KSZ_SWITCH_EMBEDDED
 	select KSZ_SMI
 	select HAVE_KSZ8863
@@ -172,7 +155,7 @@ config SPI_KSZ8795
 	select KSZ_SWITCH
 	select HAVE_KSZ8795
 	---help---
-	  Supports the Microchip KSZ8795 switch.
+	  Supports the Microchip KSZ8795 switch in SPI mode.
 
 config KSZ8795_EMBEDDED
 	bool "Microchip KSZ8795 switch support in network controller"
@@ -191,19 +174,11 @@ config SPI_KSZ8895
 	select KSZ_SWITCH
 	select HAVE_KSZ8895
 	---help---
-	  Supports the Microchip KSZ8895 switch.
-
-config KSZ8895_EMBEDDED
-	bool "Microchip KSZ8895 switch support in network controller"
-	depends on SPI_KSZ8895 = n
-	select KSZ_SWITCH_EMBEDDED
-	select HAVE_KSZ8895
-	---help---
-	  Supports the Microchip KSZ8895 switch used within a network controller.
+	  Supports the Microchip KSZ8895 switch in SPI mode.
 
 config SMI_KSZ8895
 	bool "SMI driver for Microchip KSZ8895 switch"
-	depends on SPI_KSZ8895 = n && KSZ8895_EMBEDDED = n
+	depends on SPI_KSZ8895 = n
 	select KSZ_SWITCH_EMBEDDED
 	select KSZ_SMI
 	select HAVE_KSZ8895
@@ -219,31 +194,23 @@ config I2C_KSZ9897
 	select KSZ_SWITCH
 	select HAVE_KSZ9897
 	---help---
-	  Supports the Microchip KSZ9897 switch.
+	  Supports the Microchip KSZ9897 switch in I2C mode.
 
 config SPI_KSZ9897
 	tristate "SPI driver for Microchip KSZ9897 switch"
 	select KSZ_SWITCH
 	select HAVE_KSZ9897
 	---help---
-	  Supports the Microchip KSZ9897 switch.
+	  Supports the Microchip KSZ9897 switch in SPI mode.
 
-config KSZ9897_EMBEDDED
-	bool "Microchip KSZ9897 switch support in network controller"
-	depends on SPI_KSZ9897 = n
-	select KSZ_SWITCH_EMBEDDED
-	select HAVE_KSZ9897
-	---help---
-	  Supports the Microchip KSZ9897 switch used within a network controller.
-
-config KSZ_IBA_ONLY
-	bool "Microchip KSZ9897 switch with IBA support"
-	depends on SPI_KSZ9897 = n
+config IBA_KSZ9897
+	bool "IBA driver for Microchip KSZ9897 switch"
+	depends on I2C_KSZ9897 = n && SPI_KSZ9897 = n
 	select KSZ_SWITCH_EMBEDDED
 	select KSZ_IBA
 	select HAVE_KSZ9897
 	---help---
-	  Supports the Microchip KSZ9897 switch used within a network controller using IBA.
+	  Supports the Microchip KSZ9897 switch in IBA mode.
 
 config KSZ_IBA
 	bool "IBA support"
@@ -251,6 +218,13 @@ config KSZ_IBA
 	default y
 	help
 	  Enable IBA support.
+
+config KSZ_AVB
+	bool "AVB support"
+	depends on HAVE_KSZ9897
+	default y
+	help
+	  Enable AVB support.
 
 config KSZ_MRP
 	bool "MRP support"
@@ -261,7 +235,7 @@ config KSZ_MRP
 
 config KSZ_MSRP
 	bool "MSRP support"
-	depends on (HAVE_KSZ9897) && KSZ_MRP
+	depends on KSZ_MRP && KSZ_AVB
 	default y
 	help
 	  Enable MSRP support.

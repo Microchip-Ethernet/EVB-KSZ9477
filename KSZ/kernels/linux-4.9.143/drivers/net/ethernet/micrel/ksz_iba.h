@@ -1,7 +1,7 @@
 /**
  * Microchip IBA header
  *
- * Copyright (c) 2015 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -92,6 +92,36 @@ struct iba_frame {
 	struct iba_cmd cmd;
 };
 
+struct ksz_iba_info;
+
+struct iba_ops {
+	u32 (*get_val)(u32 size, u32 val);
+	void *(*cmd_data)(struct ksz_iba_info *info, u32 cmd, u32 size,
+		u32 addr);
+	u32 *(*prepare_data)(u32 reg, u32 *data);
+	void (*assert)(const char *name, int i, size_t func_size, u32 *buf,
+		u32 *data, size_t buf_size);
+
+	void *(*r_pre)(struct ksz_iba_info *info, void *in, void *obj);
+	int (*r_post)(struct ksz_iba_info *info, void *out, void *obj);
+	void *(*w_pre)(struct ksz_iba_info *info, void *in, void *obj);
+	void (*get_pre)(u32 *data, int cnt, char *buf);
+	int (*get_post_be)(struct ksz_iba_info *info, void *out, void *obj);
+	int (*get_post_le)(struct ksz_iba_info *info, void *out, void *obj);
+
+	int (*req)(struct ksz_iba_info *info, void *in, void *out, void *obj,
+		void *(*prepare)(struct ksz_iba_info *info, void *in, void *obj),
+		int (*post)(struct ksz_iba_info *info, void *out, void *obj));
+	int (*reqs)(struct ksz_iba_info *info, void **in, void *out, void *obj,
+		void **func,
+		int (*post)(struct ksz_iba_info *info, void *out, void *obj));
+
+	int (*burst)(struct ksz_iba_info *info, u32 addr, size_t cnt,
+		char *buf, int write,
+		void (*prepare)(u32 *data, int cnt, char *buf),
+		int (*post)(struct ksz_iba_info *info, void *out, void *obj));
+};
+
 #define IBA_LEN_MAX		288
 
 struct ksz_iba_info {
@@ -107,19 +137,40 @@ struct ksz_iba_info {
 	struct iba_cmd *regs;
 	u8 seqid;
 	u8 respid;
-	struct completion done;
-	wait_queue_head_t queue;
 	unsigned long delay_ticks;
-	struct net_device *dev;
 	struct mutex lock;
 	int cnt;
 	u32 cfg;
+
+	/* OS dependent variables. */
+	void *dev;
+	struct completion done;
+	wait_queue_head_t queue;
+	bool ready;
 
 	/* Used for putting in commands. */
 	u32 *data;
 	void *fptr;
 	int index;
 	int len;
+
+	const struct iba_ops *ops;
 };
+
+/* Macros to use on common calls. */
+#define iba_assert(iba, name, i, size, buf, data, buf_size)		\
+	iba->ops->assert(name, i, size, buf, data, buf_size)
+
+#define iba_prepare(iba, reg, data)					\
+	iba->ops->prepare_data(reg, data)
+
+#define iba_cmd(iba, cmd, size, addr)					\
+	iba->fptr = iba->ops->cmd_data(iba, cmd, size, addr)
+
+#define iba_cmd_set(iba, cmd, size, addr, d)				\
+{									\
+	iba->data[0] = (d);						\
+	iba->fptr = iba->ops->cmd_data(iba, cmd, size, addr);		\
+}
 
 #endif

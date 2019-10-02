@@ -95,7 +95,7 @@
 #define APB_TIMEOUT_INT			(1 << 29)
 
 #define SWITCH_INT_MASK			\
-	(TRIG_TS_INT | APB_TIMEOUT_INT)
+	(LUE_INT | TRIG_TS_INT | APB_TIMEOUT_INT)
 
 #define REG_SW_PORT_INT_STATUS__4	0x0018
 #define REG_SW_PORT_INT_MASK__4		0x001C
@@ -253,6 +253,8 @@
 #define LEARN_FAIL_INT			(1 << 2)
 #define ALMOST_FULL_INT			(1 << 1)
 #define WRITE_FAIL_INT			(1 << 0)
+
+#define LUE_INT_MASK			(LEARN_FAIL_INT | WRITE_FAIL_INT)
 
 #define REG_SW_LUE_INDEX_0__2		0x0316
 
@@ -1721,5 +1723,8 @@
 
 #define PTP_TRIG_UNIT_M			((1 << MAX_TRIG_UNIT) - 1)
 #define PTP_TS_UNIT_M			((1 << MAX_TIMESTAMP_UNIT) - 1)
+
+#define TAIL_TAG_PTP			BIT(7)
+#define TAIL_TAG_RX_PORTS_M		0x7
 
 #endif

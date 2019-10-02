@@ -1,7 +1,7 @@
 /**
  * Microchip DLR driver header
  *
- * Copyright (c) 2015-2017 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -297,7 +297,6 @@ struct ksz_dlr_info {
 	u8 link_break;
 	unsigned long fault_jiffies;
 
-	struct sw_dev_info *dev_info;
 	uint notifications;
 
 	uint overrides;

@@ -377,6 +377,37 @@ int set_port_power(void *fd,
 		SP_PHY_POWER);
 }
 
+int get_port_link(void *fd,
+	int num, int port, struct ksz_info_speed *speed, size_t len)
+{
+	struct ksz_request_actual req;
+	struct ksz_info_opt opt;
+	size_t data_size;
+	int chk;
+	int rc;
+
+	memset(&opt, 0, sizeof(struct ksz_info_opt));
+	opt.num = (u8) num;
+	opt.port = (u8) port;
+	data_size = sizeof(struct ksz_info_speed);
+	data_size *= num;
+	data_size += 2;
+	set_sw_req(&req, DEV_CMD_INFO, DEV_INFO_SW_LINK, &opt, data_size);
+	rc = sw_ioctl(fd, &req);
+	if (!rc)
+		rc = req.result;
+	if (!rc) {
+		struct ksz_info_opt *out = (struct ksz_info_opt *) &req.param;
+
+		data_size -= 2;
+		if (len >= data_size)
+			memcpy(speed, &out->data.speed, data_size);
+		else
+			rc = DEV_IOC_INVALID_LEN;
+	}
+	return rc;
+}
+
 #include <errno.h>
 
 int print_sw_err(int rc)

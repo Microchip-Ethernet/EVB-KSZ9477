@@ -1,0 +1,16 @@
+--- pinctrl-at91.c	2019-10-10 13:53:44.192362156 -0700
++++ pinctrl-at91.c.new	2019-10-07 19:00:59.838199697 -0700
+@@ -1425,8 +1425,13 @@
+ 	struct at91_gpio_chip *at91_gpio = irq_data_get_irq_chip_data(d);
+ 	void __iomem	*pio = at91_gpio->regbase;
+ 	unsigned	mask = 1 << d->hwirq;
++#if 1
++	unsigned long	isr;
+ 
+ 	if (pio)
++		isr = readl_relaxed(pio + PIO_ISR);
++#endif
++	if (pio)
+ 		writel_relaxed(mask, pio + PIO_IER);
+ }
+ 

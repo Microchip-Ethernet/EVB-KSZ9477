@@ -1184,11 +1184,16 @@ static void macb_update_stats(struct macb *bp)
 	u32 *p = &bp->hw_stats.macb.rx_pause_frames;
 	u32 *end = &bp->hw_stats.macb.tx_pause_frames + 1;
 	int offset = MACB_PFR;
+	int i;
+	u32 val;
 
 	WARN_ON((unsigned long)(end - p - 1) != (MACB_TPF - MACB_PFR) / 4);
 
-	for (; p < end; p++, offset += 4)
-		*p += bp->macb_reg_readl(bp, offset);
+	for (i = 0; p < end; i++, p++, offset += 4) {
+		val = bp->macb_reg_readl(bp, offset);
+		*p += val;
+		bp->ethtool_stats[i] += val;
+	}
 }
 
 static int macb_halt_tx(struct macb *bp)
@@ -2435,11 +2440,7 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct ksz_sw *sw = bp->port.sw;
 	int header = 0;
 	int len = skb->len;
-#endif
 
-	is_lso = (skb_shinfo(skb)->gso_size != 0);
-
-#ifdef HAVE_KSZ_SWITCH
 	if (sw_is_switch(sw))
 		len = sw->net_ops->get_tx_len(sw, skb, port->first_port,
 			&header);
@@ -2457,6 +2458,7 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			nskb->len = skb->len;
 			copy_old_skb(skb, nskb);
 			skb = nskb;
+			skb_set_tail_pointer(skb, skb->len);
 		}
 	}
 	if (bp != bp->hw_priv) {
@@ -2464,6 +2466,17 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		queue = &bp->queues[queue_index];
 	}
 #endif
+
+#ifdef HAVE_KSZ_SWITCH
+	if (sw_is_switch(sw)) {
+		skb = sw->net_ops->final_skb(sw, skb, dev, port);
+		if (!skb) {
+			return NETDEV_TX_OK;
+		}
+	}
+#endif
+
+	is_lso = (skb_shinfo(skb)->gso_size != 0);
 
 	if (is_lso) {
 		is_udp = !!(ip_hdr(skb)->protocol == IPPROTO_UDP);
@@ -2521,17 +2534,6 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			   queue->tx_head, queue->tx_tail);
 		return NETDEV_TX_BUSY;
 	}
-
-#ifdef HAVE_KSZ_SWITCH
-	if (sw_is_switch(sw)) {
-		skb = sw->net_ops->final_skb(sw, skb, dev, port);
-		if (!skb) {
-			spin_unlock_irqrestore(&bp->lock, flags);
-			return NETDEV_TX_OK;
-		}
-		hdrlen = min(skb_headlen(skb), bp->max_tx_length);
-	}
-#endif
 
 	if (macb_clear_csum(skb)) {
 		dev_kfree_skb_any(skb);
@@ -2802,7 +2804,8 @@ printk(" pclk: %lu\n", pclk_hz);
 #if 1
 	/* Need the lowest speed to read KSZ9031 PHY! */
 	pclk_hz = 161000000;
-#if 1
+
+#ifdef CONFIG_KSZ_SMI
 	/* Work for SMI. */
 	pclk_hz = 80000000;
 #endif
@@ -2937,6 +2940,7 @@ static void macb_init_hw(struct macb *bp)
 		config |= MACB_BIT(BIG);	/* Receive oversized frames */
 
 #ifdef HAVE_KSZ_SWITCH
+/* Allow receiving large frames up to 3902 bytes. */
 	do {
 		struct ksz_sw *sw = bp->port.sw;
 
@@ -3882,22 +3886,6 @@ static int gem_get_ts_info(struct net_device *dev,
 	return 0;
 }
 
-#ifdef CONFIG_1588_PTP
-static int netdev_get_ts_info(struct net_device *dev,
-	struct ethtool_ts_info *info)
-{
-	struct macb *hw_priv = netdev_priv(dev);
-	struct ksz_sw *sw = hw_priv->port.sw;
-
-	if (sw_is_switch(sw)) {
-		struct ptp_info *ptp = &sw->ptp_hw;
-
-		return ptp->ops->get_ts_info(ptp, dev, info);
-	}
-	return ethtool_op_get_ts_info(dev, info);
-}  /* netdev_get_ts_info */
-#endif
-
 static struct macb_ptp_info gem_ptp_info = {
 	.ptp_init	 = gem_ptp_init,
 	.ptp_remove	 = gem_ptp_remove,
@@ -3909,25 +3897,32 @@ static struct macb_ptp_info gem_ptp_info = {
 };
 #endif
 
-#ifndef CONFIG_1588_PTP
 static int macb_get_ts_info(struct net_device *netdev,
 			    struct ethtool_ts_info *info)
 {
 	struct macb *bp = netdev_priv(netdev);
 
+#ifdef CONFIG_1588_PTP
+	struct ksz_sw *sw = bp->port.sw;
+
+	if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
+		struct ptp_info *ptp = &sw->ptp_hw;
+
+		return ptp->ops->get_ts_info(ptp, netdev, info);
+	}
+#endif
 	if (bp->ptp_info)
 		return bp->ptp_info->get_ts_info(netdev, info);
 
 	return ethtool_op_get_ts_info(netdev, info);
 }
-#endif
 
 static const struct ethtool_ops macb_ethtool_ops = {
 	.get_regs_len		= macb_get_regs_len,
 	.get_regs		= macb_get_regs,
 	.get_link		= ethtool_op_get_link,
 #ifdef CONFIG_1588_PTP
-	.get_ts_info		= netdev_get_ts_info,
+	.get_ts_info		= macb_get_ts_info,
 #else
 	.get_ts_info		= ethtool_op_get_ts_info,
 #endif
@@ -3946,11 +3941,7 @@ static const struct ethtool_ops gem_ethtool_ops = {
 	.get_regs_len		= macb_get_regs_len,
 	.get_regs		= macb_get_regs,
 	.get_link		= ethtool_op_get_link,
-#ifdef CONFIG_1588_PTP
-	.get_ts_info	 = netdev_get_ts_info,
-#else
 	.get_ts_info		= macb_get_ts_info,
-#endif
 	.get_ethtool_stats	= gem_get_ethtool_stats,
 	.get_strings		= gem_get_ethtool_strings,
 	.get_sset_count		= gem_get_sset_count,
@@ -4125,8 +4116,8 @@ static void macb_configure_caps(struct macb *bp,
 		if ((dcfg & (GEM_BIT(RX_PKT_BUFF) | GEM_BIT(TX_PKT_BUFF))) == 0)
 			bp->caps |= MACB_CAPS_FIFO_MODE;
 
-/* Allow scatter/gather mode to improve TCP transmit performance. */
 #ifdef HAVE_KSZ_SWITCH
+/* Allow scatter/gather mode to improve TCP transmit performance. */
 		bp->caps &= ~MACB_CAPS_SG_DISABLED;
 #endif
 #ifdef CONFIG_MACB_USE_HWSTAMP

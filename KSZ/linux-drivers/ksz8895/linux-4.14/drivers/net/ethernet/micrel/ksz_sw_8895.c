@@ -6624,6 +6624,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			memset(&skb->data[skb->len], 0, 60 - skb->len);
 			skb->len = 60;
 		}
+		skb_set_tail_pointer(skb, skb->len);
 		len = skb->len;
 	}
 	if (!dest) {

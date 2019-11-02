@@ -8787,10 +8787,9 @@ static void sw_change(struct work_struct *work)
 
 static int sw_start_interrupt(struct sw_priv *ks, const char *name)
 {
-	struct phy_device *phydev = ks->phydev;
 	int err = 0;
 
-	INIT_WORK(&phydev->phy_queue, sw_change);
+	INIT_WORK(&ks->irq_work, sw_change);
 
 	err = request_threaded_irq(ks->irq, NULL, sw_interrupt,
 		ks->intr_mode, name, ks);

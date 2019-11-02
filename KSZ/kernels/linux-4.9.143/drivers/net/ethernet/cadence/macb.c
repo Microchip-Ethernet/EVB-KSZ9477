@@ -4581,6 +4581,7 @@ static int macb_sw_init(struct macb *bp)
 		dev->phydev = &bp->dummy_phy;
 		dev->phydev->duplex = 1;
 		dev->phydev->speed = SPEED_1000;
+		dev->phydev->autoneg = 1;
 
 		spin_lock_init(&bp->lock);
 
@@ -4712,9 +4713,6 @@ static void netdev_start_iba(struct work_struct *work)
 
 	sw->net_ops->open_port(sw, dev, &bp->port, &bp->state);
 	bp->opened++;
-
-	if (bp->dev->phydev->mdio.bus)
-		phy_start(bp->dev->phydev);
 
 	/* Signal IBA initialization is complete. */
 	sw->info->iba.use_iba = 3;

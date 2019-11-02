@@ -212,6 +212,13 @@ config IBA_KSZ9897
 	---help---
 	  Supports the Microchip KSZ9897 switch in IBA mode.
 
+config KSZ_NO_MDIO_BUS
+	bool "No MDIO bus"
+	depends on IBA_KSZ9897
+	default y
+	---help---
+	  Do not create MDIO bus under IBA-only mode.
+
 config KSZ_IBA
 	bool "IBA support"
 	depends on HAVE_KSZ9897

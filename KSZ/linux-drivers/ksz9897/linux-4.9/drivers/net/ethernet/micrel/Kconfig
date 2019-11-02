@@ -26,10 +26,6 @@ config KSZ_SWITCH
 	bool
 	default n
 
-config KSZ_DSA
-	bool
-	default n
-
 config KSZ_SWITCH_EMBEDDED
 	bool
 	default n
@@ -46,36 +42,33 @@ config HAVE_SPI_KSZ9897
 
 config I2C_KSZ9897
 	tristate "I2C driver for Microchip KSZ9897 switch"
-	select KSZ_SWITCH if !NET_DSA_TAG_TAIL
-	select KSZ_DSA if NET_DSA_TAG_TAIL
+	select KSZ_SWITCH
 	select HAVE_KSZ9897
 	---help---
-	  Supports the Microchip KSZ9897 switch.
+	  Supports the Microchip KSZ9897 switch in I2C mode.
 
 config SPI_KSZ9897
 	tristate "SPI driver for Microchip KSZ9897 switch"
-	select KSZ_SWITCH if !NET_DSA_TAG_TAIL
-	select KSZ_DSA if NET_DSA_TAG_TAIL
+	select KSZ_SWITCH
 	select HAVE_SPI_KSZ9897
 	---help---
-	  Supports the Microchip KSZ9897 switch.
+	  Supports the Microchip KSZ9897 switch in SPI mode.
 
-config KSZ9897_EMBEDDED
-	bool "Microchip KSZ9897 switch support in network controller"
-	depends on SPI_KSZ9897 = n && !NET_DSA_TAG_TAIL
-	select KSZ_SWITCH_EMBEDDED
-	select HAVE_SPI_KSZ9897
-	---help---
-	  Supports the Microchip KSZ9897 switch used within a network controller.
-
-config KSZ_IBA_ONLY
-	bool "Microchip KSZ9897 switch with IBA support"
-	depends on SPI_KSZ9897 = n && !NET_DSA_TAG_TAIL
+config IBA_KSZ9897
+	bool "IBA driver for Microchip KSZ9897 switch"
+	depends on I2C_KSZ9897 = n && SPI_KSZ9897 = n
 	select KSZ_SWITCH_EMBEDDED
 	select KSZ_IBA
 	select HAVE_KSZ9897
 	---help---
-	  Supports the Microchip KSZ9897 switch used within a network controller using IBA.
+	  Supports the Microchip KSZ9897 switch in IBA mode.
+
+config KSZ_NO_MDIO_BUS
+	bool "No MDIO bus"
+	depends on IBA_KSZ9897
+	default y
+	---help---
+	  Do not create MDIO bus under IBA-only mode.
 
 config KSZ_IBA
 	bool "IBA support"

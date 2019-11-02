@@ -1,7 +1,7 @@
 /**
  * Microchip MRP driver code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2014-2015 Micrel, Inc.
@@ -17,6 +17,16 @@
  */
 
 
+/* CONFIG_KSZ_AVB enables hardware bandwidth programming.
+   CONFIG_KSZ_MRP enables MMRP and MVRP.
+   CONFIG_KSZ_MSRP enables MSRP.  Needs CONFIG_KSZ_AVB and CONFIG_KSZ_MRP.
+*/
+
+#if !defined(CONFIG_KSZ_AVB) || !defined(CONFIG_KSZ_MRP)
+#undef CONFIG_KSZ_MSRP
+#endif
+
+#ifdef CONFIG_KSZ_MRP
 #if 0
 #define DEBUG_MRP_MEM
 #endif
@@ -30,20 +40,25 @@ static int dbg_mrp_vlan = 1;
 #if 1
 #define DEBUG_MSRP
 #endif
+#endif
 
 #if 1
+#ifdef CONFIG_KSZ_MRP
 static int mrp_10_1_2f_hack;
+static int fqtss_hack;
+static int fqtss_34_2_3_hack;
+#endif
+#ifdef CONFIG_KSZ_MSRP
 static int mrp_10_1_8a_hack;
 static int mrp_10_5_1_hack;
 static int mrp_10_5_1c_hack;
 static int mrp_10_5_1d_hack;
 static int msrp_35_1_14g_hack;
-static int fqtss_hack;
-static int fqtss_34_2_3_hack;
 static int fqtss_34_2_1b_hack;
 static int fqtss_34_2_5b_hack;
 static int fqtss_34_2_9b_hack;
 static int regeneration_hack;
+#endif
 #endif
 
 
@@ -155,6 +170,7 @@ struct maap_pdu {
 #define AVTP_SUBTYPE_MAAP		0xFE
 #define AVTP_SUBTYPE_EF_CONTROL		0xFF
 
+#ifdef CONFIG_KSZ_AVB
 static struct mrp_port_info *mrp_get_port_info(struct mrp_info *mrp, u8 port)
 {
 	return &mrp->port_info[port];
@@ -162,7 +178,7 @@ static struct mrp_port_info *mrp_get_port_info(struct mrp_info *mrp, u8 port)
 
 static void setup_acl_drop(struct mrp_info *mrp, uint port)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
 	struct ksz_acl_table *acl;
 	int i = BCAST_DA_ACL_ENTRY;
@@ -190,7 +206,7 @@ static void setup_acl_drop(struct mrp_info *mrp, uint port)
 
 static void setup_acl_remap(struct mrp_info *mrp, uint port)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
 	struct mrp_port_info *info = mrp_get_port_info(mrp, port);
 	struct ksz_acl_table *acl;
@@ -203,10 +219,13 @@ static void setup_acl_remap(struct mrp_info *mrp, uint port)
 	acl->enable = ACL_ENABLE_2_TYPE;
 	acl->equal = 1;
 	acl->eth_type = 0x22F0;
+
+#ifdef CONFIG_KSZ_MSRP
 	if (regeneration_hack) {
 		acl->eth_type = 0;
 		acl->equal = 0;
 	}
+#endif
 
 	acl->first_rule = i;
 	acl->ruleset = (1 << i);
@@ -222,9 +241,10 @@ static void setup_acl_remap(struct mrp_info *mrp, uint port)
 	mutex_unlock(&sw->acllock);
 }  /* setup_acl_remap */
 
-static void enable_acl_remap(struct mrp_info *mrp, uint port, bool remap)
+static void enable_acl_remap(struct mrp_info *mrp, uint port, bool remap,
+			     bool drop)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
 	struct ksz_acl_table *acl;
 	int i = AVB_BOUNDARY_ACL_ENTRY;
@@ -232,7 +252,7 @@ static void enable_acl_remap(struct mrp_info *mrp, uint port, bool remap)
 	mutex_lock(&sw->acllock);
 
 	acl = &cfg->acl_info[i];
-dbg_msg(" remap: %d=%d %d:%d\n", port, remap, cfg->avb_a, cfg->avb_b);
+dbg_msg(" remap: %d=%d-%d %d:%d"NL, port, remap, drop, cfg->avb_a, cfg->avb_b);
 	if (remap)
 		acl->ruleset = (1 << i);
 	else
@@ -241,15 +261,15 @@ dbg_msg(" remap: %d=%d %d:%d\n", port, remap, cfg->avb_a, cfg->avb_b);
 
 	i = BCAST_DA_ACL_ENTRY;
 	acl = &cfg->acl_info[i];
-	if (remap)
-		acl->ruleset = 0;
-	else
+	if (drop)
 		acl->ruleset = (1 << i);
+	else
+		acl->ruleset = 0;
 	sw_w_acl_ruleset(sw, port, i, acl);
 
 	mutex_unlock(&sw->acllock);
 	sw->ops->acquire(sw);
-	if (!remap) {
+	if (drop) {
 		if (!(mrp->mcast_ports & (1 << port))) {
 			mrp->mcast_ports |= (1 << port);
 			if (!mrp->mcast_port_cnt)
@@ -267,14 +287,6 @@ dbg_msg(" remap: %d=%d %d:%d\n", port, remap, cfg->avb_a, cfg->avb_b);
 	sw->ops->release(sw);
 }  /* enable_acl_remap */
 
-static int is_host_port(struct mrp_info *mrp, u8 port)
-{
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
-
-	return (port == sw->HOST_PORT);
-}  /* is_host_port */
-
-#ifdef CONFIG_KSZ_MSRP
 #define SW_CREDIT_SHAPING_SCALE	0x10000
 #define SW_CREDIT_SHAPING_S	16
 
@@ -304,7 +316,7 @@ static char *format_num(char *str, u32 num)
 	return str;
 }  /* format_num */
 
-static char *format_per(char *str, u32 per)
+static char *format_per(char *str, u32 per, bool verbose)
 {
 	u64 val;
 	u32 num;
@@ -319,16 +331,17 @@ static char *format_per(char *str, u32 per)
 	num0 = num % 1000;
 	num1 = num / 1000;
 	if (num1)
-		sprintf(str, "%u.%03u%%", num1, num0);
+		sprintf(str, "%u.%03u", num1, num0);
 	else
-		sprintf(str, "0.%03u%%", num0);
+		sprintf(str, "0.%03u", num0);
+	if (verbose)
+		strcpy(str, PER_CHAR);
 	return str;
 }  /* format_per */
 
 static u16 get_credit_increment(u32 speed, u32 bandwidth)
 {
 	u64 val;
-	u32 rem;
 
 	speed *= NETWORK_SPEED_IN_MBIT;
 
@@ -338,7 +351,7 @@ static u16 get_credit_increment(u32 speed, u32 bandwidth)
 	val = bandwidth;
 	val <<= SW_CREDIT_SHAPING_S;
 	val += speed / 2;
-	val = div_u64_rem(val, speed, &rem);
+	val = div_u64_u32(val, speed);
 
 	/* Cannot become zero. */
 	if (!val)
@@ -356,7 +369,6 @@ static u16 get_credit_watermark(u16 size)
 static u32 get_idle_slope(u32 speed, u32 bandwidth)
 {
 	u64 val;
-	u32 rem;
 
 	speed *= NETWORK_SPEED_IN_MBIT;
 
@@ -366,7 +378,7 @@ static u32 get_idle_slope(u32 speed, u32 bandwidth)
 	val = bandwidth;
 	val *= 100;
 	val <<= CREDIT_PERCENTAGE_S;
-	val = div_u64_rem(val, speed, &rem);
+	val = div_u64_u32(val, speed);
 	return (u32) val;
 }  /* get_idle_slope */
 
@@ -397,7 +409,7 @@ static void srp_cfg_credit_shaper(struct mrp_info *mrp, uint port,
 	char idle_str[20];
 	char send_str[20];
 #endif
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	if (!(sw->features & AVB_SUPPORT))
 		return;
@@ -409,9 +421,9 @@ static void srp_cfg_credit_shaper(struct mrp_info *mrp, uint port,
 
 #ifdef DEBUG_MRP_OPER
 	format_num(bw_str, traffic->bandwidth_used);
-	format_per(idle_str, idle);
-	format_per(send_str, send);
-dbg_msg("  %s %d:%d=%u; %s %s %s\n", __func__, port,
+	format_per(idle_str, idle, true);
+	format_per(send_str, send, true);
+dbg_msg("  %s %d:%d=%u; %s %s %s"NL, __func__, port,
 	queue, credit,
 	bw_str, idle_str, send_str);
 #endif
@@ -447,21 +459,20 @@ static void srp_cfg_idle_slope(struct mrp_info *mrp, uint port, uint queue,
 	u16 credit_lo;
 	u16 credit_hi;
 	u32 send;
-	u32 rem;
 	u64 idle_slope;
 #if 0
 	char bw_str[20];
 	char idle_str[20];
 	char send_str[20];
 #endif
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	idle_slope = info->speed;
 	idle_slope *= NETWORK_SPEED_IN_MBIT;
 	idle_slope *= idle;
 	send = 100;
 	send <<= CREDIT_PERCENTAGE_S;
-	idle_slope = div_u64_rem(idle_slope, send, &rem);
+	idle_slope = div_u64_u32(idle_slope, send);
 
 	credit = get_credit_increment(info->speed, idle_slope);
 	info->credit[queue] = credit;
@@ -470,9 +481,9 @@ static void srp_cfg_idle_slope(struct mrp_info *mrp, uint port, uint queue,
 	credit_lo = get_credit_watermark(1500);
 #if 0
 	format_num(bw_str, idle_slope);
-	format_per(idle_str, idle);
-	format_per(send_str, send);
-dbg_msg("  %s %d:%d=%u %u %u; %s %s %s\n", __func__, port,
+	format_per(idle_str, idle, true);
+	format_per(send_str, send, true);
+dbg_msg("  %s %d:%d=%u %u %u; %s %s %s"NL, __func__, port,
 	queue, credit, credit_hi, credit_lo,
 	bw_str, idle_str, send_str);
 #endif
@@ -494,15 +505,43 @@ dbg_msg("  %s %d:%d=%u %u %u; %s %s %s\n", __func__, port,
 	sw->reg->unlock(sw);
 #endif
 }  /* srp_cfg_idle_slope */
+
+static u32 calculate_max_bandwidth(u32 speed, u32 percent)
+{
+	u64 bandwidth;
+
+	bandwidth = speed;
+	bandwidth *= percent;
+	bandwidth *= NETWORK_SPEED_IN_MBIT;
+	bandwidth = div_u64_u32(bandwidth, 100);
+	return (u32) bandwidth;
+}  /* calculate_max_bandwidth */
+
+static int get_traffic_index(int tc)
+{
+	if (SR_CLASS_A == tc)
+		return 1;
+	return 0;
+}
+
+static struct mrp_traffic_info *get_traffic_info(struct mrp_port_info *port,
+	int tc)
+{
+	if (SR_CLASS_A == tc)
+		return &port->traffic[1];
+	else
+		return &port->traffic[0];
+}  /* get_traffic_info */
 #endif
 
+#ifdef CONFIG_KSZ_MRP
 static void mrp_cfg_dest_addr(struct mrp_info *mrp, u8 index, u8 *dest,
 	u32 ports, u16 fid)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 #ifdef DEBUG_MRP_OPER
-dbg_msg("  %s %d=%02x:%02x:%02x:%02x:%02x:%02x %04x %x\n", __func__, index,
+dbg_msg("  %s %d=%02x:%02x:%02x:%02x:%02x:%02x %04x %x"NL, __func__, index,
 dest[0], dest[1], dest[2], dest[3], dest[4],dest[5],
 ports, fid);
 #endif
@@ -513,11 +552,11 @@ ports, fid);
 static void mrp_cfg_vlan(struct mrp_info *mrp, u8 index, u16 vid, u16 fid,
 	u32 ports)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 #ifdef DEBUG_MVRP
 if (dbg_mrp_vlan || vid == 2 || vid > 4090)
-dbg_msg("  %s %d=%x %x %04x\n", __func__, index, vid, fid, ports);
+dbg_msg("  %s %d=%x %x %04x"NL, __func__, index, vid, fid, ports);
 #endif
 	ports &= SRP_PORT_AVAIL | SRP_PORT_READY;
 
@@ -596,27 +635,66 @@ static void mrp_cfg_vlan_work(struct work_struct *work)
 	mrp->vlanq_sched = 0;
 }  /* mrp_cfg_vlan_work */
 
-#ifdef CONFIG_KSZ_MSRP
-static int get_traffic_index(int tc)
+static int cmp_mac(void *first, void *second)
 {
-	if (SR_CLASS_A == tc)
-		return 1;
-	return 0;
-}
+	int cmp;
+	struct mrp_mac_info *a = first;
+	struct mrp_mac_info *b = second;
 
+#if 0
+dbg_msg("%s %02x:%02x:%02x:%02x:%02x:%02x=%x %02x:%02x:%02x:%02x:%02x:%02x=%x"NL, __func__,
+a->addr[0], a->addr[1], a->addr[2], a->addr[3], a->addr[4], a->addr[5], a->fid,
+b->addr[0], b->addr[1], b->addr[2], b->addr[3], b->addr[4], b->addr[5], b->fid);
+#endif
+	cmp = a->fid - b->fid;
+	if (!cmp)
+		cmp = memcmp(a->addr, b->addr, ETH_ALEN);
+	return cmp;
+}  /* cmp_mac */
+
+static void show_mac_info(void *this)
+{
+	struct mrp_mac_info *info = this;
+
+	dbg_msg(
+		"%02x:%02x:%02x:%02x:%02x:%02x %d=%03x r:%04x s:%04x t:%04x"NL,
+		info->addr[0], info->addr[1], info->addr[2],
+		info->addr[3], info->addr[4], info->addr[5],
+		info->index, info->fid,
+		info->mrp_ports, info->srp_ports, info->tx_ports);
+}  /* show_mac_info */
+
+static int cmp_vlan(void *first, void *second)
+{
+	int cmp;
+	struct mrp_vlan_info *a = first;
+	struct mrp_vlan_info *b = second;
+
+	cmp = a->vid - b->vid;
+	if (!cmp)
+		cmp = memcmp(a->addr, b->addr, ETH_ALEN);
+	return cmp;
+}  /* cmp_vlan */
+
+static void show_vlan_info(void *this)
+{
+	struct mrp_vlan_info *info = this;
+
+	if (info->addr[0] != 0xff)
+		dbg_msg(
+			"[%02x:%02x:%02x:%02x:%02x:%02x] ",
+			info->addr[0], info->addr[1], info->addr[2],
+			info->addr[3], info->addr[4], info->addr[5]);
+	dbg_msg(
+		"%d=%03x.%03x r:%04x t:%04x"NL, info->index,
+		info->vid, info->fid, info->ports, info->tx_ports);
+}  /* show_vlan_info */
+
+#ifdef CONFIG_KSZ_MSRP
 static int get_traffic_class(struct mrp_info *mrp, u8 prio)
 {
 	return mrp->tc[prio];
 }  /* get_traffic_class */
-
-static struct mrp_traffic_info *get_traffic_info(struct mrp_port_info *port,
-	int tc)
-{
-	if (SR_CLASS_A == tc)
-		return &port->traffic[1];
-	else
-		return &port->traffic[0];
-}  /* get_traffic_info */
 
 static int frames_per_sec(int traffic_class)
 {
@@ -661,64 +739,7 @@ static u64 calculate_bandwidth(u32 size, u32 interval, u32 frames)
 	bandwidth *= 8;
 	return bandwidth;
 }  /* calculate_bandwidth */
-#endif
 
-static int cmp_mac(void *first, void *second)
-{
-	int cmp;
-	struct mrp_mac_info *a = first;
-	struct mrp_mac_info *b = second;
-
-#if 0
-dbg_msg("%s %02x:%02x:%02x:%02x:%02x:%02x=%x %02x:%02x:%02x:%02x:%02x:%02x=%x\n", __func__,
-a->addr[0], a->addr[1], a->addr[2], a->addr[3], a->addr[4], a->addr[5], a->fid,
-b->addr[0], b->addr[1], b->addr[2], b->addr[3], b->addr[4], b->addr[5], b->fid);
-#endif
-	cmp = a->fid - b->fid;
-	if (!cmp)
-		cmp = memcmp(a->addr, b->addr, ETH_ALEN);
-	return cmp;
-}  /* cmp_mac */
-
-static void show_mac_info(void *this)
-{
-	struct mrp_mac_info *info = this;
-
-	dbg_msg(
-		"%02x:%02x:%02x:%02x:%02x:%02x %d=%03x r:%04x s:%04x t:%04x\n",
-		info->addr[0], info->addr[1], info->addr[2],
-		info->addr[3], info->addr[4], info->addr[5],
-		info->index, info->fid,
-		info->mrp_ports, info->srp_ports, info->tx_ports);
-}  /* show_mac_info */
-
-static int cmp_vlan(void *first, void *second)
-{
-	int cmp;
-	struct mrp_vlan_info *a = first;
-	struct mrp_vlan_info *b = second;
-
-	cmp = a->vid - b->vid;
-	if (!cmp)
-		cmp = memcmp(a->addr, b->addr, ETH_ALEN);
-	return cmp;
-}  /* cmp_vlan */
-
-static void show_vlan_info(void *this)
-{
-	struct mrp_vlan_info *info = this;
-
-	if (info->addr[0] != 0xff)
-		dbg_msg(
-			"[%02x:%02x:%02x:%02x:%02x:%02x] ",
-			info->addr[0], info->addr[1], info->addr[2],
-			info->addr[3], info->addr[4], info->addr[5]);
-	dbg_msg(
-		"%d=%03x.%03x r:%04x t:%04x\n", info->index,
-		info->vid, info->fid, info->ports, info->tx_ports);
-}  /* show_vlan_info */
-
-#ifdef CONFIG_KSZ_MSRP
 static u64 get_stream_age(struct mrp_port_info *info)
 {
 	struct timespec ts;
@@ -775,7 +796,7 @@ static void show_stream_info(void *this)
 	struct srp_stream_info *info = this;
 
 	dbg_msg(
-		"r:%u t:%08llx %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n",
+		"r:%u t:%08llx %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x"NL,
 		info->rank, info->age,
 		info->id[0], info->id[1], info->id[2], info->id[3],
 		info->id[4], info->id[5], info->id[6], info->id[7]);
@@ -859,7 +880,7 @@ dbg_msg(" %s ", __func__);
 
 			show(next->data);
 		} else
-dbg_msg("last one\n");
+dbg_msg("last one"NL);
 #endif
 		c = 1;
 		if (next) {
@@ -907,7 +928,7 @@ dbg_msg(" %s ", __func__);
 
 			show(next->data);
 		} else
-dbg_msg("last one\n");
+dbg_msg("last one"NL);
 #endif
 		c = 1;
 		if (next == this)
@@ -950,13 +971,13 @@ mrp_delete_this_node_done:
 	/* Free the node data. */
 #ifdef DEBUG_MRP_MEM
 if (delete > 1)
-dbg_msg(" %s %p\n", __func__, next->data);
+dbg_msg(" %s %p"NL, __func__, next->data);
 #endif
 	if (delete > 1)
 		kfree(next->data);
 
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p\n", __func__, next);
+dbg_msg(" %s %p"NL, __func__, next);
 #endif
 	/* Free the node. */
 	kfree(next);
@@ -986,6 +1007,7 @@ static void mrp_show_node(struct mrp_node_anchor *list,
 		next = next->next;
 	}
 }  /* mrp_show_node */
+#endif
 
 #ifdef CONFIG_KSZ_MSRP
 static struct SRP_stream *srp_create_stream(u8 *id, u8 *dest, u16 vlan_id,
@@ -995,7 +1017,7 @@ static struct SRP_stream *srp_create_stream(u8 *id, u8 *dest, u16 vlan_id,
 
 	stream = kzalloc(sizeof(struct SRP_stream), GFP_KERNEL);
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p\n", __func__, stream);
+dbg_msg(" %s %p"NL, __func__, stream);
 #endif
 	if (stream) {
 		memcpy(stream->id, id, 8);
@@ -1094,7 +1116,7 @@ static void srp_remove_stream(struct SRP_stream *stream, int free)
 		stream->dest_next->dest_prev = stream->dest_prev;
 	stream->dest_prev->dest_next = stream->dest_next;
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p %d\n", __func__, stream, free);
+dbg_msg(" %s %p %d"NL, __func__, stream, free);
 #endif
 	if (free)
 		kfree(stream);
@@ -1108,7 +1130,7 @@ static struct SRP_reserv *srp_create_reserv(u8 *id, u8 dir, u8 dec,
 
 	reserv = kzalloc(sizeof(struct SRP_reserv), GFP_KERNEL);
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p\n", __func__, reserv);
+dbg_msg(" %s %p"NL, __func__, reserv);
 #endif
 	if (reserv) {
 		memcpy(reserv->id, id, 8);
@@ -1118,6 +1140,7 @@ dbg_msg(" %s %p\n", __func__, reserv);
 		memcpy(reserv->bridge_id, bridge_id, 8);
 		reserv->code = code;
 		reserv->rx_code = code;
+		reserv->ticks = jiffies;
 	}
 	return reserv;
 }  /* srp_create_reserv */
@@ -1172,7 +1195,7 @@ static void srp_remove_reserv(struct SRP_reserv *reserv, int free)
 		reserv->next->prev = reserv->prev;
 	reserv->prev->next = reserv->next;
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p %d\n", __func__, reserv, free);
+dbg_msg(" %s %p %d"NL, __func__, reserv, free);
 #endif
 	if (free)
 		kfree(reserv);
@@ -1190,54 +1213,55 @@ static void chk_reserv(struct mrp_port_info *info, uint port)
 	if (!info->link && port > 2)
 #endif
 		return;
-dbg_msg("%d %d:\n", info->index, port);
-dbg_msg("  registered: %p\n", &info->registered);
+dbg_msg("%d %d:"NL, info->index, port);
+dbg_msg("  registered: %p"NL, &info->registered);
 	reserv = info->registered.next;
 	while (reserv) {
-dbg_msg("%p %02x:%02x:%02x %d %d %02d=%04x\n", reserv,
+dbg_msg("%p %02x:%02x:%02x %d %d %02d=%04x"NL, reserv,
 reserv->id[5], reserv->id[6], reserv->id[7], reserv->direction,
 	reserv->declaration, reserv->code, reserv->code_bits);
 		reserv = reserv->next;
 	}
-dbg_msg("  declared: %p\n", &info->declared);
+dbg_msg("  declared: %p"NL, &info->declared);
 	reserv = info->declared.next;
 	while (reserv) {
-dbg_msg("%p %02x:%02x:%02x %d %d %02d=%04x\n", reserv,
+dbg_msg("%p %02x:%02x:%02x %d %d %02d=%04x"NL, reserv,
 reserv->id[5], reserv->id[6], reserv->id[7], reserv->direction,
 	reserv->declaration, reserv->code, reserv->code_bits);
 		reserv = reserv->next;
 	}
 	for (tc = SR_CLASS_A; tc >= SR_CLASS_B; tc--) {
 		traffic = get_traffic_info(info, tc);
-dbg_msg("  active:\n");
+dbg_msg("  active:"NL);
 		mrp_show_node(&traffic->active, show_stream_info);
 #if 1
-dbg_msg("  passive:\n");
+dbg_msg("  passive:"NL);
 		mrp_show_node(&traffic->passive, show_stream_info);
-dbg_msg("m=%u u=%u l=%u\n",
+dbg_msg("m=%u u=%u l=%u"NL,
 		traffic->bandwidth_max,
 		traffic->bandwidth_used,
 		traffic->bandwidth_left);
 #endif
 	}
-dbg_msg("T:%u\n", info->bandwidth_used);
-dbg_msg("\n");
+dbg_msg("T:%u"NL, info->bandwidth_used);
+dbg_msg(NL);
 }  /* chk_reserv */
 #endif
 
+#ifdef CONFIG_KSZ_MRP
 static struct mrp_node *mrp_alloc_node(size_t data_size)
 {
 	struct mrp_node *node;
 
 	node = kzalloc(sizeof(struct mrp_node), GFP_KERNEL);
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p %u\n", __func__, node, data_size);
+dbg_msg(" %s %p %u"NL, __func__, node, data_size);
 #endif
 	if (!node)
 		return NULL;
 	node->data = kzalloc(data_size, GFP_KERNEL);
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p\n", __func__, node->data);
+dbg_msg(" %s %p"NL, __func__, node->data);
 #endif
 	if (!node->data) {
 		kfree(node);
@@ -1249,7 +1273,7 @@ dbg_msg(" %s %p\n", __func__, node->data);
 static void mrp_free_node(struct mrp_node *node)
 {
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p %p\n", __func__, node->data, node);
+dbg_msg(" %s %p %p"NL, __func__, node->data, node);
 #endif
 	kfree(node->data);
 	kfree(node);
@@ -1341,7 +1365,7 @@ static struct mrp_report *mrp_create_report(struct SRP_reserv *reserv,
 
 	attrib = kzalloc(sizeof(struct mrp_report), GFP_KERNEL);
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p\n", __func__, attrib);
+dbg_msg(" %s %p"NL, __func__, attrib);
 #endif
 	if (attrib) {
 		attrib->attrib = reserv;
@@ -1371,42 +1395,42 @@ static void add_attrib_report(struct mrp_info *mrp, void *ptr, u8 action,
 
 static u8 mrp_alloc_mac(struct mrp_info *mrp)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	return sw->ops->alloc_mac(sw);
 }  /* mrp_alloc_mac */
 
 static void mrp_free_mac(struct mrp_info *mrp, u8 index)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	sw->ops->free_mac(sw, index);
 }  /* mrp_free_mac */
 
 static u8 mrp_alloc_vlan(struct mrp_info *mrp)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	return sw->ops->alloc_vlan(sw);
 }  /* mrp_alloc_vlan */
 
 static void mrp_free_vlan(struct mrp_info *mrp, u8 index)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	sw->ops->free_vlan(sw, index);
 }  /* mrp_free_vlan */
 
 static u16 mrp_alloc_fid(struct mrp_info *mrp, u16 vid)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	return sw->ops->alloc_fid(sw, vid);
 }  /* mrp_alloc_fid */
 
 static void mrp_free_fid(struct mrp_info *mrp, u16 fid)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	sw->ops->free_fid(sw, fid);
 }  /* mrp_free_fid */
@@ -1439,13 +1463,13 @@ static int proc_mrp_lv(struct mrp_info *mrp, struct mrp_node *node, u16 ports,
 {
 	uint n;
 	uint p;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	int result = DEV_IOC_OK;
 
 #ifdef DEBUG_MVRP
 if (dbg_mrp_vlan)
 #endif
-dbg_msg(" %s %x %x\n", __func__, ports, *tx_ports);
+dbg_msg(" %s %x %x"NL, __func__, ports, *tx_ports);
 	if (!ports) {
 
 		/* Ask all ports to withdraw the declaration. */
@@ -1489,7 +1513,7 @@ static int proc_mrp_lv_mac(struct mrp_info *mrp, uint port,
 	uint m = BIT(port);
 	int result = DEV_IOC_OK;
 
-dbg_msg(" %s %d=%02x:%02x:%02x:%02x:%02x:%02x\n", __func__, port,
+dbg_msg(" %s %d=%02x:%02x:%02x:%02x:%02x:%02x"NL, __func__, port,
 	mac->addr[0],
 	mac->addr[1],
 	mac->addr[2],
@@ -1543,10 +1567,10 @@ static int proc_mrp_rx_mac(struct mrp_info *mrp, uint port,
 	uint n;
 	uint q;
 	uint m = BIT(port);
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	int result = DEV_IOC_OK;
 
-dbg_msg(" %s %d=%d %02x:%02x:%02x:%02x:%02x:%02x\n", __func__, port,
+dbg_msg(" %s %d=%d %02x:%02x:%02x:%02x:%02x:%02x"NL, __func__, port,
 	new_decl,
 	mac->addr[0],
 	mac->addr[1],
@@ -1591,7 +1615,7 @@ dbg_msg(" %s %d=%d %02x:%02x:%02x:%02x:%02x:%02x\n", __func__, port,
 		return result;
 
 	if (!new_decl) {
-		struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+		struct ksz_sw *sw = mrp->parent;
 
 		if (sw->ops->get_tcDetected(sw, port))
 			new_decl = true;
@@ -1637,7 +1661,7 @@ static int proc_mrp_lv_vlan(struct mrp_info *mrp, uint port,
 
 #ifdef DEBUG_MVRP
 if (dbg_mrp_vlan || vlan->id == 2 || vlan->id > 4090)
-dbg_msg(" %s %d=%d\n", __func__, port, vlan->id);
+dbg_msg(" %s %d=%d"NL, __func__, port, vlan->id);
 #endif
 	data.vid = vlan->id;
 	memset(data.addr, 0xff, ETH_ALEN);
@@ -1697,12 +1721,12 @@ static int proc_mrp_rx_vlan(struct mrp_info *mrp, uint port,
 	uint n;
 	uint q;
 	uint m = BIT(port);
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	int result = DEV_IOC_OK;
 
 #ifdef DEBUG_MVRP
 if (dbg_mrp_vlan || vlan->id == 2 || vlan->id > 4090)
-dbg_msg(" %s %d=%x:%d\n", __func__, port, new_decl, vlan->id);
+dbg_msg(" %s %d=%x:%d"NL, __func__, port, new_decl, vlan->id);
 #endif
 	node = mrp_get_vlan_info(&mrp->vlan_list, vlan->id, NULL);
 	if (!node)
@@ -1759,7 +1783,7 @@ if (dbg_mrp_vlan)
 	mrp_show_node(&mrp->vlan_list, show_vlan_info);
 	if (mrp->vlan_list.cnt > 4) {
 if (dbg_mrp_vlan)
-dbg_msg(" stop dbg vlan\n");
+dbg_msg(" stop dbg vlan"NL);
 		dbg_mrp_vlan = 0;
 	}
 #endif
@@ -1771,7 +1795,7 @@ dbg_msg(" stop dbg vlan\n");
 	if (mrp->rx_ports) {
 
 if (mrp->rx_ports != sw->rx_ports[0])
-dbg_msg(" rx: %x %x\n", mrp->rx_ports, sw->rx_ports[0]);
+dbg_msg(" rx: %x %x"NL, mrp->rx_ports, sw->rx_ports[0]);
 	}
 #endif
 	if (!(mrp->rx_ports & m))
@@ -1810,6 +1834,7 @@ dbg_msg(" rx: %x %x\n", mrp->rx_ports, sw->rx_ports[0]);
 		result = DEV_IOC_MRP_REPORT;
 	return result;
 }  /* proc_mrp_rx_vlan */
+#endif
 
 #ifdef CONFIG_KSZ_MSRP
 #define RFC_NO_RESOURCES_BIT		BIT(0)
@@ -1860,17 +1885,19 @@ static u8 msrp_failure_code(u32 code_bits)
 		code = RFC_VLAN_TAGGING_DISABLED;
 	return code;
 }  /* msrp_failure_code */
+#endif
 
 static void proc_mrp_attribute(struct mrp_info *mrp, u8 *data);
 
+#ifdef CONFIG_KSZ_AVB
 static void mrp_set_delta(struct mrp_info *mrp, u8 port, u32 A, u32 B)
 {
 	u8 data[40];
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 if (!(mrp->mask & (1 << port)))
-dbg_msg(" !!! %s %d\n", __func__, port);
+dbg_msg(" !!! %s %d"NL, __func__, port);
 	cmd->action = MRP_ACTION_DELTA;
 	cmd->type = MRP_TYPE_PORT;
 	cmd->port = get_log_port(sw, port);
@@ -1884,10 +1911,10 @@ static void mrp_set_speed(struct mrp_info *mrp, u8 port, u32 speed, bool duplex)
 {
 	u8 data[40];
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 if (!(mrp->mask & (1 << port)))
-dbg_msg(" !!! %s %d\n", __func__, port);
+dbg_msg(" !!! %s %d"NL, __func__, port);
 	cmd->action = MRP_ACTION_SPEED;
 	cmd->type = MRP_TYPE_PORT;
 	cmd->port = get_log_port(sw, port);
@@ -1896,15 +1923,17 @@ dbg_msg(" !!! %s %d\n", __func__, port);
 	cmd->data.data[1] = duplex;
 	proc_mrp_attribute(mrp, data);
 }  /* mrp_set_speed */
+#endif
 
+#ifdef CONFIG_KSZ_MSRP
 static void mrp_chk_talker(struct mrp_info *mrp, u8 port)
 {
 	u8 data[40];
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 if (!(mrp->mask & (1 << port)))
-dbg_msg(" !!! %s %d\n", __func__, port);
+dbg_msg(" !!! %s %d"NL, __func__, port);
 	cmd->action = MRP_ACTION_CHK_TALKER;
 	cmd->type = MRP_TYPE_PORT;
 	cmd->port = get_log_port(sw, port);
@@ -1916,28 +1945,16 @@ static void mrp_chk_registered(struct mrp_info *mrp, u8 port)
 {
 	u8 data[40];
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 if (!(mrp->mask & (1 << port)))
-dbg_msg(" !!! %s %d\n", __func__, port);
+dbg_msg(" !!! %s %d"NL, __func__, port);
 	cmd->action = MRP_ACTION_CHK_REG;
 	cmd->type = MRP_TYPE_PORT;
 	cmd->port = get_log_port(sw, port);
 	cmd->new_decl = 0;
 	proc_mrp_attribute(mrp, data);
 }  /* mrp_chk_registered */
-
-static u32 calculate_max_bandwidth(u32 speed, u32 percent)
-{
-	u64 bandwidth;
-	u32 rem;
-
-	bandwidth = speed;
-	bandwidth *= percent;
-	bandwidth *= NETWORK_SPEED_IN_MBIT;
-	bandwidth = div_u64_rem(bandwidth, 100, &rem);
-	return (u32) bandwidth;
-}  /* calculate_max_bandwidth */
 
 static int srp_update_mac(struct mrp_info *mrp, u8 *addr, u16 fid, u16 ports,
 	int up)
@@ -2228,7 +2245,7 @@ static void srp_cfg_reserv(struct mrp_info *mrp, struct mrp_port_info *port)
 	int tc;
 	struct mrp_port_info *info;
 	struct mrp_traffic_info *traffic;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 #if 0
 	void *param[6];
 #endif
@@ -2258,7 +2275,7 @@ static void srp_cfg_reserv(struct mrp_info *mrp, struct mrp_port_info *port)
 			if (max_size && !traffic->max_frame_size)
 				traffic->max_frame_size = max_size;
 			if (max_size != traffic->max_frame_size) {
-dbg_msg("  max size: %u %u\n", max_size, traffic->max_frame_size);
+dbg_msg("  max size: %u %u"NL, max_size, traffic->max_frame_size);
 				/* Make sure credit settings will be updated. */
 				if (traffic->bandwidth_set)
 					traffic->bandwidth_set = 1;
@@ -2350,7 +2367,7 @@ static int mrp_update_listener(struct mrp_info *mrp,
 		l_reserv = srp_find_reserv(&info->declared, stream->id,
 					   SRP_LISTENER);
 	if (!l_reserv) {
-dbg_msg("  ! L decl not found: %d\n", stream->in_port);
+dbg_msg("  ! L decl not found: %d"NL, stream->in_port);
 	}
 	if (!l_reserv)
 		return result;
@@ -2374,7 +2391,7 @@ dbg_msg("  ! L decl not found: %d\n", stream->in_port);
 			else
 				declaration |= (1 << reserv->declaration);
 		} else if (reserv) {
-dbg_msg("  no t_reserv?\n");
+dbg_msg("  no t_reserv?"NL);
 				declaration |= SRP_ASKING_FAILED_SCALE;
 		}
 	}
@@ -2386,7 +2403,7 @@ dbg_msg("  no t_reserv?\n");
 		int free = true;
 
 #ifdef DEBUG_MSRP
-dbg_msg("listener leaving\n");
+dbg_msg("listener leaving"NL);
 #endif
 		info = mrp_get_port_info(mrp, stream->in_port);
 		active = mrp->status.msrpEnabledStatus &&
@@ -2420,7 +2437,7 @@ dbg_msg("listener leaving\n");
 	if (declaration != l_reserv->declaration) {
 		l_reserv->declaration = declaration;
 #ifdef DEBUG_MSRP
-dbg_msg("l dec: %d=%d\n", stream->in_port, declaration);
+dbg_msg("l dec: %d=%d"NL, stream->in_port, declaration);
 #endif
 		info = mrp_get_port_info(mrp, stream->in_port);
 		active = mrp->status.msrpEnabledStatus &&
@@ -2446,7 +2463,7 @@ static int stream_clr_mark(struct mrp_node *prev,
 	int *chk = param[0];
 
 	if (*chk && data->mark)
-dbg_msg("  mark !!\n");
+dbg_msg("  mark !!"NL);
 	data->mark = false;
 	return -EAGAIN;
 }
@@ -2472,7 +2489,7 @@ static int stream_chk_bandwidth(struct mrp_node *prev,
 
 	cmp = cmp_lower_stream(b, data);
 #if 0
-dbg_msg(" cmp %d  %d:%d %llx:%llx %02x:%02x\n", cmp,
+dbg_msg(" cmp %d  %d:%d %llx:%llx %02x:%02x"NL, cmp,
 b->rank, data->rank, b->age, data->age,
 b->id[7], data->id[7]);
 #endif
@@ -2492,7 +2509,7 @@ b->id[7], data->id[7]);
 		}
 		format_num(bw_str1, *avail);
 		format_num(bw_str2, *required);
-dbg_msg("  avail: %s %s\n", bw_str1, bw_str2);
+dbg_msg("  avail: %s %s"NL, bw_str1, bw_str2);
 		if (*avail >= *required) {
 
 			/* in case it is not marked above */
@@ -2517,7 +2534,7 @@ static int stream_decr_bandwidth(struct mrp_node *prev,
 		bandwidth = reserv->stream->bandwidth;
 		reserv->code_bits = RFC_NO_BANDWIDTH_TC_BIT;
 		if (info->bandwidth_used > info->bandwidth_max)
-dbg_msg(" no: %u %u\n", info->bandwidth_used, info->bandwidth_max);
+dbg_msg(" no: %u %u"NL, info->bandwidth_used, info->bandwidth_max);
 		if (info->bandwidth_used > info->bandwidth_max)
 			reserv->code_bits |= RFC_NO_BANDWIDTH_BIT;
 		traffic->bandwidth_used -= bandwidth;
@@ -2566,7 +2583,7 @@ static int stream_stop(struct mrp_node *prev, struct srp_stream_info *data,
 		mrp_set_traffic(mrp, stream, *port, false);
 
 		if (!mrp->no_report && decl != reserv->declaration) {
-dbg_msg("  no band stop: %x\n", reserv->code_bits);
+dbg_msg("  no band stop: %x"NL, reserv->code_bits);
 			add_attrib_report(mrp, reserv, MRP_ACTION_TX_NEW,
 				MRP_TYPE_TALKER, *port);
 		}
@@ -2596,7 +2613,7 @@ static int stream_reset(struct mrp_node *prev,
 	     RFC_PREEMPTED_BIT))
 		return -EAGAIN;
 	if (!reserv->pair)
-printk(" no pair!\n");
+printk(" no pair!"NL);
 	if (!reserv->pair)
 		return -EAGAIN;
 	reserv->pair->code = RFC_NO_ERROR;
@@ -2623,7 +2640,7 @@ static int stream_start(struct mrp_node *prev,
 	     RFC_PREEMPTED_BIT) || reserv->pair->code != RFC_NO_ERROR)
 {
 #if 0
-dbg_msg(" other error: %x %d\n", reserv->code_bits, reserv->pair->code);
+dbg_msg(" other error: %x %d"NL, reserv->code_bits, reserv->pair->code);
 #endif
 		return -EAGAIN;
 }
@@ -2665,7 +2682,7 @@ dbg_msg(" other error: %x %d\n", reserv->code_bits, reserv->pair->code);
 
 		return -ENODEV;
 	} else if (data->mark) {
-dbg_msg(" no bandwidth for this\n");
+dbg_msg(" no bandwidth for this"NL);
 		data->mark = false;
 
 		reserv->declaration = SRP_FAILED;
@@ -2691,7 +2708,7 @@ dbg_msg(" no bandwidth for this\n");
 		reserv->code_bits &= ~RFC_NO_BANDWIDTH_BIT;
 		reserv->code = msrp_failure_code(reserv->code_bits);
 		if (!mrp->no_report) {
-dbg_msg("  no tc\n");
+dbg_msg("  no tc"NL);
 			add_attrib_report(mrp, reserv,
 					  MRP_ACTION_TX,
 					  MRP_TYPE_TALKER, *port);
@@ -2701,7 +2718,7 @@ dbg_msg("  no tc\n");
 		reserv->code_bits |= RFC_NO_BANDWIDTH_BIT;
 		reserv->code = msrp_failure_code(reserv->code_bits);
 		if (!mrp->no_report) {
-dbg_msg("  no bw\n");
+dbg_msg("  no bw"NL);
 			add_attrib_report(mrp, reserv,
 					  MRP_ACTION_TX,
 					  MRP_TYPE_TALKER, *port);
@@ -2724,7 +2741,7 @@ static int stream_drop_other(struct mrp_node *prev,
 	int *avail = param[3];
 	int result;
 
-dbg_msg("%s %p %p\n", __func__, param, mrp);
+dbg_msg("%s %p %p"NL, __func__, param, mrp);
 	if (data->mark) {
 		u32 bandwidth;
 
@@ -2807,7 +2824,7 @@ static bool have_bandwidth(struct mrp_port_info *info,
 	if (!rc)
 		return true;
 
-dbg_msg(" no bandwidth %s %u %u\n", __func__, required_bandwidth, info->bandwidth_left);
+dbg_msg(" no bandwidth %s %u %u"NL, __func__, required_bandwidth, info->bandwidth_left);
 
 	/* No bandwidth at all for the new stream. */
 	return false;
@@ -2840,7 +2857,7 @@ static bool drop_other_reserv(struct mrp_info *mrp, u8 port,
 	param[1] = traffic;
 	param[2] = &port;
 	param[3] = &avail_bandwidth;
-dbg_msg(" stream_drop_other %p %p\n", param, mrp);
+dbg_msg(" stream_drop_other %p %p"NL, param, mrp);
 	rc = stream_oper(&traffic->active, param, stream_drop_other);
 
 	/* Increase bandwidth */
@@ -2858,7 +2875,7 @@ static bool drop_active_reserv(struct mrp_info *mrp, u8 port,
 	void *param[6];
 	bool drop = false;
 
-dbg_msg("%s\n", __func__);
+dbg_msg("%s"NL, __func__);
 	param[0] = reserv;
 	rc = stream_iter(&traffic->active, param, stream_cmp);
 
@@ -3009,7 +3026,7 @@ static u32 chk_avail_tx_bandwidth(struct mrp_info *mrp, u8 port,
 	format_num(tbw_max, traffic->bandwidth_max);
 	format_num(tbw_left, traffic->bandwidth_left);
 #if 0
-dbg_msg("bw:%u  %s  %s  %s  %s\n", port, bw, bw_left, tbw_left, tbw_max);
+dbg_msg("bw:%u  %s  %s  %s  %s"NL, port, bw, bw_left, tbw_left, tbw_max);
 #endif
 
 	if (bandwidth > traffic->bandwidth_left)
@@ -3100,7 +3117,7 @@ static int chk_avail_bandwidth(struct mrp_info *mrp, u8 port,
 		struct mrp_node *passive;
 
 		t_reserv->declaration = SRP_FAILED;
-dbg_msg("no bw: %d\n", t_reserv->code);
+dbg_msg("no bw: %d"NL, t_reserv->code);
 		if (!mrp->no_report)
 			add_attrib_report(mrp, t_reserv, MRP_ACTION_TX_NEW,
 				MRP_TYPE_TALKER, port);
@@ -3164,7 +3181,7 @@ static int update_reserv(struct mrp_info *mrp, u8 port,
 #ifdef DEBUG
 		format_num(bw_used, traffic->bandwidth_used);
 		format_num(bw_remain, traffic->bandwidth_max);
-dbg_msg("used %d: %s %s\n", tc, bw_used, bw_remain);
+dbg_msg("used %d: %s %s"NL, tc, bw_used, bw_remain);
 #endif
 	}
 	chk_passive_reserv(mrp, port, info);
@@ -3172,12 +3189,12 @@ dbg_msg("used %d: %s %s\n", tc, bw_used, bw_remain);
 #ifdef DEBUG
 	for (tc = SR_CLASS_A; tc >= SR_CLASS_B; tc--) {
 		traffic = get_traffic_info(info, tc);
-dbg_msg("  active:\n");
+dbg_msg("  active:"NL);
 		mrp_show_node(&traffic->active, show_stream_info);
-dbg_msg("  passive:\n");
+dbg_msg("  passive:"NL);
 		mrp_show_node(&traffic->passive, show_stream_info);
 		format_num(bw_used, traffic->bandwidth_used);
-dbg_msg("used %d: %s\n", tc, bw_used);
+dbg_msg("used %d: %s"NL, tc, bw_used);
 	}
 #endif
 
@@ -3203,7 +3220,7 @@ static int proc_mrp_tx_listener(struct mrp_info *mrp, u8 port,
 
 	/* Talker is not ready. */
 	if (SRP_FAILED == stream->t_reserv->declaration) {
-dbg_msg("talker not ready\n");
+dbg_msg("talker not ready"NL);
 		declaration = SRP_ASKING_FAILED;
 	} else {
 
@@ -3213,13 +3230,13 @@ dbg_msg("talker not ready\n");
 						   l_reserv->id, SRP_TALKER);
 		if (!t_reserv) {
 /* talker reservation may not be created yet because of link down. */
-dbg_msg("  no t_reserv\n");
+dbg_msg("  no t_reserv"NL);
 			declaration = SRP_ASKING_FAILED;
 		} else {
 			if (SRP_FAILED == t_reserv->declaration)
 				declaration = SRP_ASKING_FAILED;
 #ifdef DEBUG_MSRP_
-dbg_msg(" asked: %d\n", declaration);
+dbg_msg(" asked: %d"NL, declaration);
 #endif
 			if (!t_reserv->streamAge) {
 				t_reserv->streamAge = get_stream_age(info);
@@ -3230,9 +3247,9 @@ dbg_msg(" asked: %d\n", declaration);
 	}
 #ifdef DEBUG_MSRP
 	if (t_reserv)
-dbg_msg("  T:%d L:%d D:%d\n", t_reserv->code, l_reserv->code, declaration);
+dbg_msg("  T:%d L:%d D:%d"NL, t_reserv->code, l_reserv->code, declaration);
 	else
-dbg_msg("  L:%d D:%d\n", l_reserv->code, declaration);
+dbg_msg("  L:%d D:%d"NL, l_reserv->code, declaration);
 #endif
 
 	tc = get_traffic_class(mrp, stream->priority);
@@ -3241,13 +3258,13 @@ dbg_msg("  L:%d D:%d\n", l_reserv->code, declaration);
 	/* Check available bandwidth. */
 	if (declaration != SRP_ASKING_FAILED) {
 #ifdef DEBUG_MSRP_
-dbg_msg("not ask failed: %d\n", l_reserv->code);
+dbg_msg("not ask failed: %d"NL, l_reserv->code);
 #endif
 
 		/* Actual reservation is not made yet. */
 		if (RFC_NO_RESOURCES == l_reserv->code) {
 #ifdef DEBUG_MSRP_
-dbg_msg("not yet\n");
+dbg_msg("not yet"NL);
 #endif
 			declaration = chk_avail_bandwidth(mrp, port, info,
 				t_reserv);
@@ -3265,7 +3282,7 @@ dbg_msg("not yet\n");
 		}
 	} else if (RFC_NO_RESOURCES != l_reserv->code) {
 
-dbg_msg(" no lis: %d\n", l_reserv->code);
+dbg_msg(" no lis: %d"NL, l_reserv->code);
 		/* Listener is no longer ready to receive stream. */
 		if (l_reserv->code == RFC_NO_ERROR &&
 		    drop_active_reserv(mrp, port, info, traffic, t_reserv)) {
@@ -3281,7 +3298,7 @@ dbg_msg(" no lis: %d\n", l_reserv->code);
 
 		l_reserv->code = RFC_NO_BANDWIDTH;
 #ifdef DEBUG_MSRP
-dbg_msg("add pas\n");
+dbg_msg("add pas"NL);
 #endif
 		passive = create_stream_info(mrp, t_reserv);
 		if (passive)
@@ -3324,7 +3341,7 @@ static int mrp_delete_listener(struct mrp_info *mrp, u8 port,
 	}
 	if (drop) {
 #ifdef DEBUG_MSRP
-dbg_msg(" drop active\n");
+dbg_msg(" drop active"NL);
 #endif
 #if 1
 		if (active)
@@ -3337,7 +3354,7 @@ dbg_msg(" drop active\n");
 #endif
 	} else {
 #ifdef DEBUG_MSRP
-dbg_msg(" drop passive\n");
+dbg_msg(" drop passive"NL);
 #endif
 		drop_reserv(mrp, port, info, t_reserv, false);
 	}
@@ -3377,7 +3394,7 @@ static int proc_mrp_lv_listener(struct mrp_info *mrp, u8 port,
 
 	info = mrp_get_port_info(mrp, port);
 #ifdef DEBUG_MSRP
-dbg_msg(" %s p:%d %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x s:%u\n", __func__,
+dbg_msg(" %s p:%d %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x s:%u"NL, __func__,
 port,
 listener->id[0],
 listener->id[1],
@@ -3393,11 +3410,15 @@ listener->substate);
 				   SRP_LISTENER);
 	if (!l_reserv)
 {
-dbg_msg("  ! not found: %p %d\n", info, port);
+dbg_msg("  ! not found: %p %d"NL, info, port);
 chk_reserv(info, port);
 }
 	if (!l_reserv)
 		return result;
+	l_reserv->ticks = jiffies - l_reserv->ticks;
+	if (l_reserv->ticks < 100)
+dbg_msg(" ?! ");
+dbg_msg(" t:%u"NL, l_reserv->ticks * 10 / 1000);
 
 	/* Check if a talker reservation is using bandwidth. */
 	t_reserv = srp_find_reserv(&info->declared, listener->id, SRP_TALKER);
@@ -3418,14 +3439,14 @@ chk_reserv(info, port);
 	}
 	if (drop) {
 #ifdef DEBUG_MSRP
-dbg_msg(" drop active\n");
+dbg_msg(" drop active"NL);
 #endif
 		start_passive_reserv(mrp, port, info);
 		srp_cfg_reserv(mrp, info);
 		chk_talker_decl(mrp, port, info);
 	} else {
 #ifdef DEBUG_MSRP
-dbg_msg(" drop passive\n");
+dbg_msg(" drop passive"NL);
 #endif
 		drop_reserv(mrp, port, info, t_reserv, false);
 	}
@@ -3462,7 +3483,7 @@ static int proc_mrp_rx_listener(struct mrp_info *mrp, u8 port,
 
 	info = mrp_get_port_info(mrp, port);
 #ifdef DEBUG_MSRP
-dbg_msg(" %s p:%d %d %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x s:%u\n", __func__,
+dbg_msg(" %s p:%d %d %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x s:%u"NL, __func__,
 port, new_decl,
 listener->id[0],
 listener->id[1],
@@ -3517,8 +3538,7 @@ listener->substate);
 			return -ENOMEM;
 
 		if (!new_decl) {
-			struct ksz_sw *sw =
-				container_of(mrp, struct ksz_sw, mrp);
+			struct ksz_sw *sw = mrp->parent;
 
 			if (sw->ops->get_tcDetected(sw, port))
 				new_decl = true;
@@ -3531,11 +3551,11 @@ listener->substate);
 	}
 else {
 if (!stream)
-dbg_msg("no talker stream?\n");
+dbg_msg("no talker stream?"NL);
 else if (!stream->t_reserv)
-dbg_msg("no talker reserv?\n");
+dbg_msg("no talker reserv?"NL);
 else
-dbg_msg("wrong port: %d %d\n", port, stream->in_port);
+dbg_msg("wrong port: %d %d"NL, port, stream->in_port);
 }
 	if (mrp->report_head)
 		result = DEV_IOC_MRP_REPORT;
@@ -3551,7 +3571,7 @@ static u32 mrp_chk_as_port(struct mrp_info *mrp, u8 port,
 	int i;
 	u32 code_bits = 0;
 	struct ksz_port_cfg *cfg;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	cfg = get_port_cfg(sw, port);
 	avb_a = cfg->avb_a;
@@ -3582,7 +3602,7 @@ static u32 mrp_chk_as_port(struct mrp_info *mrp, u8 port,
 	else if (tc == SR_CLASS_B)
 		cfg->avb_b = code_bits ? false : true;
 if (port < 3 && (avb_a != cfg->avb_a || avb_b != cfg->avb_b))
-dbg_msg("  avb: %d=%d:%d %x\n", port, cfg->avb_a, cfg->avb_b, code_bits);
+dbg_msg("  avb: %d=%d:%d %x"NL, port, cfg->avb_a, cfg->avb_b, code_bits);
 	return code_bits;
 }  /* mrp_chk_as_port */
 
@@ -3605,7 +3625,7 @@ static void mrp_chk_rx_talker(struct mrp_info *mrp, u8 port,
 	if (memcmp(stream_id->dest, talker->dest, ETH_ALEN) &&
 	    (stream_id->MaxFrameSize != talker->MaxFrameSize ||
 	    stream_id->MaxIntervalFrames != talker->MaxIntervalFrames)) {
-dbg_msg(" used by other: %x\n", code_bits);
+dbg_msg(" used by other: %x"NL, code_bits);
 		code_bits |= RFC_STREAM_ID_BIT;
 		code_bits |= RFC_FIRSTVALUE_CHANGED_BIT;
 	}
@@ -3615,7 +3635,7 @@ dbg_msg(" used by other: %x\n", code_bits);
 	/* Check FirstValue. */
 	if (stream_id->latency != talker->AccumulatedLatency)
 {
-dbg_msg(" L: %x %x\n", stream_id->latency, talker->AccumulatedLatency);
+dbg_msg(" L: %x %x"NL, stream_id->latency, talker->AccumulatedLatency);
 		code_bits |= RFC_LATENCY_CHANGED_BIT;
 }
 #if 1
@@ -3648,7 +3668,7 @@ get_talker_done:
 	new_code = msrp_failure_code(code_bits);
 #ifdef DEBUG_MSRP
 if (port < 3 && new_code)
-dbg_msg(" new_code rx: %04x %d %d\n", code_bits, code, new_code);
+dbg_msg(" new_code rx: %04x %d %d"NL, code_bits, code, new_code);
 #endif
 
 	/* This bridge finds a problem. */
@@ -3680,7 +3700,7 @@ static void mrp_chk_tx_talker(struct mrp_info *mrp, u8 port,
 		int bit;
 		int index;
 		struct ksz_port_cfg *cfg;
-		struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+		struct ksz_sw *sw = mrp->parent;
 
 		cfg = get_port_cfg(sw, port);
 		index = reserv->stream->vlan_id / VID_IN_DATA;
@@ -3697,7 +3717,7 @@ chk_tx_talker_done:
 	new_code = msrp_failure_code(code_bits);
 #ifdef DEBUG_MSRP
 if (new_code && port < 3)
-dbg_msg(" new_code tx: %d=%04x %d %d\n", port, code_bits, code, new_code);
+dbg_msg(" new_code tx: %d=%04x %d %d"NL, port, code_bits, code, new_code);
 #endif
 
 	/* This bridge finds a problem. */
@@ -3742,7 +3762,7 @@ static u32 mrp_max_latency(struct mrp_info *mrp, struct mrp_port_info *info,
 	u32 rem;
 
 if (!portTransmitRate)
-dbg_msg(" !! %s\n", __func__);
+dbg_msg(" !! %s"NL, __func__);
 	if (!portTransmitRate)
 		portTransmitRate = 100;
 	q1 = get_queue_priority(mrp, SR_CLASS_A);
@@ -3750,7 +3770,7 @@ dbg_msg(" !! %s\n", __func__);
 	MaxAllocBand = info->bandwidth[q1].deltaBandwidth +
 		       info->bandwidth[q2].deltaBandwidth;
 if (!MaxAllocBand)
-dbg_msg(" !! %s\n", __func__);
+dbg_msg(" !! %s"NL, __func__);
 	if (!MaxAllocBand)
 		MaxAllocBand = 75;
 	if (!index)
@@ -3764,11 +3784,11 @@ dbg_msg(" !! %s\n", __func__);
 	t_StreamPacket = MaxFrameSize * 8 * t_Mbps;
 	t_MaxPacketSize = MaxPacketSize * 8 * t_Mbps;
 	val = t_AllStreams;
-	val = div_u64_rem(val, portTransmitRate, &rem);
+	val = div_u64_u32(val, portTransmitRate);
 	val -= t_StreamPacket;
 	val -= t_IPG;
 	val *= portTransmitRate;
-	val = div_u64_rem(val, MaxAllocBand, &rem);
+	val = div_u64_u32(val, MaxAllocBand);
 	val += t_StreamPacket;
 	val += t_MaxPacketSize;
 	rem = (u32) val;
@@ -3843,7 +3863,7 @@ static int proc_mrp_tx_talker(struct mrp_info *mrp, u8 port,
 	if (l_reserv) {
 		int rc;
 
-dbg_msg("have listen: %d=%p\n", port, l_reserv);
+dbg_msg("have listen: %d=%p"NL, port, l_reserv);
 		rc = proc_mrp_tx_listener(mrp, port, info, l_reserv, t_reserv,
 			t_reserv->stream);
 	}
@@ -3861,7 +3881,7 @@ static int mrp_delete_talker(struct mrp_info *mrp, u8 port,
 	struct SRP_reserv *t_reserv;
 	uint n;
 	uint q;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	int result = DEV_IOC_OK;
 	struct mrp_node *mac_node;
 #if 1
@@ -3914,7 +3934,7 @@ static int mrp_delete_talker(struct mrp_info *mrp, u8 port,
 						      true);
 				if (dropped) {
 if (l_reserv->code != RFC_NO_ERROR)
-dbg_msg(" not ok? %d\n", l_reserv->code);
+dbg_msg(" not ok? %d"NL, l_reserv->code);
 #if 1
 					if (active_other)
 					start_passive_reserv(mrp, q, info);
@@ -3922,7 +3942,7 @@ dbg_msg(" not ok? %d\n", l_reserv->code);
 				}
 #ifdef DEBUG_MSRP
 else
-dbg_msg(" not dropped\n");
+dbg_msg(" not dropped"NL);
 #endif
 			}
 			if (!dropped)
@@ -3991,7 +4011,7 @@ dbg_msg(" not dropped\n");
 	mac_node = mrp_find_node(&mrp->mac_list, cmp_mac, &mac_data);
 #if 1
 	if (!mac_node) {
-dbg_msg(" not found! %d %02x:%02x\n", fid, mac_data.addr[4], mac_data.addr[5]);
+dbg_msg(" not found! %d %02x:%02x"NL, fid, mac_data.addr[4], mac_data.addr[5]);
 		mrp_show_node(&mrp->mac_list, show_mac_info);
 	}
 #endif
@@ -4042,7 +4062,7 @@ static int proc_mrp_lv_talker(struct mrp_info *mrp, u8 port,
 	int result = DEV_IOC_OK;
 	uint n;
 	uint q;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct mrp_node *mac_node;
 #if 1
 	struct mrp_node *vlan_node;
@@ -4054,7 +4074,7 @@ static int proc_mrp_lv_talker(struct mrp_info *mrp, u8 port,
 
 	info = mrp_get_port_info(mrp, port);
 #ifdef DEBUG_MSRP
-dbg_msg(" %s p:%d %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n", __func__,
+dbg_msg(" %s p:%d %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x"NL, __func__,
 port,
 talker->id[0],
 talker->id[1],
@@ -4064,7 +4084,7 @@ talker->id[4],
 talker->id[5],
 talker->id[6],
 talker->id[7]);
-dbg_msg("  %02x:%02x:%02x:%02x:%02x:%02x %03x %u:%u f:%u i:%u l:%u c:%u\n",
+dbg_msg("  %02x:%02x:%02x:%02x:%02x:%02x %03x %u:%u f:%u i:%u l:%u c:%u"NL,
 talker->dest[0],
 talker->dest[1],
 talker->dest[2],
@@ -4078,6 +4098,10 @@ talker->FailureCode);
 	reserv = srp_find_reserv(&info->registered, talker->id, SRP_TALKER);
 	if (!reserv)
 		return result;
+	reserv->ticks = jiffies - reserv->ticks;
+	if (reserv->ticks < 100)
+dbg_msg(" ?! ");
+dbg_msg(" t:%u"NL, reserv->ticks * 10 / 1000);
 
 	/* No listener propagation if no talker. */
 	l_reserv = srp_find_reserv(&info->declared, talker->id, SRP_LISTENER);
@@ -4121,12 +4145,12 @@ talker->FailureCode);
 						      true);
 				if (dropped) {
 if (l_reserv->code != RFC_NO_ERROR)
-dbg_msg(" not ok? %d\n", l_reserv->code);
+dbg_msg(" not ok? %d"NL, l_reserv->code);
 					start_passive_reserv(mrp, q, info);
 				}
 #ifdef DEBUG_MSRP
 else
-dbg_msg(" not dropped\n");
+dbg_msg(" not dropped"NL);
 #endif
 			}
 			if (!dropped)
@@ -4152,7 +4176,7 @@ dbg_msg(" not dropped\n");
 			sw->port_cnt);
 	}
 if (memcmp(reserv->stream->dest, talker->dest, ETH_ALEN))
-dbg_msg("  not same dest! %02x:%02x %02x:%02x\n",
+dbg_msg("  not same dest! %02x:%02x %02x:%02x"NL,
 reserv->stream->dest[4], reserv->stream->dest[5],
 talker->dest[4], talker->dest[5]);
 #if 1
@@ -4192,7 +4216,7 @@ talker->dest[4], talker->dest[5]);
 	mac_node = mrp_find_node(&mrp->mac_list, cmp_mac, &mac_data);
 #if 1
 	if (!mac_node) {
-dbg_msg(" not found! %d %02x:%02x\n", fid, mac_data.addr[4], mac_data.addr[5]);
+dbg_msg(" not found! %d %02x:%02x"NL, fid, mac_data.addr[4], mac_data.addr[5]);
 		mrp_show_node(&mrp->mac_list, show_mac_info);
 	}
 #endif
@@ -4236,7 +4260,7 @@ static int proc_mrp_rx_talker(struct mrp_info *mrp, u8 port,
 {
 	uint n;
 	uint q;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	int result = DEV_IOC_OK;
 	u8 declaration;
 	struct SRP_reserv *reserv;
@@ -4247,7 +4271,7 @@ static int proc_mrp_rx_talker(struct mrp_info *mrp, u8 port,
 
 	info = mrp_get_port_info(mrp, port);
 #ifdef DEBUG_MSRP
-dbg_msg(" %s p:%d %d %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n", __func__,
+dbg_msg(" %s p:%d %d %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x"NL, __func__,
 port,
 new_decl,
 talker->id[0],
@@ -4258,7 +4282,7 @@ talker->id[4],
 talker->id[5],
 talker->id[6],
 talker->id[7]);
-dbg_msg("  %02x:%02x:%02x:%02x:%02x:%02x %03x %u:%u f:%u i:%u l:%u c:%u\n",
+dbg_msg("  %02x:%02x:%02x:%02x:%02x:%02x %03x %u:%u f:%u i:%u l:%u c:%u"NL,
 talker->dest[0],
 talker->dest[1],
 talker->dest[2],
@@ -4293,7 +4317,7 @@ talker->FailureCode);
 						    frames_per_sec(tc));
 #ifdef DEBUG_MSRP
 		format_num(bw_str1, stream->bandwidth);
-dbg_msg("bw: %s\n", bw_str1);
+dbg_msg("bw: %s"NL, bw_str1);
 #endif
 			srp_insert_stream_by_id(mrp, stream);
 			srp_insert_stream_by_dest(mrp, stream);
@@ -4379,8 +4403,7 @@ dbg_msg("bw: %s\n", bw_str1);
 		if (!ports) {
 			int tc;
 			struct ksz_port_cfg *cfg;
-			struct ksz_sw *sw =
-				container_of(mrp, struct ksz_sw, mrp);
+			struct ksz_sw *sw = mrp->parent;
 
 			tc = get_traffic_class(mrp, stream->priority);
 			cfg = get_port_cfg(sw, port);
@@ -4415,7 +4438,7 @@ dbg_msg("bw: %s\n", bw_str1);
 	mrp_chk_rx_talker(mrp, port, info, talker, reserv);
 
 	if (!new_decl) {
-		struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+		struct ksz_sw *sw = mrp->parent;
 
 		if (sw->ops->get_tcDetected(sw, port))
 			new_decl = true;
@@ -4545,13 +4568,13 @@ static bool mrp_match_tx_reserv(struct mrp_info *mrp, u8 port,
 	if (code != t_reserv->code) {
 		u8 action = MRP_ACTION_TX;
 
-dbg_msg(" co: %d %d\n", code, t_reserv->code);
+dbg_msg(" co: %d %d"NL, code, t_reserv->code);
 		if (t_reserv->streamAge) {
 			if (t_reserv->code == RFC_PORT_IS_NOT_AVB) {
 				int tc = get_traffic_class(mrp,
 					t_reserv->stream->priority);
 
-dbg_msg("drop\n");
+dbg_msg("drop"NL);
 				drop[tc] = true;
 			}
 		}
@@ -4586,7 +4609,7 @@ static void mrp_change_rx_reserv(struct mrp_info *mrp, u8 port,
 	reserv->code = msrp_failure_code(reserv->code_bits);
 	if (code == reserv->code)
 		return;
-dbg_msg(" c: %d=%d %d\n", port, code, reserv->code);
+dbg_msg(" c: %d=%d %d"NL, port, code, reserv->code);
 	for (n = 0; n <= mrp->ports; n++) {
 		if (n == port)
 			continue;
@@ -4639,7 +4662,7 @@ static int proc_mrp_chk_talker(struct mrp_info *mrp, u8 port, int tc)
 	int result = DEV_IOC_OK;
 	bool drop[8];
 	struct ksz_port_cfg *cfg;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	cfg = get_port_cfg(sw, port);
 	avb_a = cfg->avb_a;
@@ -4654,13 +4677,13 @@ static int proc_mrp_chk_talker(struct mrp_info *mrp, u8 port, int tc)
 #if 0
 		if (port < mrp->ports)
 #endif
-			enable_acl_remap(mrp, port, !cfg->avb_b);
+			enable_acl_remap(mrp, port, !cfg->avb_b, cfg->avb_b);
 		mrp_fwd_addr(mrp, port, cfg->avb_b);
 	} else if (!avb_b && avb_a != cfg->avb_a) {
 #if 0
 		if (port < mrp->ports)
 #endif
-			enable_acl_remap(mrp, port, !cfg->avb_a);
+			enable_acl_remap(mrp, port, !cfg->avb_a, cfg->avb_a);
 		mrp_fwd_addr(mrp, port, cfg->avb_a);
 	}
 	reserv = info->registered.next;
@@ -4682,6 +4705,13 @@ static int proc_mrp_chk_talker(struct mrp_info *mrp, u8 port, int tc)
 	return result;
 }  /* proc_mrp_chk_talker */
 
+static int is_host_port(struct mrp_info *mrp, u8 port)
+{
+	struct ksz_sw *sw = mrp->parent;
+
+	return (port == sw->HOST_PORT);
+}  /* is_host_port */
+
 static int proc_mrp_lv_domain(struct mrp_info *mrp, u8 port,
 	struct SRP_domain_class *domain)
 {
@@ -4689,7 +4719,7 @@ static int proc_mrp_lv_domain(struct mrp_info *mrp, u8 port,
 	struct mrp_port_info *info;
 	struct SRP_domain_class *self = NULL;
 
-dbg_msg(" %s %d=%d %d %d\n", __func__, port,
+dbg_msg(" %s %d=%d %d %d"NL, __func__, port,
 	domain->id, domain->priority, domain->vlan_id);
 	if (is_host_port(mrp, port))
 		return result;
@@ -4714,7 +4744,7 @@ static int proc_mrp_rx_domain(struct mrp_info *mrp, u8 port,
 	struct mrp_port_info *info;
 	struct SRP_domain_class *self = NULL;
 
-dbg_msg(" %s %d=%d %d %d\n", __func__, port,
+dbg_msg(" %s %d=%d %d %d"NL, __func__, port,
 	domain->id, domain->priority, domain->vlan_id);
 	if (is_host_port(mrp, port))
 		return result;
@@ -4745,7 +4775,7 @@ static int proc_mrp_chk_registered(struct mrp_info *mrp, u8 port)
 	int i;
 	int result = DEV_IOC_OK;
 
-dbg_msg("%s %d\n", __func__, port);
+dbg_msg("%s %d"NL, __func__, port);
 	for (i = 0; i <= mrp->ports; i++) {
 		if (i == port)
 			continue;
@@ -4753,16 +4783,16 @@ dbg_msg("%s %d\n", __func__, port);
 		reserv = info->registered.next;
 		while (reserv) {
 if (SRP_TALKER == reserv->direction)
-dbg_msg(" t:%d %x\n", info->index, reserv->tx_ports);
+dbg_msg(" t:%d %x"NL, info->index, reserv->tx_ports);
 			if (SRP_TALKER == reserv->direction &&
 			    !(reserv->tx_ports & (1 << port))) {
 				struct SRP_talker talker;
 				struct SRP_reserv *l_reserv;
 				int result;
 
-dbg_msg(" need talker decl: %d\n", i);
+dbg_msg(" need talker decl: %d"NL, i);
 				memcpy(&talker, reserv->stream, 25);
-dbg_msg(" latency: %u %u\n", talker.AccumulatedLatency, reserv->stream->latency);
+dbg_msg(" latency: %u %u"NL, talker.AccumulatedLatency, reserv->stream->latency);
 				memcpy(talker.bridge_id, reserv->bridge_id, 8);
 				talker.FailureCode = reserv->code;
 				result = proc_mrp_tx_talker(mrp, port, &talker,
@@ -4788,8 +4818,9 @@ dbg_msg(" latency: %u %u\n", talker.AccumulatedLatency, reserv->stream->latency)
 }  /* proc_mrp_chk_registered */
 #endif
 
-static int proc_mrp_get_tx(struct mrp_info *mrp, int start,
-	struct mrp_cfg_options *cmd, int *output)
+#ifdef CONFIG_KSZ_MRP
+static int proc_mrp_get_tx(struct mrp_info *mrp, struct mrp_cfg_options *cmd,
+			   int *output)
 {
 	struct mrp_report *attrib;
 
@@ -4797,7 +4828,7 @@ static int proc_mrp_get_tx(struct mrp_info *mrp, int start,
 	struct SRP_reserv *reserv;
 	struct SRP_stream *stream;
 #endif
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	int result = DEV_IOC_MRP_REPORT;
 
 	attrib = mrp->report_head;
@@ -4808,7 +4839,7 @@ static int proc_mrp_get_tx(struct mrp_info *mrp, int start,
 	cmd->action = attrib->action;
 	cmd->type = attrib->type;
 	cmd->port = get_log_port(sw, attrib->port);
-dbg_msg(" %s %d %d\n", __func__, attrib->port, cmd->port);
+dbg_msg(" %s %d %d"NL, __func__, attrib->port, cmd->port);
 	if (MRP_TYPE_MAC == attrib->type) {
 		struct MRP_mac *mac = &cmd->data.mac;
 		struct mrp_node *node = attrib->attrib;
@@ -4870,7 +4901,7 @@ dbg_msg(" %s %d %d\n", __func__, attrib->port, cmd->port);
 			struct mrp_report *next = attrib->next;
 
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" r %s %p\n", __func__, reserv);
+dbg_msg(" r %s %p"NL, __func__, reserv);
 #endif
 			kfree(reserv);
 
@@ -4878,14 +4909,14 @@ dbg_msg(" r %s %p\n", __func__, reserv);
 			if (next && next->port == sw->port_cnt) {
 				reserv = next->attrib;
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" s %s %p\n", __func__, reserv->stream);
-dbg_msg(" r2 %s %p\n", __func__, reserv);
+dbg_msg(" s %s %p"NL, __func__, reserv->stream);
+dbg_msg(" r2 %s %p"NL, __func__, reserv);
 #endif
 				kfree(reserv->stream);
 				kfree(reserv);
 
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" 1 %s %p\n", __func__, attrib);
+dbg_msg(" 1 %s %p"NL, __func__, attrib);
 #endif
 				kfree(attrib);
 				attrib = next;
@@ -4901,21 +4932,20 @@ dbg_msg(" 1 %s %p\n", __func__, attrib);
 		result = DEV_IOC_OK;
 	}
 #ifdef DEBUG_MRP_MEM
-dbg_msg(" %s %p\n", __func__, attrib);
+dbg_msg(" %s %p"NL, __func__, attrib);
 #endif
 	kfree(attrib);
 	return result;
 }  /* proc_mrp_get_tx */
 
-static int proc_mrp_get_attribute(struct mrp_info *mrp, int start, u8 *data,
-	int *output)
+static int proc_mrp_get_attribute(struct mrp_info *mrp, u8 *data, int *output)
 {
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
 	int result = DEV_IOC_OK;
 
 	switch (cmd->type) {
 	case MRP_TYPE_UNKNOWN:
-		result = proc_mrp_get_tx(mrp, start, cmd, output);
+		result = proc_mrp_get_tx(mrp, cmd, output);
 		break;
 	case MRP_TYPE_MAC:
 		break;
@@ -4933,8 +4963,9 @@ static int proc_mrp_get_attribute(struct mrp_info *mrp, int start, u8 *data,
 	}
 	return result;
 }  /* proc_mrp_get_attribute */
+#endif
 
-#ifdef CONFIG_KSZ_MSRP
+#ifdef CONFIG_KSZ_AVB
 static int mrp_set_bandwidth(struct mrp_port_info *info)
 {
 	int q0;
@@ -4979,16 +5010,21 @@ static int mrp_set_bandwidth(struct mrp_port_info *info)
 			traffic->bandwidth_left = 0;
 		if (traffic->bandwidth_other)
 			*traffic->bandwidth_other += traffic->bandwidth_left;
-		if (traffic->bandwidth_used || info->declared.next) {
+		if (traffic->bandwidth_used)
 			check = true;
-		}
+#ifdef CONFIG_KSZ_MSRP
+		if (info->declared.next)
+			check = true;
+#endif
 	}
 if (check)
-dbg_msg("%s %d\n", __func__, check);
+dbg_msg("%s %d"NL, __func__, check);
 	return check;
 }  /* mrp_set_bandwidth */
 
+#ifdef CONFIG_KSZ_MRP
 static void mrp_event(struct mrp_info *mrp, uint p, enum mrp_event event);
+#endif
 
 static int proc_mrp_set_speed(struct mrp_info *mrp, u8 port, u32 speed,
 			      bool duplex)
@@ -5009,25 +5045,31 @@ static int proc_mrp_set_speed(struct mrp_info *mrp, u8 port, u32 speed,
 	if (speed && speed != info->speed) {
 		info->speed = speed;
 		if (mrp_set_bandwidth(info)) {
+#ifdef CONFIG_KSZ_MSRP
 			result = update_reserv(mrp, port, info);
+#endif
 		}
 	}
 	link = info->link;
 	info->link = speed != 0;
 if (port < 4)
-dbg_msg("%s %d=%d:%d %d %d\n", __func__, port, speed, duplex, info->link, link);
+dbg_msg("%s %d=%d:%d %d %d"NL, __func__, port, speed, duplex, info->link, link);
+#ifdef CONFIG_KSZ_MSRP
 	if (link != info->link && info->link && mrp->started) {
 		int rc;
 
 		rc = proc_mrp_chk_registered(mrp, port);
 		if (result == DEV_IOC_OK)
 			result = rc;
+#ifdef CONFIG_KSZ_MRP
 		mrp_event(mrp, port, MRP_EVENT_REDECLARE);
+#endif
 	}
 #if 0
 	if (link != info->link && !info->link && mrp->started) {
 		mrp_event(mrp, port, MRP_EVENT_FLUSH);
 	}
+#endif
 #endif
 	return result;
 }  /* proc_mrp_set_speed */
@@ -5039,7 +5081,7 @@ static int proc_mrp_set_delta(struct mrp_info *mrp, u8 port, u32 A, u32 B)
 	int q2;
 	int result = DEV_IOC_OK;
 
-dbg_msg("%s %d=%d %d\n", __func__, port, A, B);
+dbg_msg("%s %d=%d %d"NL, __func__, port, A, B);
 	if (A + B > 95)
 		return DEV_IOC_INVALID_CMD;
 	info = mrp_get_port_info(mrp, port);
@@ -5058,14 +5100,17 @@ dbg_msg("%s %d=%d %d\n", __func__, port, A, B);
 		format_num(bw_str3, info->traffic[1].bandwidth_used);
 		format_num(bw_str4, info->traffic[0].bandwidth_max);
 		format_num(bw_str5, info->traffic[0].bandwidth_used);
-dbg_msg("bw used: %d %s; %s %s; %s %s\n", port,
+dbg_msg("bw used: %d %s; %s %s; %s %s"NL, port,
 bw_str1, bw_str2, bw_str3, bw_str4, bw_str5);
+#ifdef CONFIG_KSZ_MSRP
 		result = update_reserv(mrp, port, info);
+#endif
 	}
 	return result;
 }  /* proc_mrp_set_delta */
 #endif
 
+#ifdef CONFIG_KSZ_MRP
 static int proc_mrp_xmit(struct mrp_info *mrp, uint p, struct sk_buff *skb);
 
 #include "mrp.c"
@@ -5288,18 +5333,22 @@ static int proc_leave_domain(struct mrp_info *mrp, uint port,
 	return msrp_req_leave_domain(app, &attr);
 }  /* proc_leave_domain */
 #endif
+#endif
 
-static int proc_mrp_set_attribute(struct mrp_info *mrp, int start, u8 *data)
+static int proc_mrp_set_attribute(struct mrp_info *mrp, u8 *data)
 {
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	int result = DEV_IOC_OK;
+#ifdef CONFIG_KSZ_MRP
 	int tx_leave = false;
+#endif
 	uint n = cmd->port;
 	uint p;
 
 	p = get_phy_port(sw, n);
 	switch (cmd->type) {
+#ifdef CONFIG_KSZ_MRP
 	case MRP_TYPE_MAC:
 		if (MRP_ACTION_RX == cmd->action)
 			result = proc_mrp_rx_mac(mrp, p, &cmd->data.mac,
@@ -5442,9 +5491,10 @@ static int proc_mrp_set_attribute(struct mrp_info *mrp, int start, u8 *data)
 			proc_mrp_req_lv(mrp, p, &srp_mrp_app);
 		break;
 #endif
+#endif
 	case MRP_TYPE_PORT:
 
-#ifdef CONFIG_KSZ_MSRP
+#ifdef CONFIG_KSZ_AVB
 		if (MRP_ACTION_SPEED == cmd->action) {
 			int speed = cmd->data.data[0];
 			bool duplex = cmd->data.data[1];
@@ -5455,7 +5505,10 @@ static int proc_mrp_set_attribute(struct mrp_info *mrp, int start, u8 *data)
 			u32 b = cmd->data.data[1];
 
 			result = proc_mrp_set_delta(mrp, p, a, b);
-		} else if (MRP_ACTION_CHK_TALKER == cmd->action) {
+		}
+#endif
+#ifdef CONFIG_KSZ_MSRP
+		if (MRP_ACTION_CHK_TALKER == cmd->action) {
 			result = proc_mrp_chk_talker(mrp, p, 0);
 		} else if (MRP_ACTION_CHK_REG == cmd->action) {
 			result = proc_mrp_chk_registered(mrp, p);
@@ -5466,11 +5519,12 @@ static int proc_mrp_set_attribute(struct mrp_info *mrp, int start, u8 *data)
 	return result;
 }  /* proc_mrp_set_attribute */
 
+#ifdef CONFIG_KSZ_MSRP
 static void mrp_cfg_mcast_addr(struct mrp_info *mrp, u16 fid, u8 *dest,
 			       u16 ports)
 {
 	struct mrp_node *mac_node;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	sw->ops->cfg_mac(sw, 1, dest, ports, true, fid != 0, fid);
 	mac_node = mrp_get_mac_info(&mrp->mac_list, dest, fid);
@@ -5529,7 +5583,9 @@ static int mrp_req_cfg_mac(struct mrp_info *mrp, u8 *addr, u16 fid, u16 ports)
 	}
 	return 0;
 }  /* mrp_req_cfg_mac */
+#endif
 
+#ifdef CONFIG_KSZ_MRP
 static void mrp_rx_proc(struct work_struct *work)
 {
 	bool last;
@@ -5558,7 +5614,7 @@ static int proc_mrp_xmit(struct mrp_info *mrp, uint p, struct sk_buff *skb)
 	int rc;
 	u16 tx_ports;
 	u32 ports;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	const struct net_device_ops *ops = sw->main_dev->netdev_ops;
 	int result = DEV_IOC_OK;
 
@@ -5571,7 +5627,7 @@ static int proc_mrp_xmit(struct mrp_info *mrp, uint p, struct sk_buff *skb)
 	}
 
 	/* Do not send if network device is not ready. */
-	if (!netif_running(sw->main_dev) || !netif_carrier_ok(sw->main_dev)) {
+	if (!netif_running(sw->main_dev)) {
 		kfree_skb(skb);
 		return 0;
 	}
@@ -5579,7 +5635,7 @@ static int proc_mrp_xmit(struct mrp_info *mrp, uint p, struct sk_buff *skb)
 	tx_ports = sw->tx_ports[0] & mrp->tx_ports;
 #if 1
 if (!(tx_ports & (1 << p)) && sw->tx_ports[0] != mrp->tx_ports) {
-dbg_msg("  tx close: %d %x %x\n", p, sw->tx_ports[0], mrp->tx_ports);
+dbg_msg("  tx close: %d %x %x"NL, p, sw->tx_ports[0], mrp->tx_ports);
 }
 #endif
 
@@ -5610,10 +5666,13 @@ dbg_msg("  tx close: %d %x %x\n", p, sw->tx_ports[0], mrp->tx_ports);
 	} while (NETDEV_TX_BUSY == rc);
 	return result;
 }  /* proc_mrp_mrp_xmit */
+#endif
 
 static void proc_mrp_cmd(struct mrp_info *mrp, struct mrp_work *parent)
 {
+#ifdef CONFIG_KSZ_MRP
 	u8 *data = parent->param.data;
+#endif
 	int result = DEV_IOC_OK;
 
 	parent->output = parent->option;
@@ -5632,8 +5691,9 @@ static void proc_mrp_cmd(struct mrp_info *mrp, struct mrp_work *parent)
 	case DEV_CMD_PUT:
 		switch (parent->subcmd) {
 		case DEV_MRP_ATTRIBUTE:
-			result = proc_mrp_set_attribute(mrp, parent->option,
-				data);
+#ifdef CONFIG_KSZ_MRP
+			result = proc_mrp_set_attribute(mrp, data);
+#endif
 			break;
 		default:
 			result = DEV_IOC_INVALID_CMD;
@@ -5643,8 +5703,10 @@ static void proc_mrp_cmd(struct mrp_info *mrp, struct mrp_work *parent)
 	case DEV_CMD_GET:
 		switch (parent->subcmd) {
 		case DEV_MRP_ATTRIBUTE:
-			result = proc_mrp_get_attribute(mrp, parent->option,
-				data, &parent->output);
+#ifdef CONFIG_KSZ_MRP
+			result = proc_mrp_get_attribute(mrp, data,
+							&parent->output);
+#endif
 			break;
 		}
 		break;
@@ -5685,7 +5747,7 @@ static int proc_mrp_hw_access(struct mrp_info *mrp, int cmd, int subcmd,
 	access = &mrp->hw_access;
 	work = &access->works[access->tail];
 	if (work->used) {
-		pr_alert("work full\n");
+		pr_alert("work full"NL);
 		return -EFAULT;
 	}
 	work->skb = skb;
@@ -5752,6 +5814,7 @@ static void init_mrp_work(struct mrp_info *mrp)
 	INIT_WORK(&access->work, proc_mrp_work);
 }  /* init_mrp_work */
 
+#ifdef CONFIG_KSZ_MSRP
 static void mrp_proc_proto(struct mrp_info *mrp, u8 *addr, u16 port)
 {
 #if 0
@@ -5761,8 +5824,8 @@ static void mrp_proc_proto(struct mrp_info *mrp, u8 *addr, u16 port)
 	maap = (struct maap_pdu *)&addr[14];
 	if (maap->subtype == AVTP_SUBTYPE_MAAP) {
 		data = ntohs(maap->len.data);
-dbg_msg(" maap: %u=m:%x v:%d %u %u l:%u\n "
-"%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x %02x:%02x:%02x:%02x:%02x:%02x %u\n",
+dbg_msg(" maap: %u=m:%x v:%d %u %u l:%u"NL
+"%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x %02x:%02x:%02x:%02x:%02x:%02x %u"NL,
 		port,
 		maap->message_type, maap->version, maap->sv,
 		data >> 11, data & 0x7f,
@@ -5779,13 +5842,12 @@ dbg_msg(" maap: %u=m:%x v:%d %u %u l:%u\n "
 		ntohs(maap->req_cnt));
 	} else if (maap->subtype == AVTP_SUBTYPE_ADP) {
 #if 0
-dbg_msg(" adp: %u=\n", port);
+dbg_msg(" adp: %u="NL, port);
 #endif
 	}
 #endif
 }  /* mrp_proc_proto */
 
-#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 static int mrp_chk_mcast(struct mrp_info *mrp, u8 *addr, u16 vid, u16 prio,
 			 u16 proto, uint port)
 {
@@ -5800,7 +5862,7 @@ static int mrp_chk_mcast(struct mrp_info *mrp, u8 *addr, u16 vid, u16 prio,
 	u16 ports;
 	u16 fid = 0;
 	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *) addr;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	int avb_a;
 	int avb_b;
 	int avb_0 = 0;
@@ -5819,7 +5881,7 @@ static int mrp_chk_mcast(struct mrp_info *mrp, u8 *addr, u16 vid, u16 prio,
 dbg_msg("  %02x:%02x:%02x:%02x:%02x:%02x  ",
 	vlan->h_dest[0], vlan->h_dest[1], vlan->h_dest[2],
 	vlan->h_dest[3], vlan->h_dest[4], vlan->h_dest[5]);
-dbg_msg(" maap: %d\n", maap->message_type);
+dbg_msg(" maap: %d"NL, maap->message_type);
 		}
 		if (maap->subtype == AVTP_SUBTYPE_MAAP ||
 		    !memcmp(vlan->h_dest, maap_addr[0], ETH_ALEN))
@@ -5841,7 +5903,7 @@ dbg_msg(" maap: %d\n", maap->message_type);
 	/* XMOS sends this MAAP periodically. */
 	if (vlan->h_vlan_proto != htons(ETH_P_8021Q)) {
 		if (!(0x01 <= addr[15] && addr[15] <= 0x03))
-dbg_msg(" MAAP? %02X:%02X:%02X:%02X:%02X:%02X %02x\n",
+dbg_msg(" MAAP? %02X:%02X:%02X:%02X:%02X:%02X %02x"NL,
 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[15]);
 		if (0x01 <= addr[15] && addr[15] <= 0x03)
 			return 1;
@@ -5869,12 +5931,12 @@ addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[15]);
 		return 2;
 
 #if 1
-	if (!mac->jiffies) {
-dbg_msg(" drop: %d=%d=%02X:%02X:%02X:%02X:%02X:%02X  %02X\n", port, prio,
+	if (!mac->ticks) {
+dbg_msg(" drop: %d=%d=%02X:%02X:%02X:%02X:%02X:%02X  %02X"NL, port, prio,
 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], maap->subtype);
 	}
 #endif
-	mac->jiffies = jiffies + msecs_to_jiffies(10000);
+	mac->ticks = jiffies + msecs_to_jiffies(10000);
 
 	ignore = (ports & SRP_PORT_BLACKLIST) &&
 		!(mac->rx_ports & SRP_PORT_IGNORE);
@@ -5901,7 +5963,7 @@ addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], maap->subtype);
 }  /* mrp_chk_mcast */
 #endif
 
-static int mrp_dev_req(struct mrp_info *mrp, int start, char *arg)
+static int mrp_dev_req(struct mrp_info *mrp, char *arg)
 {
 	struct ksz_request *req = (struct ksz_request *) arg;
 	int len;
@@ -5979,14 +6041,14 @@ static int mrp_dev_req(struct mrp_info *mrp, int start, char *arg)
 					goto dev_ioctl_done;
 				}
 				result = proc_mrp_hw_access(mrp,
-					maincmd, subcmd, start,
+					maincmd, subcmd, 0,
 					data, 6, &output, NULL, true);
 			} else
 				result = DEV_IOC_INVALID_LEN;
 			break;
 		case DEV_INFO_EXIT:
 			result = proc_mrp_hw_access(mrp,
-				maincmd, subcmd, start,
+				maincmd, subcmd, 0,
 				data, 0, &output, NULL, true);
 
 		/* fall through */
@@ -6005,7 +6067,7 @@ static int mrp_dev_req(struct mrp_info *mrp, int start, char *arg)
 					&req_size, &result, &req->param, data))
 				goto dev_ioctl_resp;
 			result = proc_mrp_hw_access(mrp,
-				maincmd, subcmd, start,
+				maincmd, subcmd, 0,
 				data, len, &output, NULL, true);
 			break;
 		default:
@@ -6024,8 +6086,7 @@ static int mrp_dev_req(struct mrp_info *mrp, int start, char *arg)
 #ifdef CONFIG_KSZ_MSRP
 			if (MRP_ACTION_SPEED == cmd->action) {
 				uint port;
-				struct ksz_sw *sw =
-					container_of(mrp, struct ksz_sw, mrp);
+				struct ksz_sw *sw = mrp->parent;
 
 				port = get_phy_port(sw, cmd->port);
 				__put_user(mrp->port_info[port].speed,
@@ -6034,7 +6095,7 @@ static int mrp_dev_req(struct mrp_info *mrp, int start, char *arg)
 			}
 #endif
 			result = proc_mrp_hw_access(mrp,
-				maincmd, subcmd, start,
+				maincmd, subcmd, 0,
 				data, len, &output, NULL, true);
 			if (!access_ok(VERIFY_WRITE, req->param.data,
 					param_size) ||
@@ -6063,6 +6124,7 @@ dev_ioctl_done:
 	return err;
 }  /* mrp_dev_req */
 
+#ifdef CONFIG_KSZ_MRP
 static void mrp_change_attr(struct mrp_applicant *app, void *value, u8 len,
 			    u8 type, enum mrp_event event)
 {
@@ -6083,7 +6145,7 @@ dbg_msg(" attr ");
 		if (action == MRP_TX_ACTION_S_JOIN_IN ||
 		    action == MRP_TX_ACTION_S_JOIN_IN_OPTIONAL)
 {
-dbg_msg(" event\n");
+dbg_msg(" event"NL);
 			if (mrp_attr_event(app, attr, event))
 				mrp_join_timer_arm(app);
 }
@@ -6103,7 +6165,7 @@ static void mrp_update_event(struct mrp_applicant *app,
 
 		if (attr->reg_state != MRP_REGISTRAR_IN)
 			continue;
-dbg_msg(" in %d:%02x%02x %d %d -> %d\n", app->port,
+dbg_msg(" in %d:%02x%02x %d %d -> %d"NL, app->port,
 attr->value[0], attr->value[1], attr->len, attr->type, to->port);
 		mrp_change_attr(to, attr->value, attr->len, attr->type, event);
 	}
@@ -6168,7 +6230,7 @@ static void mrp_setup_vlan(struct mrp_info *mrp, u16 vid,
 	uint n;
 	uint p;
 	uint q;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	if (!mrp->started)
 		return;
@@ -6207,7 +6269,7 @@ static void mrp_setup_vlan(struct mrp_info *mrp, u16 vid,
 		if (!ports) {
 			info->index = mrp_alloc_vlan(mrp);
 			info->fid = vlan->fid;
-dbg_msg(" index: %d %d\n", info->index, info->fid);
+dbg_msg(" index: %d %d"NL, info->index, info->fid);
 		}
 #endif
 		index = vid / VID_IN_DATA;
@@ -6217,7 +6279,7 @@ dbg_msg(" index: %d %d\n", info->index, info->fid);
 		if (cnt > 1)
 			q = sw->port_cnt;
 		mrp_vlan.id = vid;
-dbg_msg(" q %d %x\n", q, info->tx_ports);
+dbg_msg(" q %d %x"NL, q, info->tx_ports);
 		for (n = 0; n <= sw->mib_port_cnt; n++) {
 			p = get_phy_port(sw, n);
 			if (p == q) {
@@ -6252,7 +6314,7 @@ dbg_msg(" q %d %x\n", q, info->tx_ports);
 				mrp_free_fid(mrp, info->fid);
 				mrp_free_vlan(mrp, info->index);
 			}
-dbg_msg(" delete: %x\n", info->ports);
+dbg_msg(" delete: %x"NL, info->ports);
 
 			/* Nobody is using the VLAN. */
 			if (!info->ports)
@@ -6283,7 +6345,7 @@ static int mrp_rcv(struct mrp_info *mrp, struct sk_buff *skb, uint p)
 	int mac_oper;
 	struct mrp_application *appl = NULL;
 	struct ethhdr *eth = (struct ethhdr *) skb->data;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	/* MAC_Operational. */
 	mac_oper = (sw->dev_ports & (1 << p));
@@ -6309,8 +6371,8 @@ static int mrp_rcv(struct mrp_info *mrp, struct sk_buff *skb, uint p)
 		if (!mrp->status.msrpEnabledStatus ||
 		    !mrp->port_info[p].status.msrpPortEnabledStatus)
 			mac_oper = false;
-	}
 #endif
+	}
 	if (appl) {
 		struct mrp_port *port;
 		struct mrp_applicant *app;
@@ -6320,14 +6382,14 @@ static int mrp_rcv(struct mrp_info *mrp, struct sk_buff *skb, uint p)
 
 #ifdef DBG_MRP_
 
-dbg_msg("  R:\n");
+dbg_msg("  R:"NL);
 		for (i = 0; i < skb->len; i++) {
 			dbg_msg("%02x ", skb->data[i]);
 			if ((i % 16) == 15)
-				dbg_msg("\n");
+				dbg_msg(NL);
 		}
 		if ((i % 16))
-			dbg_msg("\n");
+			dbg_msg(NL);
 #endif
 
 		/* Check for MRP message sent by self. */
@@ -6347,7 +6409,7 @@ dbg_msg("  R:\n");
 		port = &mrp->mrp_ports[p];
 		app = rcu_dereference(port->applicants[appl->type]);
 		if (!app) {
-dbg_msg(" no app! %d=%d\n", p, appl->type);
+dbg_msg(" no app! %d=%d"NL, p, appl->type);
 			kfree_skb(skb);
 			return 0;
 		}
@@ -6371,7 +6433,9 @@ done:
 	}
 	return 1;
 }  /* mrp_rcv */
+#endif
 
+#ifdef CONFIG_KSZ_MSRP
 static void mrp_delete_reserv(struct mrp_info *mrp, u8 port, int direction)
 {
 	struct mrp_port_info *info;
@@ -6399,7 +6463,7 @@ static void mrp_reset_reserv(struct mrp_info *mrp, uint first, uint last)
 	struct SRP_reserv *next;
 	uint n;
 	uint p;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	for (n = first; n <= last; n++) {
 		p = get_phy_port(sw, n);
@@ -6433,23 +6497,28 @@ static void mrp_reset_reserv(struct mrp_info *mrp, uint first, uint last)
 		}
 	}
 }  /* mrp_reset_resev */
+#endif
 
 static void proc_mrp_attribute(struct mrp_info *mrp, u8 *data)
 {
 	uint p;
 	u8 in_port;
+#ifdef CONFIG_KSZ_MRP
 	int output;
+#endif
 	int result;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
 
 	mutex_lock(&mrp->lock);
 	in_port = cmd->port;
-	result = proc_mrp_set_attribute(mrp, 0, data);
+	result = proc_mrp_set_attribute(mrp, data);
 	while (DEV_IOC_MRP_REPORT == result) {
 		cmd->action = MRP_ACTION_TX;
 		cmd->type = MRP_TYPE_UNKNOWN;
-		result = proc_mrp_get_attribute(mrp, 0, data, &output);
+#ifdef CONFIG_KSZ_MRP
+		result = proc_mrp_get_attribute(mrp, data, &output);
+#endif
 		if (cmd->action != MRP_ACTION_TX &&
 		    cmd->action != MRP_ACTION_TX_NEW &&
 		    cmd->action != MRP_ACTION_LV)
@@ -6461,6 +6530,7 @@ static void proc_mrp_attribute(struct mrp_info *mrp, u8 *data)
 			cmd->new_decl = true;
 		}
 		p = get_phy_port(sw, cmd->port);
+#ifdef CONFIG_KSZ_MRP
 		if (MRP_TYPE_MAC == cmd->type) {
 			if (MRP_ACTION_TX == cmd->action)
 				proc_mrp_join_mac(mrp, p, &cmd->data.mac,
@@ -6505,16 +6575,18 @@ static void proc_mrp_attribute(struct mrp_info *mrp, u8 *data)
 							   &cmd->data.domain);
 #endif
 		}
+#endif
 	}
 	mutex_unlock(&mrp->lock);
 }  /* proc_mrp_attribute */
 
+#ifdef CONFIG_KSZ_MRP
 static void mmrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 {
 	u8 data[40];
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
 	struct mrp_info *mrp = app->parent;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	cmd->port = get_log_port(sw, app->port);
 	if (MMRP_ATTR_MAC == attr->type) {
@@ -6538,7 +6610,7 @@ static void mmrp_cleanup(struct mrp_applicant *app)
 	uint n;
 	uint p;
 	struct mrp_info *mrp = app->parent;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	for (n = 0; n <= sw->mib_port_cnt; n++) {
 		p = get_phy_port(sw, n);
@@ -6554,7 +6626,7 @@ static void mvrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 	u8 data[40];
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
 	struct mrp_info *mrp = app->parent;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	cmd->port = get_log_port(sw, app->port);
 	if (MVRP_ATTR_VID == attr->type) {
@@ -6580,7 +6652,7 @@ static void mvrp_cleanup(struct mrp_applicant *app)
 	uint n;
 	uint p;
 	struct mrp_info *mrp = app->parent;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	for (n = 0; n <= sw->mib_port_cnt; n++) {
 		p = get_phy_port(sw, n);
@@ -6597,7 +6669,7 @@ static void msrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 	u8 data[40];
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) data;
 	struct mrp_info *mrp = app->parent;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	cmd->port = get_log_port(sw, app->port);
 	switch (attr->type) {
@@ -6659,7 +6731,7 @@ static void msrp_cleanup(struct mrp_applicant *app)
 	uint n;
 	uint p;
 	struct mrp_info *mrp = app->parent;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	for (n = 0; n <= sw->mib_port_cnt; n++) {
 		p = get_phy_port(sw, n);
@@ -6670,6 +6742,7 @@ static void msrp_cleanup(struct mrp_applicant *app)
 	}
 }  /* msrp_cleanup */
 #endif
+#endif
 
 static void setup_mrp(struct mrp_info *mrp, struct net_device *dev)
 {
@@ -6677,7 +6750,9 @@ static void setup_mrp(struct mrp_info *mrp, struct net_device *dev)
 	struct ksz_alu_table *alu;
 	int i;
 	int j;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
+
+#ifdef CONFIG_KSZ_MRP
 
 #ifndef NETIF_F_HW_VLAN_CTAG_FILTER
 	prandom32_seed(&rnd, get_random_int());
@@ -6685,6 +6760,7 @@ static void setup_mrp(struct mrp_info *mrp, struct net_device *dev)
 	memcpy(mrp->cvlan_addr, vlan_mrp_app.group_address, ETH_ALEN);
 	memcpy(mrp->svlan_addr, vlan_mrp_app.group_address, ETH_ALEN);
 	mrp->svlan_addr[5] = 0x0D;
+#endif
 
 	i = sw->info->multi_sys;
 	for (j = 0; j < 3; j++) {
@@ -6707,13 +6783,14 @@ static void setup_mrp(struct mrp_info *mrp, struct net_device *dev)
 	sw->info->multi_sys = i;
 }  /* setup_mrp */
 
+#ifdef CONFIG_KSZ_MRP
 static struct mrp_applicant *mrp_start_port_app(struct mrp_info *mrp,
 	uint p, struct net_device *dev, struct mrp_application *appl)
 {
 	int err;
 	struct mrp_applicant *app;
 	struct mrp_port *port;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct ksz_port_info *info = &sw->port_info[p];
 
 	port = &mrp->mrp_ports[p];
@@ -6759,7 +6836,7 @@ static void mrp_start_mmrp_app(struct mrp_info *mrp)
 	uint n;
 	uint p;
 	int err;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct net_device *dev = sw->main_dev;
 
 	err = dev_mc_add(dev, mac_mrp_app.group_address);
@@ -6776,7 +6853,7 @@ static void mrp_stop_mmrp_app(struct mrp_info *mrp)
 {
 	uint n;
 	uint p;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct net_device *dev = sw->main_dev;
 
 	for (n = 0; n <= mrp->ports; n++) {
@@ -6805,7 +6882,7 @@ static void mrp_start_mvrp_app(struct mrp_info *mrp)
 	uint n;
 	uint p;
 	int err;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct net_device *dev = sw->main_dev;
 
 	err = dev_mc_add(dev, vlan_mrp_app.group_address);
@@ -6823,7 +6900,7 @@ static void mrp_stop_mvrp_app(struct mrp_info *mrp)
 {
 	uint n;
 	uint p;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct net_device *dev = sw->main_dev;
 
 	for (n = 0; n <= mrp->ports; n++) {
@@ -6853,7 +6930,7 @@ static void mrp_start_msrp_app(struct mrp_info *mrp)
 	uint n;
 	uint p;
 	int err;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct net_device *dev = sw->main_dev;
 
 	err = dev_mc_add(dev, srp_mrp_app.group_address);
@@ -6870,7 +6947,7 @@ static void mrp_stop_msrp_app(struct mrp_info *mrp)
 {
 	uint n;
 	uint p;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	struct net_device *dev = sw->main_dev;
 
 	for (n = 0; n <= mrp->ports; n++) {
@@ -6892,7 +6969,7 @@ static void proc_mrp_chk_declared(struct mrp_info *mrp, uint port, int on)
 	struct mrp_node *next;
 	struct mrp_mac_info *mac;
 	struct mrp_vlan_info *vlan;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 	u8 lp = sw_get_net_port(sw, 0, mrp->ports, port);
 
 #if 1
@@ -7051,6 +7128,7 @@ static void mrp_mvrp_decl(struct mrp_info *mrp, uint p, bool on)
 	}
 }  /* mrp_mvrp_decl */
 
+#ifdef CONFIG_KSZ_MSRP
 static void mrp_msrp_decl(struct mrp_info *mrp, uint p, bool on)
 {
 	int result;
@@ -7101,6 +7179,7 @@ proc_mrp_join_domain(mrp, p, &domain, true);
 			proc_mrp_join_domain(mrp, p, &mrp->domain[1], true);
 	}
 }  /* mrp_msrp_decl */
+#endif
 
 static void mmrp_close_port(struct mrp_info *mrp, uint p)
 {
@@ -7120,9 +7199,9 @@ static void mmrp_open_port(struct mrp_info *mrp, uint p)
 		return;
 	app = rcu_dereference(port->applicants[mac_mrp_app.type]);
 if (!app)
-dbg_msg(" %s\n", __func__);
+dbg_msg(" %s"NL, __func__);
 	if (!app) {
-		struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+		struct ksz_sw *sw = mrp->parent;
 
 		mrp_start_mmrp_port_app(mrp, p, sw->main_dev);
 	}
@@ -7147,15 +7226,16 @@ static void mvrp_open_port(struct mrp_info *mrp, uint p)
 		return;
 	app = rcu_dereference(port->applicants[vlan_mrp_app.type]);
 if (!app)
-dbg_msg(" %s\n", __func__);
+dbg_msg(" %s"NL, __func__);
 	if (!app) {
-		struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+		struct ksz_sw *sw = mrp->parent;
 
 		mrp_start_mvrp_port_app(mrp, p, sw->main_dev);
 	}
 	mrp_mvrp_decl(mrp, p, true);
 }  /* mvrp_open_port */
 
+#ifdef CONFIG_KSZ_MSRP
 static void msrp_close_port(struct mrp_info *mrp, uint p)
 {
 	/* MSRP is not enabled. */
@@ -7176,25 +7256,28 @@ static void msrp_open_port(struct mrp_info *mrp, uint p)
 		return;
 	app = rcu_dereference(port->applicants[srp_mrp_app.type]);
 if (!app)
-dbg_msg(" %s\n", __func__);
+dbg_msg(" %s"NL, __func__);
 	if (!app) {
-		struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+		struct ksz_sw *sw = mrp->parent;
 
 		mrp_start_msrp_port_app(mrp, p, sw->main_dev);
 	}
 	mrp_msrp_decl(mrp, p, true);
 }  /* msrp_open_port */
+#endif
 
 static void mrp_close_port(struct mrp_info *mrp, uint p)
 {
 	uint m = BIT(p);
 
-dbg_msg("%s %d=%d\n", __func__, p, mrp->started);
+dbg_msg("%s %d=%d"NL, __func__, p, mrp->started);
 	if (!mrp->started || !(mrp->tx_ports & m))
 		return;
 	if (!(mrp->mask & m))
 		return;
+#ifdef CONFIG_KSZ_MSRP
 	msrp_close_port(mrp, p);
+#endif
 	mvrp_close_port(mrp, p);
 	mmrp_close_port(mrp, p);
 
@@ -7211,23 +7294,26 @@ static void mrp_open_port(struct mrp_info *mrp, uint p)
 {
 	uint m = BIT(p);
 
-dbg_msg("%s %d=%d\n", __func__, p, mrp->started);
+dbg_msg("%s %d=%d"NL, __func__, p, mrp->started);
 	if (!mrp->started || (mrp->tx_ports & m))
 		return;
 	if (!(mrp->mask & m))
 		return;
+#ifdef CONFIG_KSZ_MSRP
 	msrp_open_port(mrp, p);
+#endif
 	mvrp_open_port(mrp, p);
 	mmrp_open_port(mrp, p);
 	mrp->tx_ports |= m;
 	mrp->rx_ports = mrp->tx_ports;
 }  /* mrp_open_port */
 
+#ifdef CONFIG_KSZ_MSRP
 static void msrp_open_ports(struct mrp_info *mrp)
 {
 	uint n;
 	uint p;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	for (n = 0; n <= mrp->ports; n++) {
 		p = get_phy_port(sw, n);
@@ -7236,12 +7322,13 @@ static void msrp_open_ports(struct mrp_info *mrp)
 			msrp_open_port(mrp, p);
 	}
 }  /* msrp_open_ports */
+#endif
 
 static void mrp_open_ports(struct mrp_info *mrp)
 {
 	uint n;
 	uint p;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	for (n = 0; n <= mrp->ports; n++) {
 		p = get_phy_port(sw, n);
@@ -7253,7 +7340,7 @@ static void mrp_open_ports(struct mrp_info *mrp)
 
 static void mrp_from_backup(struct mrp_info *mrp, uint p)
 {
-dbg_msg("%s %d\n", __func__, p);
+dbg_msg("%s %d"NL, __func__, p);
 	mrp->rx_ports |= (1 << p);
 
 	/* mrp_open_port will be called when the port is forwarding. */
@@ -7261,13 +7348,15 @@ dbg_msg("%s %d\n", __func__, p);
 
 static void mrp_to_backup(struct mrp_info *mrp, uint p)
 {
-dbg_msg("%s %d\n", __func__, p);
+dbg_msg("%s %d"NL, __func__, p);
 	mrp_close_port(mrp, p);
 }  /* mrp_to_backup */
 
 static void mrp_from_designated(struct mrp_info *mrp, uint p, bool alt)
 {
-dbg_msg("%s %d=%d\n", __func__, p, alt);
+dbg_msg("%s %d=%d"NL, __func__, p, alt);
+	if (!mrp->started)
+		return;
 	mrp_event(mrp, p, MRP_EVENT_REDECLARE);
 	if (alt) {
 		mrp_close_port(mrp, p);
@@ -7278,10 +7367,12 @@ static void mrp_to_designated(struct mrp_info *mrp, uint p)
 {
 	uint m = BIT(p);
 
-dbg_msg("%s %d\n", __func__, p);
+dbg_msg("%s %d"NL, __func__, p);
+	if (!mrp->started)
+		return;
 	mrp_event(mrp, p, MRP_EVENT_FLUSH);
 	if (!(mrp->rx_ports & m)) {
-dbg_msg("  fwd again\n");
+dbg_msg("  fwd again"NL);
 		mrp->rx_ports |= m;
 
 		/* mrp_open_port will be called when the port is forwarding. */
@@ -7292,7 +7383,9 @@ static void mrp_tc_detected(struct mrp_info *mrp, uint p)
 {
 	uint m = BIT(p);
 
-dbg_msg("%s %d\n", __func__, p);
+dbg_msg("%s %d"NL, __func__, p);
+	if (!mrp->started)
+		return;
 	if (!(mrp->mask & m))
 		return;
 	if (mrp->mmrp_rx_ports & m) {
@@ -7321,23 +7414,61 @@ static void mrp_stop(struct mrp_info *mrp)
 {
 	if (mrp->started)
 		mrp_stop_app(mrp);
+	mrp->started = false;
 }  /* mrp_stop */
+#endif
 
-static void mrp_open(struct mrp_info *mrp)
+#ifdef CONFIG_KSZ_AVB
+static void mrp_open_avb(struct mrp_info *mrp)
+{
+	struct ksz_sw *sw = mrp->parent;
+	struct mrp_traffic_info *traffic;
+	struct mrp_port_info *info;
+	uint n;
+	uint p;
+	u8 tc;
+
+	if (!(sw->features & AVB_SUPPORT))
+		return;
+	for (n = 0; n <= mrp->ports; n++) {
+		p = get_phy_port(sw, n);
+		info = mrp_get_port_info(mrp, p);
+		for (tc = SR_CLASS_A; tc >= SR_CLASS_B; tc--) {
+			traffic = get_traffic_info(info, tc);
+			if (!traffic->bandwidth_used)
+				continue;
+			srp_cfg_credit_shaper(mrp, p, info, traffic);
+			traffic->bandwidth_set = traffic->bandwidth_used;
+		}
+		if (n) {
+			struct ksz_port_cfg *cfg = get_port_cfg(sw, p);
+			bool remap = true;
+			bool drop = false;
+
+			if (!(sw->features & MRP_SUPPORT)) {
+				cfg->avb_a = true;
+				cfg->avb_b = true;
+				remap = false;
+				drop = false;
+			}
+			setup_acl_drop(mrp, p);
+			setup_acl_remap(mrp, p);
+			enable_acl_remap(mrp, p, remap, drop);
+		}
+		for (tc = 0; tc < PRIO_QUEUES; tc++)
+			srp_cfg_idle_slope(mrp, p, tc, info,
+				info->bandwidth[tc].adminIdleSlope);
+	}
+}  /* mrp_open_avb */
+#endif
+
+#ifdef CONFIG_KSZ_MRP
+static void mrp_open_mrp(struct mrp_info *mrp)
 {
 	struct mrp_node *prev;
 	struct mrp_node *next;
 	struct mrp_mac_info *mac;
 	struct mrp_vlan_info *vlan;
-
-#ifdef CONFIG_KSZ_MSRP
-	uint n;
-	uint p;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
-	u8 tc;
-	struct mrp_port_info *info;
-	struct mrp_traffic_info *traffic;
-#endif
 	u16 ports = 0;
 	struct mrp_vlan_info *prev_vlan = NULL;
 
@@ -7372,31 +7503,22 @@ static void mrp_open(struct mrp_info *mrp)
 	}
 	if (ports)
 		mrp_cfg_vlan(mrp, vlan->index, vlan->vid, vlan->fid, ports);
+}  /* mrp_open_mrp */
+#endif
 
-#ifdef CONFIG_KSZ_MSRP
-	if (!(sw->features & AVB_SUPPORT))
-		return;
-	for (n = 0; n <= mrp->ports; n++) {
-		p = get_phy_port(sw, n);
-		info = mrp_get_port_info(mrp, p);
-		for (tc = SR_CLASS_A; tc >= SR_CLASS_B; tc--) {
-			traffic = get_traffic_info(info, tc);
-			if (!traffic->bandwidth_used)
-				continue;
-			srp_cfg_credit_shaper(mrp, p, info, traffic);
-			traffic->bandwidth_set = traffic->bandwidth_used;
-		}
-		if (n) {
-			setup_acl_drop(mrp, p);
-			setup_acl_remap(mrp, p);
-		}
-		for (tc = 0; tc < PRIO_QUEUES; tc++)
-			srp_cfg_idle_slope(mrp, p, tc, info,
-				info->bandwidth[tc].adminIdleSlope);
-	}
+#if defined(CONFIG_KSZ_AVB) || defined(CONFIG_KSZ_MRP)
+static void mrp_open(struct mrp_info *mrp)
+{
+#ifdef CONFIG_KSZ_AVB
+	mrp_open_avb(mrp);
+#endif
+#ifdef CONFIG_KSZ_MRP
+	mrp_open_mrp(mrp);
 #endif
 }  /* mrp_open */
+#endif
 
+#ifdef CONFIG_KSZ_MRP
 static void mrp_clr_blocked_addr(struct mrp_info *mrp, int hw_access)
 {
 	struct mrp_node *prev;
@@ -7409,7 +7531,7 @@ static void mrp_clr_blocked_addr(struct mrp_info *mrp, int hw_access)
 		mac = next->data;
 		if ((mac->rx_ports & SRP_PORT_DROP) &&
 		    (mac->srp_ports & SRP_PORT_BLACKLIST)) {
-dbg_msg("  rmv: %02x:%02x:%02x:%02x:%02x:%02x %d\n",
+dbg_msg("  rmv: %02x:%02x:%02x:%02x:%02x:%02x %d"NL,
 mac->addr[0], mac->addr[1], mac->addr[2], mac->addr[3], mac->addr[4], mac->addr[5], mac->fid);
 			if (hw_access)
 				mrp_cfg_dest_addr(mrp, mac->index, mac->addr,
@@ -7430,14 +7552,14 @@ static void mrp_chk_blocked_addr(struct mrp_info *mrp)
 	struct mrp_node *prev;
 	struct mrp_node *next;
 	struct mrp_mac_info *mac;
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+	struct ksz_sw *sw = mrp->parent;
 
 	prev = &mrp->mac_list.anchor;
 	next = prev->next;
 	while (next) {
 		mac = next->data;
 		if ((mac->srp_ports & SRP_PORT_BLACKLIST) &&
-		    time_after_eq(jiffies, mac->jiffies)) {
+		    time_after_eq(jiffies, mac->ticks)) {
 			uint n;
 			uint p;
 			bool avb;
@@ -7464,29 +7586,57 @@ static void mrp_chk_blocked_addr(struct mrp_info *mrp)
 				ports = sw->PORT_MASK;
 			sw->ops->cfg_mac(sw, mac->index, mac->addr, ports,
 					 false, mac->fid != 0, mac->fid);
-			mac->jiffies = jiffies + msecs_to_jiffies(10000);
+			mac->ticks = jiffies + msecs_to_jiffies(10000);
 		}
 		prev = next;
 		next = prev->next;
 	}
 	mrp_clr_blocked_addr(mrp, true);
 }  /* mrp_chk_blocked_addr */
+#endif
 
+#ifdef CONFIG_KSZ_MRP
 static void mrp_close(struct mrp_info *mrp, int hw_access)
 {
 	if (mrp->started) {
-		struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
+		struct ksz_sw *sw = mrp->parent;
 
 		mrp_close_port(mrp, sw->HOST_PORT);
 		mrp_clr_blocked_addr(mrp, hw_access);
+#if 0
 		mrp->started = false;
+#endif
 	}
 }  /* mrp_close */
+#else
+static void mrp_close(struct mrp_info *mrp, int hw_access)
+{
+}
+#endif
+
+#ifdef CONFIG_KSZ_AVB
+static void mrp_set_slope(struct mrp_info *mrp, uint port, int index,
+			  struct mrp_port_info *info, uint per)
+{
+	u32 slope;
+	u64 val = per;
+
+	val <<= CREDIT_PERCENTAGE_S;
+	val += 500;
+	val = div_u64_u32(val, 1000);
+	slope = (u32)val;
+	info->bandwidth[index].adminIdleSlope = slope;
+	info->bandwidth[index].operIdleSlope = slope;
+	srp_cfg_idle_slope(mrp, port, index, info, slope);
+}  /* mrp_set_slope */
+#endif
 
 static ssize_t sysfs_mrp_read(struct ksz_sw *sw, int proc_num, ssize_t len,
 	char *buf)
 {
+#ifdef CONFIG_KSZ_AVB
 	struct mrp_info *mrp = &sw->mrp;
+#endif
 	int chk = 0;
 	int type = SHOW_HELP_NONE;
 	char note[40];
@@ -7497,53 +7647,57 @@ static ssize_t sysfs_mrp_read(struct ksz_sw *sw, int proc_num, ssize_t len,
 	case PROC_GET_MSRP_INFO:
 		if (!(sw->features & AVB_SUPPORT))
 			return 0;
+		if (!(sw->features & MRP_SUPPORT))
+			return 0;
 		len += sprintf(buf + len,
-			"max interference size %u\n",
+			"max interference size %u"NL,
 			mrp->max_interference_size);
 		if (regeneration_hack)
 			len += sprintf(buf + len,
-				"regeneration\n");
+				"regeneration"NL);
 		if (ba_hack)
 			len += sprintf(buf + len,
-				"BA\n");
+				"BA"NL);
 		if (mrp_10_1_2f_hack)
 			len += sprintf(buf + len,
-				"MRP.10.1.2F\n");
+				"MRP.10.1.2F"NL);
 		if (mrp_10_1_8a_hack)
 			len += sprintf(buf + len,
-				"MRP.10.1.8A\n");
+				"MRP.10.1.8A"NL);
 		if (mrp_10_5_1_hack)
 			len += sprintf(buf + len,
-				"MRP.10.5.1\n");
+				"MRP.10.5.1"NL);
 		if (mrp_10_5_1c_hack)
 			len += sprintf(buf + len,
-				"MRP.10.5.1C\n");
+				"MRP.10.5.1C"NL);
 		if (mrp_10_5_1d_hack)
 			len += sprintf(buf + len,
-				"MRP.10.5.1D\n");
+				"MRP.10.5.1D"NL);
 		if (msrp_35_1_14g_hack)
 			len += sprintf(buf + len,
-				"MSRP.35.1.14G\n");
+				"MSRP.35.1.14G"NL);
 		if (fqtss_hack)
 			len += sprintf(buf + len,
-				"FQTSS\n");
+				"FQTSS"NL);
 		if (fqtss_34_2_3_hack)
 			len += sprintf(buf + len,
-				"FQTSS.34.2.3\n");
+				"FQTSS.34.2.3"NL);
 		if (fqtss_34_2_1b_hack)
 			len += sprintf(buf + len,
-				"FQTSS.34.2.1B\n");
+				"FQTSS.34.2.1B"NL);
 		if (fqtss_34_2_5b_hack)
 			len += sprintf(buf + len,
-				"FQTSS.34.2.5B\n");
+				"FQTSS.34.2.5B"NL);
 		if (fqtss_34_2_9b_hack)
 			len += sprintf(buf + len,
-				"FQTSS.34.2.9B\n");
+				"FQTSS.34.2.9B"NL);
 		break;
 	case PROC_SET_MSRP_ENABLED:
 		chk = mrp->status.msrpEnabledStatus;
 		type = SHOW_HELP_ON_OFF;
 		break;
+#endif
+#ifdef CONFIG_KSZ_AVB
 	case PROC_SET_MSRP_SR_A:
 		chk = mrp->domain[1].id != 0;
 		type = SHOW_HELP_ON_OFF;
@@ -7559,7 +7713,9 @@ static ssize_t sysfs_mrp_read(struct ksz_sw *sw, int proc_num, ssize_t len,
 static int sysfs_mrp_write(struct ksz_sw *sw, int proc_num, int num,
 	const char *buf)
 {
+#ifdef CONFIG_KSZ_AVB
 	struct mrp_info *mrp = &sw->mrp;
+#endif
 	int processed = true;
 
 	if (!(sw->features & AVB_SUPPORT))
@@ -7567,6 +7723,8 @@ static int sysfs_mrp_write(struct ksz_sw *sw, int proc_num, int num,
 	switch (proc_num) {
 #ifdef CONFIG_KSZ_MSRP
 	case PROC_GET_MSRP_INFO:
+		if (!(sw->features & MRP_SUPPORT))
+			break;
 		if (!strncmp(buf, "mrp_10.1.2f", 11))
 			mrp_10_1_2f_hack = true;
 		else if (!strncmp(buf, "mrp_10.1.8a", 11))
@@ -7627,9 +7785,11 @@ static int sysfs_mrp_write(struct ksz_sw *sw, int proc_num, int num,
 			}
 		}
 else
-dbg_msg(" ?? %s]\n", buf);
+dbg_msg(" ?? %s]"NL, buf);
 		break;
 	case PROC_SET_MSRP_ENABLED:
+		if (!(sw->features & MRP_SUPPORT))
+			break;
 		if (mrp->status.msrpEnabledStatus != !!num) {
 			mutex_lock(&mrp->lock);
 			if (!mrp->status.msrpEnabledStatus) {
@@ -7644,10 +7804,14 @@ dbg_msg(" ?? %s]\n", buf);
 			mutex_unlock(&mrp->lock);
 		}
 		break;
+#endif
+#ifdef CONFIG_KSZ_AVB
 	case PROC_SET_MSRP_SR_A:
 	{
+#ifdef CONFIG_KSZ_MSRP
 		struct srp_domain domain;
 		struct mrp_applicant *app;
+#endif
 		struct mrp_port_info *info;
 		u32 delta_a;
 		u32 delta_b;
@@ -7657,6 +7821,8 @@ dbg_msg(" ?? %s]\n", buf);
 		uint p;
 		int join = 0;
 
+		if (!(sw->features & MRP_SUPPORT))
+			break;
 		if (num && !mrp->domain[1].id) {
 			mrp->domain[1].id = SR_CLASS_A;
 			join = 2;
@@ -7666,6 +7832,7 @@ dbg_msg(" ?? %s]\n", buf);
 		if (!join)
 			break;
 		--join;
+#ifdef CONFIG_KSZ_MSRP
 		domain.class_id = mrp->domain[1].id;
 		domain.class_priority = mrp->domain[1].priority;
 		domain.class_vid = htons(mrp->domain[1].vlan_id);
@@ -7681,6 +7848,7 @@ dbg_msg(" ?? %s]\n", buf);
 			else
 				msrp_req_leave_domain(app, &domain);
 		}
+#endif
 		if (!join) {
 			mrp->domain[1].id = 0;
 		}
@@ -7718,7 +7886,7 @@ static ssize_t sysfs_mrp_port_read(struct ksz_sw *sw, int proc_num, uint n,
 	ssize_t len, char *buf)
 {
 	struct mrp_info *mrp = &sw->mrp;
-#ifdef CONFIG_KSZ_MSRP
+#ifdef CONFIG_KSZ_AVB
 	struct mrp_port_info *info;
 	int index;
 	char per_str[20];
@@ -7726,25 +7894,42 @@ static ssize_t sysfs_mrp_port_read(struct ksz_sw *sw, int proc_num, uint n,
 	uint m;
 	uint port;
 	struct ksz_port_cfg *cfg;
+#ifdef CONFIG_KSZ_MRP
 	struct mrp_port *mrp_p;
+#endif
 	int chk = 0;
 	int type = SHOW_HELP_NUM;
 	char note[40];
 
 	note[0] = '\0';
-	if (!(sw->features & AVB_SUPPORT))
-		return 0;
+#ifdef CONFIG_KSZ_MRP
+	switch (proc_num) {
+	case PROC_SET_PORT_MMRP_ENABLED:
+	case PROC_SET_PORT_MMRP_MAC:
+	case PROC_SET_PORT_MMRP_SVC:
+	case PROC_SET_PORT_MMRP_REG:
+	case PROC_SET_PORT_MVRP_ENABLED:
+	case PROC_SET_PORT_MVRP_VID:
+	case PROC_SET_PORT_MVRP_REG:
+		if (!(sw->features & MRP_SUPPORT))
+			return 0;
+		break;
+	}
+#endif
 	port = get_sysfs_port(sw, n);
 	m = BIT(port);
 	if (!(mrp->mask & m))
 		return 0;
 	cfg = get_port_cfg(sw, port);
+#ifdef CONFIG_KSZ_MRP
 	mrp_p = &mrp->mrp_ports[port];
-#ifdef CONFIG_KSZ_MSRP
+#endif
+#ifdef CONFIG_KSZ_AVB
 	index = cfg->q_index;
 	info = &mrp->port_info[port];
 #endif
 	switch (proc_num) {
+#ifdef CONFIG_KSZ_MRP
 	case PROC_SET_PORT_MMRP_ENABLED:
 		chk = !!(mrp->mmrp_rx_ports & m);
 		type = SHOW_HELP_ON_OFF;
@@ -7794,7 +7979,7 @@ static ssize_t sysfs_mrp_port_read(struct ksz_sw *sw, int proc_num, uint n,
 					str = "registered";
 			}
 			len += sprintf(buf + len,
-				"%s\n", str);
+				"%s"NL, str);
 		}
 		type = SHOW_HELP_NONE;
 		break;
@@ -7835,15 +8020,18 @@ static ssize_t sysfs_mrp_port_read(struct ksz_sw *sw, int proc_num, uint n,
 					str = "registered";
 			}
 			len += sprintf(buf + len,
-				"%s\n", str);
+				"%s"NL, str);
 		}
 		type = SHOW_HELP_NONE;
 		break;
+#endif
 #ifdef CONFIG_KSZ_MSRP
 	case PROC_SET_PORT_MSRP_ENABLED:
 		chk = info->status.msrpPortEnabledStatus;
 		type = SHOW_HELP_ON_OFF;
 		break;
+#endif
+#ifdef CONFIG_KSZ_AVB
 	case PROC_SET_PORT_ASCAPABLE:
 		chk = cfg->asCapable;
 		if (!chk && cfg->asCapable_set)
@@ -7863,23 +8051,25 @@ static ssize_t sysfs_mrp_port_read(struct ksz_sw *sw, int proc_num, uint n,
 		chk = (u32)val;
 		if (chk >= 1000)
 			len += sprintf(buf + len,
-				"%u,%03u Kbps\n", chk / 1000, chk % 1000);
+				"%u,%03u Kbps"NL, chk / 1000, chk % 1000);
 		else
 			len += sprintf(buf + len,
-				"%u Kbps\n", chk);
+				"%u Kbps"NL, chk);
 		type = SHOW_HELP_NONE;
 		break;
 	}
 	case PROC_SET_TC_ADMIN_IDLE_SLOPE:
-		format_per(per_str, info->bandwidth[index].adminIdleSlope);
+		format_per(per_str, info->bandwidth[index].adminIdleSlope,
+			   sw->verbose);
 		len += sprintf(buf + len,
-			"%s\n", per_str);
+			"%s"NL, per_str);
 		type = SHOW_HELP_NONE;
 		break;
 	case PROC_GET_TC_OPER_IDLE_SLOPE:
-		format_per(per_str, info->bandwidth[index].operIdleSlope);
+		format_per(per_str, info->bandwidth[index].operIdleSlope,
+			   sw->verbose);
 		len += sprintf(buf + len,
-			"%s\n", per_str);
+			"%s"NL, per_str);
 		type = SHOW_HELP_NONE;
 		break;
 	case PROC_SET_TC_ALGORITHM:
@@ -7902,31 +8092,40 @@ static ssize_t sysfs_mrp_port_read(struct ksz_sw *sw, int proc_num, uint n,
 		}
 		type = SHOW_HELP_SPECIAL;
 		break;
-	case PROC_GET_SR_0_RX_PRIO:
+	case PROC_GET_SR_B_RX_PRIO:
 		chk = info->priority[SR_CLASS_B].received_priority;
 		break;
-	case PROC_SET_SR_0_TX_PRIO:
+	case PROC_SET_SR_B_TX_PRIO:
 		chk = info->priority[SR_CLASS_B].regenerated_priority;
 		break;
-	case PROC_GET_SR_0_SRP_DOMAIN_BOUNDARY:
+	case PROC_GET_SR_B_SRP_DOMAIN_BOUNDARY:
 		chk = info->priority[SR_CLASS_B].SRPdomainBoundaryPort;
 		break;
-	case PROC_SET_SR_0_LATENCY:
+	case PROC_SET_SR_B_LATENCY:
 		index = get_traffic_index(SR_CLASS_B);
 		chk = info->latency[index].portTcMaxLatency;
 		break;
-	case PROC_GET_SR_1_RX_PRIO:
+	case PROC_GET_SR_A_RX_PRIO:
 		chk = info->priority[SR_CLASS_A].received_priority;
 		break;
-	case PROC_SET_SR_1_TX_PRIO:
+	case PROC_SET_SR_A_TX_PRIO:
 		chk = info->priority[SR_CLASS_A].regenerated_priority;
 		break;
-	case PROC_GET_SR_1_SRP_DOMAIN_BOUNDARY:
+	case PROC_GET_SR_A_SRP_DOMAIN_BOUNDARY:
 		chk = info->priority[SR_CLASS_A].SRPdomainBoundaryPort;
 		break;
-	case PROC_SET_SR_1_LATENCY:
+	case PROC_SET_SR_A_LATENCY:
 		index = get_traffic_index(SR_CLASS_A);
 		chk = info->latency[index].portTcMaxLatency;
+		break;
+	case PROC_SET_MAX_FRAME_SIZE:
+		chk = info->max_frame_size;
+		break;
+	case PROC_SET_MAX_INTERVAL_FRAMES:
+		chk = info->max_interval_frames;
+		break;
+	case PROC_SET_CLASS_PRIO:
+		type = SHOW_HELP_NONE;
 		break;
 #endif
 	default:
@@ -7940,29 +8139,46 @@ static int sysfs_mrp_port_write(struct ksz_sw *sw, int proc_num, uint n,
 	int num, const char *buf)
 {
 	struct mrp_info *mrp = &sw->mrp;
-#ifdef CONFIG_KSZ_MSRP
+#ifdef CONFIG_KSZ_AVB
 	struct mrp_port_info *info;
 	int index;
 #endif
 	uint m;
 	uint port;
 	struct ksz_port_cfg *cfg;
+#ifdef CONFIG_KSZ_MRP
 	struct mrp_port *mrp_p;
+#endif
 	int processed = true;
 
-	if (!(sw->features & AVB_SUPPORT))
-		return false;
+#ifdef CONFIG_LAN937X_MRP
+	switch (proc_num) {
+	case PROC_SET_PORT_MMRP_ENABLED:
+	case PROC_SET_PORT_MMRP_MAC:
+	case PROC_SET_PORT_MMRP_SVC:
+	case PROC_SET_PORT_MMRP_REG:
+	case PROC_SET_PORT_MVRP_ENABLED:
+	case PROC_SET_PORT_MVRP_VID:
+	case PROC_SET_PORT_MVRP_REG:
+		if (!(sw->features & MRP_SUPPORT))
+			return true;
+		break;
+	}
+#endif
 	port = get_sysfs_port(sw, n);
 	m = BIT(port);
 	if (!(mrp->mask & m))
 		return false;
 	cfg = get_port_cfg(sw, port);
+#ifdef CONFIG_KSZ_MRP
 	mrp_p = &mrp->mrp_ports[port];
-#ifdef CONFIG_KSZ_MSRP
+#endif
+#ifdef CONFIG_KSZ_AVB
 	index = cfg->q_index;
 	info = &mrp->port_info[port];
 #endif
 	switch (proc_num) {
+#ifdef CONFIG_KSZ_MRP
 	case PROC_SET_PORT_MMRP_ENABLED:
 		if (!!(mrp->mmrp_rx_ports & m) != !!num) {
 			if (num) {
@@ -8085,9 +8301,12 @@ static int sysfs_mrp_port_write(struct ksz_sw *sw, int proc_num, uint n,
 			mvrp_req_set(app, sw->vlan_index, state);
 		}
 		break;
+#endif
 #ifdef CONFIG_KSZ_MSRP
 	case PROC_SET_PORT_MSRP_ENABLED:
 	{
+		if (!(sw->features & AVB_SUPPORT))
+			break;
 		if (info->status.msrpPortEnabledStatus == !!num)
 			break;
 
@@ -8110,8 +8329,14 @@ static int sysfs_mrp_port_write(struct ksz_sw *sw, int proc_num, uint n,
 		}
 		break;
 	}
+#endif
+#ifdef CONFIG_KSZ_AVB
 	case PROC_SET_PORT_ASCAPABLE:
+		if (!(sw->features & AVB_SUPPORT))
+			break;
 		cfg->asCapable_set = !!num;
+		if (sw->features & MRP_SUPPORT)
+			break;
 		break;
 	case PROC_SET_TC_DELTA_BANDWIDTH:
 		if (index == mrp->queue[SR_CLASS_B] && num >= 0 &&
@@ -8130,17 +8355,7 @@ static int sysfs_mrp_port_write(struct ksz_sw *sw, int proc_num, uint n,
 		num /= info->speed;
 	case PROC_SET_TC_ADMIN_IDLE_SLOPE:
 		if (num >= 0 && num < 100000) {
-			u32 rem;
-			u32 slope;
-			u64 val = num;
-
-			val <<= CREDIT_PERCENTAGE_S;
-			val += 500;
-			val = div_u64_rem(val, 1000, &rem);
-			slope = (u32)val;
-			info->bandwidth[index].adminIdleSlope = slope;
-			info->bandwidth[index].operIdleSlope = slope;
-			srp_cfg_idle_slope(mrp, port, index, info, slope);
+			mrp_set_slope(mrp, port, index, info, num);
 		}
 		break;
 	case PROC_SET_TC_ALGORITHM:
@@ -8165,23 +8380,70 @@ static int sysfs_mrp_port_write(struct ksz_sw *sw, int proc_num, uint n,
 		sw->reg->unlock(sw);
 #endif
 		break;
-	case PROC_SET_SR_0_TX_PRIO:
+	case PROC_SET_SR_B_TX_PRIO:
 		if (0 <= num && num < 8)
 			info->priority[SR_CLASS_B].regenerated_priority = num;
 		break;
-	case PROC_SET_SR_0_LATENCY:
+	case PROC_SET_SR_B_LATENCY:
 		index = get_traffic_index(SR_CLASS_B);
 		if (0 <= num && num < 100000)
 			info->latency[index].portTcMaxLatency = num;
 		break;
-	case PROC_SET_SR_1_TX_PRIO:
+	case PROC_SET_SR_A_TX_PRIO:
 		if (0 <= num && num < 8)
 			info->priority[SR_CLASS_A].regenerated_priority = num;
 		break;
-	case PROC_SET_SR_1_LATENCY:
+	case PROC_SET_SR_A_LATENCY:
 		index = get_traffic_index(SR_CLASS_A);
 		if (0 <= num && num < 100000)
 			info->latency[index].portTcMaxLatency = num;
+		break;
+	case PROC_SET_MAX_FRAME_SIZE:
+		if (num < 46)
+			num = 46;
+		info->max_frame_size = num;
+		break;
+	case PROC_SET_MAX_INTERVAL_FRAMES:
+		if (num < 1)
+			num = 1;
+		info->max_interval_frames = num;
+		break;
+	case PROC_SET_CLASS_PRIO:
+		if (0 <= num && num <= 7) {
+			u32 cnt;
+
+			cnt = 0;
+			if (num == 2)
+				cnt = 4000;
+			else if (num == 3)
+				cnt = 8000;
+			if (cnt && info->speed) {
+				u32 queue = cfg->tc_map[0];
+				u32 overhead;
+				u32 rate;
+				u16 data;
+
+				queue >>= num * PORT_TC_MAP_S;
+				queue &= PORT_TC_MAP_M;
+				overhead = 22;
+				sw->ops->acquire(sw);
+				data = sw->reg->r16(sw, REG_AVB_STRATEGY__2);
+				sw->ops->release(sw);
+				if (data & SW_SHAPING_CREDIT_ACCT)
+					overhead += 20;
+				rate = info->max_frame_size;
+				rate += overhead;
+				rate *= info->max_interval_frames;
+				rate *= cnt;
+				rate *= 8;
+				rate /= 1000;
+				if (rate >= info->speed * 1000)
+					rate = (info->speed * 1000) - 1;
+				rate *= 100;
+				rate /= info->speed;
+				mrp_set_slope(mrp, port, queue, info, rate);
+			}
+		}
 		break;
 #endif
 	default:
@@ -8191,25 +8453,27 @@ static int sysfs_mrp_port_write(struct ksz_sw *sw, int proc_num, uint n,
 	return processed;
 }  /* sysfs_mrp_port_write */
 
+#ifdef CONFIG_KSZ_MRP
 static void leave_mrp(struct mrp_info *mrp)
 {
 }  /* leave_mrp */
+#endif
 
 static void mrp_init(struct mrp_info *mrp)
 {
-	struct ksz_sw *sw = container_of(mrp, struct ksz_sw, mrp);
-	uint port;
+	struct ksz_sw *sw = mrp->parent;
 
-#ifdef CONFIG_KSZ_MSRP
-	int index;
-	int tc;
-	struct mrp_port_info *info;
+#ifdef CONFIG_KSZ_AVB
 	struct mrp_traffic_info *traffic;
+	struct mrp_port_info *info;
 	char bw_str1[20];
 	char bw_str2[20];
 	char bw_str3[20];
 	char bw_str4[20];
 	char bw_str5[20];
+	uint port;
+	int index;
+	int tc;
 #endif
 
 	mrp->access = create_singlethread_workqueue("mrp_access");
@@ -8218,9 +8482,13 @@ static void mrp_init(struct mrp_info *mrp)
 	skb_queue_head_init(&mrp->rxq);
 	skb_queue_head_init(&mrp->macq);
 	skb_queue_head_init(&mrp->vlanq);
+#ifdef CONFIG_KSZ_MSRP
 	INIT_WORK(&mrp->cfg_mac, mrp_cfg_mac_work);
+#endif
+#ifdef CONFIG_KSZ_MRP
 	INIT_WORK(&mrp->cfg_vlan, mrp_cfg_vlan_work);
 	INIT_WORK(&mrp->rx_proc, mrp_rx_proc);
+#endif
 
 	/* Number of ports can be capped for testing purpose. */
 	mrp->ports = sw->mib_port_cnt;
@@ -8229,11 +8497,12 @@ static void mrp_init(struct mrp_info *mrp)
 	mrp->mmrp_rx_ports = mrp->mmrp_tx_ports = mrp->mask;
 	mrp->mvrp_rx_ports = mrp->mvrp_tx_ports = mrp->mask;
 
+#ifdef CONFIG_KSZ_MRP
 	mrp_init_list(&mrp->mac_list);
 	mrp_init_list(&mrp->vlan_list);
+#endif
 
-#ifdef CONFIG_KSZ_MSRP
-	mrp->status.msrpEnabledStatus = true;
+#ifdef CONFIG_KSZ_AVB
 	mrp->id = sw->ops->get_br_id(sw);
 	mrp->tc[2] = SR_CLASS_B;
 	mrp->tc[3] = SR_CLASS_A;
@@ -8252,16 +8521,22 @@ static void mrp_init(struct mrp_info *mrp)
 	mrp->domain[1].vlan_id = 2;
 	mrp->max_interference_size = 1500;
 
+#ifdef CONFIG_KSZ_MSRP
 	mrp_init_list(&mrp->mac_down);
 	mrp_init_list(&mrp->mac_up);
 	mrp_init_list(&mrp->vlan_down);
 	mrp_init_list(&mrp->vlan_up);
+#endif
 
 	for (port = 0; port < sw->port_cnt; port++) {
 		info = &mrp->port_info[port];
 		info->index = port;
+		info->max_frame_size = 46;
+		info->max_interval_frames = 1;
+#ifdef CONFIG_KSZ_MSRP
 		if (mrp->status.msrpEnabledStatus)
 			info->status.msrpPortEnabledStatus = true;
+#endif
 		info->speed = 100;
 		if (sw->port_info[port].tx_rate)
 			info->speed = sw->port_info[port].tx_rate /
@@ -8319,8 +8594,10 @@ static void mrp_init(struct mrp_info *mrp)
 			traffic = get_traffic_info(info, tc);
 			traffic->queue = get_queue_priority(mrp, tc);
 
+#ifdef CONFIG_KSZ_MSRP
 			mrp_init_list(&traffic->active);
 			mrp_init_list(&traffic->passive);
+#endif
 		}
 		info->traffic[1].bandwidth_avail =
 			&info->traffic[0].bandwidth_delta;
@@ -8336,11 +8613,11 @@ static void mrp_init(struct mrp_info *mrp)
 		format_num(bw_str4, info->traffic[0].bandwidth_max);
 		format_num(bw_str5, info->traffic[0].bandwidth_left);
 if (port < 2)
-dbg_msg("bw: %d %s; %s %s; %s %s\n", port,
+dbg_msg("bw: %d %s; %s %s; %s %s"NL, port,
 bw_str1, bw_str2, bw_str3, bw_str4, bw_str5);
 	}
 #endif
-dbg_msg("%s %x %x\n", __func__, SRP_PORT_AVAIL, SRP_PORT_OTHER);
+dbg_msg("%s %x %x"NL, __func__, SRP_PORT_AVAIL, SRP_PORT_OTHER);
 }  /* mrp_init */
 
 static void mrp_exit(struct mrp_info *mrp)
@@ -8382,13 +8659,17 @@ static struct mrp_ops mrp_ops = {
 
 	.dev_req		= mrp_dev_req,
 
+#ifdef CONFIG_KSZ_MRP
 	.from_backup		= mrp_from_backup,
 	.to_backup		= mrp_to_backup,
 	.from_designated	= mrp_from_designated,
 	.to_designated		= mrp_to_designated,
 	.tc_detected		= mrp_tc_detected,
 
+#ifdef CONFIG_KSZ_MSRP
 	.chk_talker		= mrp_chk_talker,
+#endif
 	.setup_vlan		= mrp_setup_vlan,
+#endif
 };
 

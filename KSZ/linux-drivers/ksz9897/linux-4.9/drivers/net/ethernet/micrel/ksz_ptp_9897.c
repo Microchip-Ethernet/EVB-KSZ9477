@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -126,7 +126,7 @@ static void calc_udiff(struct ptp_utime *prev, struct ptp_utime *cur,
 		t3 = (u64) prev->sec * NANOSEC_IN_SEC + prev->nsec;
 		t4 = (u64) cur->sec * NANOSEC_IN_SEC + cur->nsec;
 		diff = t4 - t3;
-		t3 = div_s64_rem(diff, NSEC_PER_SEC, &rem);
+		t3 = div_s64_s32_rem(diff, NANOSEC_IN_SEC, &rem);
 		result->sec = (s32) t3;
 		result->nsec = rem;
 		return;
@@ -140,7 +140,7 @@ static void calc_udiff(struct ptp_utime *prev, struct ptp_utime *cur,
 
 static void ptp_write_index(struct ptp_info *ptp, int shift, u8 unit)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 #ifndef USE_OLD_PTP_UNIT_INDEX
 	u32 index = sw->cached.ptp_unit_index;
 
@@ -216,7 +216,7 @@ static int check_cascade(struct ptp_info *ptp, int first, int total,
 		calc_udiff(&cur->stop, &next->start, &cur->gap);
 		if ((cur->gap.sec < 0 || (!cur->gap.sec && cur->gap.nsec < 0))
 				&& (i < total - 1 || 1 != *repeat)) {
-			dbg_msg("gap too small: %d=%d\n", i, cur->gap.nsec);
+			dbg_msg("gap too small: %d=%d"NL, i, cur->gap.nsec);
 			return 1;
 		}
 	}
@@ -247,14 +247,14 @@ static int check_cascade(struct ptp_info *ptp, int first, int total,
 		for (i = 0; i < total; i++, tso++) {
 			cur = &ptp->outputs[tso];
 			next = &ptp->outputs[tso + 1];
-			dbg_msg("%d: %d:%9d %d %d:%9d %d: %d:%9d\n",
+			dbg_msg("%d: %d:%9d %d %d:%9d %d: %d:%9d"NL,
 				i, cur->start.sec, cur->start.nsec, cur->len,
 				cur->gap.sec, cur->gap.nsec, cur->iterate,
 				cur->stop.sec, cur->stop.nsec);
 			if (cur->stop.sec > next->start.sec ||
 					(cur->stop.sec == next->start.sec &&
 					cur->stop.nsec > next->stop.nsec))
-				dbg_msg("> %d %d:%9d %d:%9d\n", i,
+				dbg_msg("> %d %d:%9d %d:%9d"NL, i,
 					cur->stop.sec, cur->stop.nsec,
 					next->start.sec, next->start.nsec);
 			add_nsec(&cur->start, cur->iterate);
@@ -263,7 +263,7 @@ static int check_cascade(struct ptp_info *ptp, int first, int total,
 			if (!i)
 				prev->start = cur->start;
 		}
-		dbg_msg("%d:%9d\n", prev->start.sec, prev->start.nsec);
+		dbg_msg("%d:%9d"NL, prev->start.sec, prev->start.nsec);
 	}
 
 check_cascade_done:
@@ -291,14 +291,13 @@ static u32 drift_in_sec(u32 abs_offset, u64 interval64)
 
 	drift64 = abs_offset;
 	drift64 *= NANOSEC_IN_SEC;
-	drift64 = div64_u64(drift64, interval64);
+	drift64 = div_u64_u64(drift64, interval64);
 	return (u32) drift64;
 }
 
 static u32 clk_adjust_val(int diff, u32 interval)
 {
 	u32 adjust;
-	u32 rem;
 	u64 adjust64;
 
 	if (0 == diff)
@@ -317,7 +316,7 @@ static u32 clk_adjust_val(int diff, u32 interval)
 	else {
 		adjust64 = 1LL << 32;
 		adjust64 *= adjust;
-		adjust64 = div_u64_rem(adjust64, 25000000, &rem);
+		adjust64 = div_u64_u32(adjust64, 25000000);
 		adjust = (u32) adjust64;
 		if (adjust >= 0x40000000)
 			adjust = 0x3fffffff;
@@ -333,7 +332,7 @@ static void ptp_tso_off(struct ptp_info *ptp, u8 tso, u16 tso_bit)
 	ptp->tso_intr &= ~tso_bit;
 	ptp->tso_used &= ~tso_bit;
 	if (ptp->tso_sys & tso_bit) {
-		printk(KERN_INFO "tso %d off!\n", tso);
+		printk(KERN_INFO "tso %d off!"NL, tso);
 		ptp->tso_sys &= ~tso_bit;
 	}
 	ptp->tso_dev[tso] = NULL;
@@ -342,7 +341,7 @@ static void ptp_tso_off(struct ptp_info *ptp, u8 tso, u16 tso_bit)
 static inline void ptp_tx_reset(struct ptp_info *ptp, u8 tso, u32 *ctrl_ptr)
 {
 	u32 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	if (!ctrl_ptr) {
 		ctrl_ptr = &ctrl;
@@ -367,14 +366,14 @@ static inline void ptp_gpo_reset(struct ptp_info *ptp, int gpo, u8 tso,
 
 static void ptp_acquire(struct ptp_info *ptp)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	sw->ops->acquire(sw);
 }  /* ptp_acquire */
 
 static void ptp_release(struct ptp_info *ptp)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	sw->ops->release(sw);
 }  /* ptp_release */
@@ -383,17 +382,17 @@ static void get_ptp_time(struct ptp_info *ptp, struct ptp_utime *t)
 {
 	u16 data;
 	u16 subnsec;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	data = sw->cached.ptp_clk_ctrl;
 	data |= PTP_READ_TIME;
-	sw_w16(sw, REG_PTP_CLK_CTRL, data);
+	sw->reg->w16(sw, REG_PTP_CLK_CTRL, data);
 	do {
 		u8 buf[12];
 		u16 *w_ptr;
 		u32 *d_ptr;
 
-		sw_r(sw, REG_PTP_RTC_SUB_NANOSEC__2, buf, 10);
+		sw->reg->r(sw, REG_PTP_RTC_SUB_NANOSEC__2, buf, 10);
 		w_ptr = (u16 *) buf;
 		subnsec = be16_to_cpu(*w_ptr);
 		++w_ptr;
@@ -402,10 +401,6 @@ static void get_ptp_time(struct ptp_info *ptp, struct ptp_utime *t)
 		++d_ptr;
 		t->sec = be32_to_cpu(*d_ptr);
 	} while (0);
-#if 1
-if (subnsec > PTP_RTC_SUB_NANOSEC_M)
-printk(" ?%x ", subnsec);
-#endif
 	subnsec &= PTP_RTC_SUB_NANOSEC_M;
 	add_nsec(t, subnsec * 8);
 }  /* get_ptp_time */
@@ -413,14 +408,14 @@ printk(" ?%x ", subnsec);
 static void set_ptp_time(struct ptp_info *ptp, struct ptp_utime *t)
 {
 	u16 data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	data = sw->cached.ptp_clk_ctrl;
-	sw_w16(sw, REG_PTP_RTC_SUB_NANOSEC__2, 0);
-	sw_w32(sw, REG_PTP_RTC_NANOSEC, t->nsec);
-	sw_w32(sw, REG_PTP_RTC_SEC, t->sec);
+	sw->reg->w16(sw, REG_PTP_RTC_SUB_NANOSEC__2, 0);
+	sw->reg->w32(sw, REG_PTP_RTC_NANOSEC, t->nsec);
+	sw->reg->w32(sw, REG_PTP_RTC_SEC, t->sec);
 	data |= PTP_LOAD_TIME;
-	sw_w16(sw, REG_PTP_CLK_CTRL, data);
+	sw->reg->w16(sw, REG_PTP_CLK_CTRL, data);
 }  /* set_ptp_time */
 
 static void adjust_ptp_time(struct ptp_info *ptp, int add, u32 sec, u32 nsec,
@@ -429,7 +424,7 @@ static void adjust_ptp_time(struct ptp_info *ptp, int add, u32 sec, u32 nsec,
 	u16 ctrl;
 	u16 adj = 0;
 	u32 val = nsec;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ctrl = sw->cached.ptp_clk_ctrl;
 	if (add)
@@ -442,35 +437,39 @@ static void adjust_ptp_time(struct ptp_info *ptp, int add, u32 sec, u32 nsec,
 		ctrl &= ~PTP_CLK_ADJ_ENABLE;
 	}
 	ctrl |= PTP_STEP_ADJ;
-	sw_w32(sw, REG_PTP_RTC_SEC, sec);
+	sw->reg->w32(sw, REG_PTP_RTC_SEC, sec);
 	do {
 		if (nsec > NANOSEC_IN_SEC - 1)
 			nsec = NANOSEC_IN_SEC - 1;
-		sw_w32(sw, REG_PTP_RTC_NANOSEC, nsec);
-		sw_w16(sw, REG_PTP_CLK_CTRL, ctrl);
+		sw->reg->w32(sw, REG_PTP_RTC_NANOSEC, nsec);
+		sw->reg->w16(sw, REG_PTP_CLK_CTRL, ctrl);
 		val -= nsec;
 		nsec = val;
 	} while (val);
 	if (adj_hack && (adj & PTP_CLK_ADJ_ENABLE))
-		sw_w16(sw, REG_PTP_CLK_CTRL, adj);
+		sw->reg->w16(sw, REG_PTP_CLK_CTRL, adj);
+#ifdef NO_PPS_DETECT
+	if (add && (sec || nsec >= 1000))
+		ptp->clk_add = 1;
+#endif
 }  /* adjust_ptp_time */
 
 static void adjust_sync_time(struct ptp_info *ptp, int diff, u32 interval,
 	u32 duration)
 {
 	u32 adjust;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	adjust = clk_adjust_val(diff, interval);
 	adjust |= PTP_TMP_RATE_ENABLE;
-	sw_w32(sw, REG_PTP_RATE_DURATION, duration);
-	sw_w32(sw, REG_PTP_SUBNANOSEC_RATE, adjust);
+	sw->reg->w32(sw, REG_PTP_RATE_DURATION, duration);
+	sw->reg->w32(sw, REG_PTP_SUBNANOSEC_RATE, adjust);
 }  /* adjust_sync_time */
 
 static void ptp_rx_reset(struct ptp_info *ptp, u8 tsi, u32 *ctrl_ptr)
 {
 	u32 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	if (!ctrl_ptr) {
 		ctrl_ptr = &ctrl;
@@ -489,10 +488,10 @@ static void ptp_rx_off(struct ptp_info *ptp, u8 tsi)
 	u32 ctrl;
 	u16 tsi_bit = (1 << tsi);
 	u32 ts_intr = 0;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp_write_index(ptp, PTP_TSI_INDEX_S, tsi);
-	ctrl = sw_r32(sw, REG_PTP_CTRL_STAT__4);
+	ctrl = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 	ctrl &= ~(TRIG_RESET | TS_RESET);
 
 	/* Disable previous timestamp interrupt. */
@@ -504,7 +503,7 @@ static void ptp_rx_off(struct ptp_info *ptp, u8 tsi)
 
 	/* Disable previous timestamp detection. */
 	ctrl &= ~TS_ENABLE;
-	sw_w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
+	sw->reg->w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
 
 	/*
 	 * Need to turn off cascade mode if it is used previously; otherwise,
@@ -512,11 +511,11 @@ static void ptp_rx_off(struct ptp_info *ptp, u8 tsi)
 	 */
 	if (ptp->cascade_rx & tsi_bit) {
 		ptp_rx_reset(ptp, tsi, &ctrl);
-		sw_w32(sw, REG_TS_CTRL_STAT__4, 0);
+		sw->reg->w32(sw, REG_TS_CTRL_STAT__4, 0);
 		ptp->cascade_rx &= ~tsi_bit;
 	}
 	if (ts_intr)
-		sw_w32(sw, REG_PTP_INT_STATUS__4, ts_intr);
+		sw->reg->w32(sw, REG_PTP_INT_STATUS__4, ts_intr);
 }  /* ptp_rx_off */
 
 static inline void ptp_rx_intr(struct ptp_info *ptp, u16 tsi_bit, u32 *ctrl)
@@ -528,7 +527,7 @@ static inline void ptp_rx_intr(struct ptp_info *ptp, u16 tsi_bit, u32 *ctrl)
 static inline void ptp_rx_on(struct ptp_info *ptp, u8 tsi, int intr)
 {
 	u32 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ctrl = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 	ctrl &= ~(TRIG_RESET | TS_RESET);
@@ -544,15 +543,15 @@ static inline void ptp_rx_on(struct ptp_info *ptp, u8 tsi, int intr)
 static void ptp_rx_restart(struct ptp_info *ptp, u8 tsi)
 {
 	u32 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp_write_index(ptp, PTP_TSI_INDEX_S, tsi);
-	ctrl = sw_r32(sw, REG_PTP_CTRL_STAT__4);
+	ctrl = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 	ctrl &= ~(TRIG_RESET | TS_RESET);
 	ctrl &= ~TS_ENABLE;
-	sw_w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
+	sw->reg->w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
 	ctrl |= TS_ENABLE;
-	sw_w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
+	sw->reg->w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
 }  /* ptp_rx_restart */
 
 static u32 ts_event_gpi(u8 gpi, u8 event)
@@ -582,12 +581,12 @@ static void ptp_rx_event(struct ptp_info *ptp, u8 tsi, u8 gpi, u8 event,
 	int intr)
 {
 	u32 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	/* Config pattern. */
 	ptp_write_index(ptp, PTP_TSI_INDEX_S, tsi);
 	ctrl = ts_event_gpi(gpi, event);
-	sw_w32(sw, REG_TS_CTRL_STAT__4, ctrl);
+	sw->reg->w32(sw, REG_TS_CTRL_STAT__4, ctrl);
 
 	/* Enable timestamp detection. */
 	ptp_rx_on(ptp, tsi, intr);
@@ -602,7 +601,7 @@ static void ptp_rx_cascade_event(struct ptp_info *ptp, u8 first, u8 total,
 	u32 tail;
 	int i;
 	int prev;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	last = (first + total - 1) % MAX_TIMESTAMP_UNIT;
 	tsi = last;
@@ -616,13 +615,13 @@ static void ptp_rx_cascade_event(struct ptp_info *ptp, u8 first, u8 total,
 		ctrl |= ts_cascade(prev);
 		ctrl |= tail;
 		ptp->cascade_rx |= (1 << tsi);
-		sw_w32(sw, REG_TS_CTRL_STAT__4, ctrl);
+		sw->reg->w32(sw, REG_TS_CTRL_STAT__4, ctrl);
 
 		/* Enable timestamp interrupt. */
 		if (intr) {
-			ctrl = sw_r32(sw, REG_PTP_CTRL_STAT__4);
+			ctrl = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 			ptp_rx_intr(ptp, (1 << tsi), &ctrl);
-			sw_w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
+			sw->reg->w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
 		}
 		--tsi;
 		if (tsi < 0)
@@ -633,7 +632,7 @@ static void ptp_rx_cascade_event(struct ptp_info *ptp, u8 first, u8 total,
 	ctrl = ts_event_gpi(gpi, event);
 	ctrl |= ts_cascade(last);
 	ptp->cascade_rx |= (1 << first);
-	sw_w32(sw, REG_TS_CTRL_STAT__4, ctrl);
+	sw->reg->w32(sw, REG_TS_CTRL_STAT__4, ctrl);
 
 	/* Enable timestamp detection. */
 	ptp_rx_on(ptp, first, intr);
@@ -641,10 +640,10 @@ static void ptp_rx_cascade_event(struct ptp_info *ptp, u8 first, u8 total,
 
 static u32 ptp_get_event_cnt(struct ptp_info *ptp, u8 tsi, void *ptr)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp_write_index(ptp, PTP_TSI_INDEX_S, tsi);
-	return sw_r32(sw, REG_TS_CTRL_STAT__4);
+	return sw->reg->r32(sw, REG_TS_CTRL_STAT__4);
 }  /* ptp_get_event_cnt */
 
 static void ptp_get_events(struct ptp_info *ptp, u32 reg_ns, size_t len,
@@ -652,9 +651,9 @@ static void ptp_get_events(struct ptp_info *ptp, u32 reg_ns, size_t len,
 {
 	int i;
 	u32 *data = buf;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
-	sw_r(sw, reg_ns, buf, len);
+	sw->reg->r(sw, reg_ns, buf, len);
 	for (i = 0; i < len / sizeof(u32); i++)
 		data[i] = be32_to_cpu(data[i]);
 }  /* ptp_get_events */
@@ -696,9 +695,6 @@ static void ptp_read_event_func(struct ptp_info *ptp, u8 tsi, void *ptr,
 		sub = (*d_ptr) & TS_EVENT_SUB_NANOSEC_M;
 		++d_ptr;
 		edge = ((t.nsec >> TS_EVENT_EDGE_S) & TS_EVENT_EDGE_M);
-#if 0
-printk("edge: %d=%x %x\n", i, event->event, edge);
-#endif
 		t.nsec &= TS_EVENT_NANOSEC_M;
 		add_nsec(&t, sub * 8);
 #if 1
@@ -744,16 +740,16 @@ static void ptp_tx_off(struct ptp_info *ptp, u8 tso)
 {
 	u32 ctrl;
 	u16 tso_bit = (1 << tso);
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp_write_index(ptp, PTP_TOU_INDEX_S, tso);
 
 	/* Disable previous trigger out if not already completed. */
-	ctrl = sw_r32(sw, REG_PTP_CTRL_STAT__4);
+	ctrl = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 	ctrl &= ~(TRIG_RESET | TS_RESET);
 	if (ctrl & TRIG_ENABLE) {
 		ctrl &= ~TRIG_ENABLE;
-		sw_w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
+		sw->reg->w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
 	}
 
 	/*
@@ -765,12 +761,12 @@ static void ptp_tx_off(struct ptp_info *ptp, u8 tso)
 		ptp_gpo_reset(ptp, ptp->outputs[tso].gpo, tso, &ctrl);
 		ptp->cascade_tx &= ~tso_bit;
 	} else {
-		ctrl = sw_r32(sw, REG_TRIG_CTRL__4);
+		ctrl = sw->reg->r32(sw, REG_TRIG_CTRL__4);
 		if (ctrl & TRIG_CASCADE_ENABLE) {
 			ctrl &= ~TRIG_CASCADE_ENABLE;
 			ctrl &= ~TRIG_CASCADE_TAIL;
 			ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
-			sw_w32(sw, REG_TRIG_CTRL__4, ctrl);
+			sw->reg->w32(sw, REG_TRIG_CTRL__4, ctrl);
 		}
 	}
 }  /* ptp_tx_off */
@@ -778,7 +774,7 @@ static void ptp_tx_off(struct ptp_info *ptp, u8 tso)
 static void ptp_tx_on(struct ptp_info *ptp, u8 tso)
 {
 	u32 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ctrl = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 	ctrl &= ~(TRIG_RESET | TS_RESET);
@@ -788,10 +784,10 @@ static void ptp_tx_on(struct ptp_info *ptp, u8 tso)
 
 static void ptp_tx_trigger_time(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
-	sw_w32(sw, REG_TRIG_TARGET_SEC, sec);
-	sw_w32(sw, REG_TRIG_TARGET_NANOSEC, nsec);
+	sw->reg->w32(sw, REG_TRIG_TARGET_SEC, sec);
+	sw->reg->w32(sw, REG_TRIG_TARGET_NANOSEC, nsec);
 }  /* ptp_tx_trigger_time */
 
 static u32 trig_event_gpo(u8 gpo, u8 event)
@@ -815,7 +811,7 @@ static void ptp_tx_event(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	u32 pattern = 0;
 	u16 tso_bit = (1 << tso);
 	struct ptp_output *cur = &ptp->outputs[tso];
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	/* Hardware immediately keeps level high on new GPIO if not reset. */
 	if (cur->level && gpo != cur->gpo)
@@ -832,7 +828,7 @@ static void ptp_tx_event(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	if (opt)
 		ctrl |= TRIG_EDGE;
 	ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
-	sw_w32(sw, REG_TRIG_CTRL__4, ctrl);
+	sw->reg->w32(sw, REG_TRIG_CTRL__4, ctrl);
 
 	/* Config pulse width. */
 	if (TRIG_REG_OUTPUT == event) {
@@ -856,7 +852,7 @@ static void ptp_tx_event(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 			pulse = 1;
 		else if (pulse > TRIG_PULSE_WIDTH_M)
 			pulse = TRIG_PULSE_WIDTH_M;
-		sw_w24(sw, REG_TRIG_PULSE_WIDTH__4 + 1, pulse);
+		sw->reg->w24(sw, REG_TRIG_PULSE_WIDTH__4 + 1, pulse);
 	}
 
 	/* Config cycle width. */
@@ -866,12 +862,12 @@ static void ptp_tx_event(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 
 		if (cycle < min_cycle)
 			cycle = min_cycle;
-		sw_w32(sw, REG_TRIG_CYCLE_WIDTH, cycle);
+		sw->reg->w32(sw, REG_TRIG_CYCLE_WIDTH, cycle);
 
 		/* Config trigger count. */
 		data <<= TRIG_CYCLE_CNT_S;
 		pattern |= data;
-		sw_w32(sw, REG_TRIG_CYCLE_CNT, pattern);
+		sw->reg->w32(sw, REG_TRIG_CYCLE_CNT, pattern);
 	}
 
 	cur->len = 0;
@@ -939,7 +935,7 @@ static void ptp_pps_event(struct ptp_info *ptp, u8 gpo, u32 sec)
 	u16 cnt = 0;
 	u8 tso = ptp->pps_tso;
 	u8 event = TRIG_POS_PERIOD;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp_tx_off(ptp, tso);
 
@@ -948,20 +944,20 @@ static void ptp_pps_event(struct ptp_info *ptp, u8 gpo, u32 sec)
 	ctrl |= TRIG_NOTIFY;
 	ctrl |= TRIG_NOW;
 	ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
-	sw_w32(sw, REG_TRIG_CTRL__4, ctrl);
+	sw->reg->w32(sw, REG_TRIG_CTRL__4, ctrl);
 
 	/* Config pulse width. */
 	if (pulse > TRIG_PULSE_WIDTH_M)
 		pulse = TRIG_PULSE_WIDTH_M;
-	sw_w24(sw, REG_TRIG_PULSE_WIDTH__4 + 1, pulse);
+	sw->reg->w24(sw, REG_TRIG_PULSE_WIDTH__4 + 1, pulse);
 
 	/* Config cycle width. */
-	sw_w32(sw, REG_TRIG_CYCLE_WIDTH, cycle);
+	sw->reg->w32(sw, REG_TRIG_CYCLE_WIDTH, cycle);
 
 	/* Config trigger count. */
 	pattern = cnt;
 	pattern <<= TRIG_CYCLE_CNT_S;
-	sw_w32(sw, REG_TRIG_CYCLE_CNT, pattern);
+	sw->reg->w32(sw, REG_TRIG_CYCLE_CNT, pattern);
 
 	/* Config trigger time. */
 	if (ptp->pps_offset >= 0)
@@ -984,7 +980,7 @@ static void cfg_10MHz(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec, u32 nsec)
 	u32 cycle = 200;
 	u16 cnt = 0;
 	u8 event = TRIG_POS_PERIOD;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	/* Config pattern. */
 	ctrl = trig_event_gpo(gpo, event);
@@ -992,20 +988,20 @@ static void cfg_10MHz(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec, u32 nsec)
 	if (1 == tso)
 		ctrl |= TRIG_EDGE;
 	ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
-	sw_w32(sw, REG_TRIG_CTRL__4, ctrl);
+	sw->reg->w32(sw, REG_TRIG_CTRL__4, ctrl);
 
 	/* Config pulse width. */
 	if (pulse > TRIG_PULSE_WIDTH_M)
 		pulse = TRIG_PULSE_WIDTH_M;
-	sw_w32(sw, REG_TRIG_PULSE_WIDTH__4 + 0, pulse);
+	sw->reg->w32(sw, REG_TRIG_PULSE_WIDTH__4 + 0, pulse);
 
 	/* Config cycle width. */
-	sw_w32(sw, REG_TRIG_CYCLE_WIDTH, cycle);
+	sw->reg->w32(sw, REG_TRIG_CYCLE_WIDTH, cycle);
 
 	/* Config trigger count. */
 	pattern = cnt;
 	pattern <<= TRIG_CYCLE_CNT_S;
-	sw_w32(sw, REG_TRIG_CYCLE_CNT, pattern);
+	sw->reg->w32(sw, REG_TRIG_CYCLE_CNT, pattern);
 
 	ptp_tx_trigger_time(ptp, tso, sec, nsec);
 }  /* cfg_10MHz */
@@ -1037,18 +1033,18 @@ static void ptp_10MHz(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec)
 
 static void ptp_tx_cascade_cycle(struct ptp_info *ptp, u8 tso, u32 nsec)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
-	sw_w32(sw, REG_TRIG_ITERATE_TIME, nsec);
+	sw->reg->w32(sw, REG_TRIG_ITERATE_TIME, nsec);
 }  /* ptp_tx_cascade_cycle */
 
 static void ptp_tx_cascade_on(struct ptp_info *ptp, u8 tso, u8 first, u8 last,
 	u16 repeat)
 {
 	u32 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
-	ctrl = sw_r32(sw, REG_TRIG_CTRL__4);
+	ctrl = sw->reg->r32(sw, REG_TRIG_CTRL__4);
 	ctrl |= TRIG_CASCADE_ENABLE;
 	ctrl &= ~trig_cascade(TRIG_CASCADE_UPS_M);
 	if (tso == first)
@@ -1059,7 +1055,7 @@ static void ptp_tx_cascade_on(struct ptp_info *ptp, u8 tso, u8 first, u8 last,
 		ctrl |= TRIG_CASCADE_TAIL;
 		ctrl |= repeat - 1;
 	}
-	sw_w32(sw, REG_TRIG_CTRL__4, ctrl);
+	sw->reg->w32(sw, REG_TRIG_CTRL__4, ctrl);
 }  /* ptp_tx_cascade_on */
 
 static int ptp_tx_cascade(struct ptp_info *ptp, u8 first, u8 total,
@@ -1074,7 +1070,7 @@ static int ptp_tx_cascade(struct ptp_info *ptp, u8 first, u8 total,
 	if (last >= MAX_TRIG_UNIT)
 		return 1;
 	if (check_cascade(ptp, first, total, &repeat, sec, nsec)) {
-		dbg_msg("cascade repeat timing is not right\n");
+		dbg_msg("cascade repeat timing is not right"NL);
 		return 1;
 	}
 	tso = last;
@@ -1103,7 +1099,7 @@ static int ptp_tx_cascade(struct ptp_info *ptp, u8 first, u8 total,
 static void set_ptp_domain(struct ptp_info *ptp, u8 domain)
 {
 	u16 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ctrl = sw->reg->r16(sw, REG_PTP_DOMAIN_VERSION) & ~PTP_DOMAIN_M;
 	ctrl |= domain;
@@ -1114,7 +1110,7 @@ static void set_ptp_mode(struct ptp_info *ptp, u16 mode)
 {
 	u16 val;
 	u16 sav;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	val = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
 	sav = val;
@@ -1145,7 +1141,7 @@ static void synchronize_clk(struct ptp_info *ptp)
 
 static void set_ptp_adjust(struct ptp_info *ptp, u32 adjust)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	sw->reg->w32(sw, REG_PTP_SUBNANOSEC_RATE, adjust);
 }  /* set_ptp_adjust */
@@ -1153,7 +1149,7 @@ static void set_ptp_adjust(struct ptp_info *ptp, u32 adjust)
 static inline void unsyntonize_clk(struct ptp_info *ptp)
 {
 	u16 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ctrl = sw->cached.ptp_clk_ctrl;
 	ctrl &= ~PTP_CLK_ADJ_ENABLE;
@@ -1164,7 +1160,7 @@ static inline void unsyntonize_clk(struct ptp_info *ptp)
 static void syntonize_clk(struct ptp_info *ptp)
 {
 	u16 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ctrl = sw->cached.ptp_clk_ctrl;
 	ctrl |= PTP_CLK_ADJ_ENABLE;
@@ -1172,73 +1168,73 @@ static void syntonize_clk(struct ptp_info *ptp)
 	sw->reg->w16(sw, REG_PTP_CLK_CTRL, ctrl);
 }  /* syntonize_clk */
 
-static u16 get_ptp_delay(struct ptp_info *ptp, uint port, u32 reg)
+static u16 get_ptp_delay(struct ptp_info *ptp, uint p, u32 reg)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
+	u16 data;
 
-	reg = PORT_CTRL_ADDR(port, reg);
-	return sw->reg->r16(sw, reg);
+	sw->ops->p_r16(sw, p, reg, &data);
+	return data;
 }  /* get_ptp_delay */
 
-static void set_ptp_delay(struct ptp_info *ptp, uint port, u32 reg, u16 nsec)
+static void set_ptp_delay(struct ptp_info *ptp, uint p, u32 reg, u16 nsec)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
-	reg = PORT_CTRL_ADDR(port, reg);
-	sw->reg->w16(sw, reg, nsec);
+	sw->ops->p_w16(sw, p, reg, nsec);
 }  /* set_ptp_delay */
 
-static u16 get_ptp_ingress(struct ptp_info *ptp, uint port)
+static u16 get_ptp_ingress(struct ptp_info *ptp, uint p)
 {
-	return get_ptp_delay(ptp, port, REG_PTP_PORT_RX_DELAY__2);
+	return get_ptp_delay(ptp, p, REG_PTP_PORT_RX_DELAY__2);
 }
 
-static u16 get_ptp_egress(struct ptp_info *ptp, uint port)
+static u16 get_ptp_egress(struct ptp_info *ptp, uint p)
 {
-	return get_ptp_delay(ptp, port, REG_PTP_PORT_TX_DELAY__2);
+	return get_ptp_delay(ptp, p, REG_PTP_PORT_TX_DELAY__2);
 }
 
-static short get_ptp_asym(struct ptp_info *ptp, uint port)
+static short get_ptp_asym(struct ptp_info *ptp, uint p)
 {
 	short val;
 
-	val = get_ptp_delay(ptp, port, REG_PTP_PORT_ASYM_DELAY__2);
+	val = get_ptp_delay(ptp, p, REG_PTP_PORT_ASYM_DELAY__2);
 	if (val & 0x8000)
 		val = -(val & ~0x8000);
 	return val;
 }
 
-static u32 get_ptp_link(struct ptp_info *ptp, uint port)
+static u32 get_ptp_link(struct ptp_info *ptp, uint p)
 {
-	u32 reg = PORT_CTRL_ADDR(port, REG_PTP_PORT_LINK_DELAY__4);
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
+	u32 data;
 
-	return sw->reg->r32(sw, reg);
+	sw->ops->p_r32(sw, p, REG_PTP_PORT_LINK_DELAY__4, &data);
+	return data;
 }
 
-static void set_ptp_ingress(struct ptp_info *ptp, uint port, u16 nsec)
+static void set_ptp_ingress(struct ptp_info *ptp, uint p, u16 nsec)
 {
-	set_ptp_delay(ptp, port, REG_PTP_PORT_RX_DELAY__2, nsec);
+	set_ptp_delay(ptp, p, REG_PTP_PORT_RX_DELAY__2, nsec);
 }
 
-static void set_ptp_egress(struct ptp_info *ptp, uint port, u16 nsec)
+static void set_ptp_egress(struct ptp_info *ptp, uint p, u16 nsec)
 {
-	set_ptp_delay(ptp, port, REG_PTP_PORT_TX_DELAY__2, nsec);
+	set_ptp_delay(ptp, p, REG_PTP_PORT_TX_DELAY__2, nsec);
 }
 
-static void set_ptp_asym(struct ptp_info *ptp, uint port, short nsec)
+static void set_ptp_asym(struct ptp_info *ptp, uint p, short nsec)
 {
 	if (nsec < 0)
 		nsec = -nsec | 0x8000;
-	set_ptp_delay(ptp, port, REG_PTP_PORT_ASYM_DELAY__2, nsec);
+	set_ptp_delay(ptp, p, REG_PTP_PORT_ASYM_DELAY__2, nsec);
 }
 
-static void set_ptp_link(struct ptp_info *ptp, uint port, u32 nsec)
+static void set_ptp_link(struct ptp_info *ptp, uint p, u32 nsec)
 {
-	u32 reg = PORT_CTRL_ADDR(port, REG_PTP_PORT_LINK_DELAY__4);
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
-	sw->reg->w32(sw, reg, nsec);
+	sw->ops->p_w32(sw, p, REG_PTP_PORT_LINK_DELAY__4, nsec);
 }
 
 static inline void dbp_tx_ts(char *name, u8 port, u32 timestamp)
@@ -1248,37 +1244,10 @@ static inline void dbp_tx_ts(char *name, u8 port, u32 timestamp)
 
 	timestamp = timestamp_val(timestamp, &overflow);
 	format_nsec(ts, timestamp);
-	dbg_msg("%s p:%d c:%u %08x:%s\n", name, port, overflow, timestamp, ts);
+	dbg_msg("%s p:%d c:%u %08x:%s"NL, name, port, overflow, timestamp, ts);
 }  /* dbp_tx_ts */
 
-static void ptp_setup_udp_msg(struct ptp_dev_info *info, u8 *data, int len,
-	void (*func)(u8 *data, void *param), void *param)
-{
-	u8 buf[MAX_TSM_UDP_LEN];
-	int in_intr = in_interrupt();
-
-	if (len > MAX_TSM_UDP_LEN)
-		len = MAX_TSM_UDP_LEN;
-	if (!in_intr)
-		mutex_lock(&info->lock);
-	memcpy(buf, data, len);
-	if (func)
-		func(buf, param);
-	len += 2;
-	if (info->read_len + len <= info->read_max) {
-		u16 *udp_len = (u16 *) &info->read_buf[info->read_len];
-
-		*udp_len = len;
-		udp_len++;
-		memcpy(udp_len, buf, len - 2);
-		info->read_len += len;
-	}
-	if (!in_intr)
-		mutex_unlock(&info->lock);
-	wake_up_interruptible(&info->wait_udp);
-}  /* ptp_setup_udp_msg */
-
-static void ptp_tsm_resp(u8 *data, void *param)
+static void ptp_tsm_resp(void *data, void *param)
 {
 	struct tsm_db *db = (struct tsm_db *) data;
 	struct ptp_ts *ts = param;
@@ -1293,7 +1262,7 @@ static void ptp_tsm_resp(u8 *data, void *param)
 	db->cur_nsec = db->timestamp;
 }  /* ptp_tsm_resp */
 
-static void ptp_tsm_get_time_resp(u8 *data, void *param)
+static void ptp_tsm_get_time_resp(void *data, void *param)
 {
 	struct tsm_get_time *get = (struct tsm_get_time *) data;
 	struct ptp_utime *t = param;
@@ -1327,7 +1296,7 @@ static void save_tx_ts(struct ptp_info *ptp, struct ptp_tx_ts *tx,
 			struct ksz_ptp_time diff;
 
 			calc_udiff(&htx->ts.t, &ptp->last_rx_ts.t, &diff);
-			dbg_msg("pd: %d\n", diff.nsec);
+			dbg_msg("pd: %d"NL, diff.nsec);
 		} else
 			ptp->last_tx_ts = htx->ts;
 	}
@@ -1342,11 +1311,11 @@ static void save_tx_ts(struct ptp_info *ptp, struct ptp_tx_ts *tx,
 		if (diff < 4 * ptp->delay_ticks) {
 			if (tx->missed) {
 				if (diff > 2 * ptp->delay_ticks)
-					dbg_msg("  caught: %d, %lu; %x=%04x\n",
+					dbg_msg("  caught: %d, %lu; %x=%04x"NL,
 						port, diff, msg,
 						ntohs(db->seqid));
 				if (tx->dev) {
-					ptp_setup_udp_msg(tx->dev,
+					file_dev_setup_msg(tx->dev,
 						tx->data.buf, tx->data.len,
 						ptp_tsm_resp, &tx->ts);
 					tx->dev = NULL;
@@ -1357,7 +1326,7 @@ static void save_tx_ts(struct ptp_info *ptp, struct ptp_tx_ts *tx,
 				tx->req_time = 0;
 			}
 		} else {
-			dbg_msg("  new: %d, %lu; %x=%04x\n", port, diff,
+			dbg_msg("  new: %d, %lu; %x=%04x"NL, port, diff,
 				msg, ntohs(db->seqid));
 		}
 		tx->missed = false;
@@ -1366,7 +1335,7 @@ static void save_tx_ts(struct ptp_info *ptp, struct ptp_tx_ts *tx,
 		int len;
 		u64 ns;
 		struct skb_shared_hwtstamps shhwtstamps;
-		struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+		struct ksz_sw *sw = ptp->parent;
 
 		if (ptp->tx_en & (1 << 8))
 			ns = (u64) tx->ts.t.sec * NANOSEC_IN_SEC +
@@ -1394,7 +1363,7 @@ static void save_tx_ts(struct ptp_info *ptp, struct ptp_tx_ts *tx,
 static int get_speed_index(struct ptp_info *ptp, uint port)
 {
 	int index;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_port_info *info = get_port_info(sw, port);
 	int speed = (media_connected == info->state) ?
 		info->tx_rate / TX_RATE_UNIT : 0;
@@ -1408,7 +1377,7 @@ static int get_speed_index(struct ptp_info *ptp, uint port)
 	return index;
 }  /* get_speed_index */
 
-static int get_tx_time(struct ptp_info *ptp, uint port, u16 status)
+static int get_tx_time(struct ptp_info *ptp, uint port, uint p, u16 status)
 {
 	int delay;
 	int index;
@@ -1416,7 +1385,7 @@ static int get_tx_time(struct ptp_info *ptp, uint port, u16 status)
 	u32 *timestamp = NULL;
 	struct ptp_tx_ts *tx = NULL;
 	struct ptp_hw_ts *htx = NULL;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	index = get_speed_index(ptp, port);
 	while (status) {
@@ -1438,8 +1407,7 @@ static int get_tx_time(struct ptp_info *ptp, uint port, u16 status)
 			status &= ~PTP_PORT_PDELAY_RESP_INT;
 			timestamp = &ptp->pdelay_resp_timestamp[port];
 		}
-		htx->ts.timestamp = sw->reg->r32(sw,
-			PORT_CTRL_ADDR(port, reg));
+		sw->ops->p_r32(sw, p, reg, &htx->ts.timestamp);
 		if (timestamp && *timestamp) {
 			htx->ts.timestamp = *timestamp;
 			delay = 0;
@@ -1472,6 +1440,7 @@ static void generate_tx_event(struct ptp_info *ptp, int gpo)
 		ptp->reg->ptp_10MHz(ptp, ptp->mhz_tso, ptp->mhz_gpo, t.sec);
 	schedule_delayed_work(&ptp->update_sec, (1000000 - t.nsec / 1000) * HZ
 		/ 1000000);
+	ptp->clk_add = 0;
 }  /* generate_tx_event */
 
 static void ptp_check_pps(struct work_struct *work)
@@ -1532,17 +1501,15 @@ static void prepare_pps(struct ptp_info *ptp)
 
 static void ptp_tx_intr_enable(struct ptp_info *ptp)
 {
-	u32 reg;
 	uint n;
 	uint p;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	for (n = 1; n <= ptp->ports; n++) {
 		p = get_phy_port(sw, n);
-		reg = PORT_CTRL_ADDR(p, REG_PTP_PORT_TX_INT_STATUS__2);
-		sw->reg->w16(sw, reg, 0xffff);
-		reg = PORT_CTRL_ADDR(p, REG_PTP_PORT_TX_INT_ENABLE__2);
-		sw->reg->w16(sw, reg, ptp->tx_intr);
+		sw->ops->p_w16(sw, p, REG_PTP_PORT_TX_INT_STATUS__2, 0xffff);
+		sw->ops->p_w16(sw, p, REG_PTP_PORT_TX_INT_ENABLE__2,
+			       ptp->tx_intr);
 	}
 }  /* ptp_tx_intr_enable */
 
@@ -1555,7 +1522,7 @@ static int ptp_poll_event(struct ptp_info *ptp, u8 tsi)
 	u32 status;
 	u16 tsi_bit = (1 << tsi);
 	struct ptp_event *event = &ptp->events[tsi];
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp->ops->acquire(ptp);
 	ptp_write_index(ptp, PTP_TSI_INDEX_S, tsi);
@@ -1589,7 +1556,7 @@ static void convert_scaled_nsec(s64 scaled_nsec, int s, s64 *sec, int *nsec)
 	} else
 		sign = 1;
 	scaled_nsec >>= s;
-	quot = div_u64_rem(scaled_nsec, NSEC_PER_SEC, &rem);
+	quot = div_u64_u32_rem(scaled_nsec, NANOSEC_IN_SEC, &rem);
 	*sec = quot;
 	*nsec = (int) rem;
 
@@ -1604,13 +1571,15 @@ static void adj_cur_time(struct ptp_info *ptp)
 {
 	if (ptp->adjust_offset || ptp->adjust_sec) {
 		synchronize_clk(ptp);
-		if (ptp->sec_changed)
+		if (ptp->sec_changed || ptp->clk_add)
 			generate_tx_event(ptp, ptp->pps_gpo);
+#ifndef NO_PPS_DETECT
 		else {
 			ptp->update_sec_jiffies = jiffies;
 			schedule_delayed_work(&ptp->check_pps,
 					      msecs_to_jiffies(1200));
 		}
+#endif
 	}
 	if (ptp->sec_changed) {
 		struct timespec ts;
@@ -1706,7 +1675,7 @@ static void adj_clock(struct work_struct *work)
 static void set_latency(struct work_struct *work)
 {
 	struct ptp_info *ptp = container_of(work, struct ptp_info, set_latency);
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	int index;
 	uint n;
 	uint p;
@@ -1716,9 +1685,6 @@ static void set_latency(struct work_struct *work)
 		p = get_phy_port(sw, n);
 		if (ptp->link_ports & (1 << p)) {
 			index = get_speed_index(ptp, p);
-#if 0
-dbg_msg("%s %d:%d=%d\n", __func__, n, p, index);
-#endif
 			set_ptp_ingress(ptp, p, ptp->rx_latency[p][index]);
 			set_ptp_egress(ptp, p, ptp->tx_latency[p][index]);
 		}
@@ -1736,7 +1702,7 @@ static void ptp_hw_disable(struct ptp_info *ptp)
 {
 	int i;
 	u32 ctrl;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	for (i = 0; i < 2; i++) {
 		sw->cached.ptp_unit_index =
@@ -1765,13 +1731,13 @@ static void ptp_hw_enable(struct ptp_info *ptp)
 	uint p;
 	int index;
 	u16 data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp->ops->acquire(ptp);
 	ptp_hw_disable(ptp);
 #ifndef ACL_TEST
 	data = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
-dbg_msg("msg_conf1: %x\n", data);
+dbg_msg("msg_conf1: %x"NL, data);
 	data = ptp->mode;
 	sw->reg->w16(sw, REG_PTP_MSG_CONF1, data);
 	data = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
@@ -1779,10 +1745,10 @@ dbg_msg("msg_conf1: %x\n", data);
 		sw->overrides |= PTP_TAG;
 #endif
 	data = sw->reg->r16(sw, REG_PTP_MSG_CONF2);
-dbg_msg("msg_conf2: %x\n", data);
+dbg_msg("msg_conf2: %x"NL, data);
 	sw->reg->w16(sw, REG_PTP_MSG_CONF2, ptp->cfg);
 	data = sw->reg->r16(sw, REG_PTP_CLK_CTRL);
-dbg_msg("clk_ctrl: %x\n", data);
+dbg_msg("clk_ctrl: %x"NL, data);
 	data |= PTP_CLK_ENABLE;
 	data &= ~PTP_CLK_ADJ_ENABLE;
 	sw->cached.ptp_clk_ctrl = data;
@@ -1825,15 +1791,16 @@ static void init_tx_ts(struct ptp_tx_ts *ts)
 static void ptp_init_hw(struct ptp_info *ptp)
 {
 	uint n;
+	uint p;
 	uint port;
-	u32 reg;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp->ops->acquire(ptp);
 	for (n = 1; n <= ptp->ports; n++) {
 		int index;
 
 		port = get_phy_port(sw, n);
+		p = port;
 		ptp->hw_sync[port].ts.timestamp = 0;
 		ptp->hw_sync[port].sending = false;
 		ptp->hw_dreq[port].ts.timestamp = 0;
@@ -1843,21 +1810,21 @@ static void ptp_init_hw(struct ptp_info *ptp)
 		init_tx_ts(&ptp->tx_sync[port]);
 		init_tx_ts(&ptp->tx_dreq[port]);
 		init_tx_ts(&ptp->tx_resp[port]);
-		reg = PORT_CTRL_ADDR(port, REG_PTP_PORT_XDELAY_TS);
-		ptp->xdelay_ts[port] = sw->reg->r32(sw, reg);
-		reg = PORT_CTRL_ADDR(port, REG_PTP_PORT_PDRESP_TS);
-		ptp->pdresp_ts[port] = sw->reg->r32(sw, reg);
+		sw->ops->p_r32(sw, p, REG_PTP_PORT_XDELAY_TS,
+			       &ptp->xdelay_ts[port]);
+		sw->ops->p_r32(sw, p, REG_PTP_PORT_PDRESP_TS,
+			       &ptp->pdresp_ts[port]);
 		index = get_speed_index(ptp, port);
-		ptp->rx_latency[port][index] = get_ptp_ingress(ptp, port);
-		ptp->tx_latency[port][index] = get_ptp_egress(ptp, port);
-		ptp->asym_delay[port][index] = get_ptp_asym(ptp, port);
-		ptp->peer_delay[port] = get_ptp_link(ptp, port);
-		dbg_msg("%d = %d %d %d; %u\n", port,
+		ptp->rx_latency[port][index] = get_ptp_ingress(ptp, p);
+		ptp->tx_latency[port][index] = get_ptp_egress(ptp, p);
+		ptp->asym_delay[port][index] = get_ptp_asym(ptp, p);
+		ptp->peer_delay[port] = get_ptp_link(ptp, p);
+		dbg_msg("%d = %d %d %d; %u"NL, port,
 			ptp->rx_latency[port][index],
 			ptp->tx_latency[port][index],
 			ptp->asym_delay[port][index],
 			ptp->peer_delay[port]);
-		set_ptp_link(ptp, port, 0);
+		set_ptp_link(ptp, p, 0);
 		ptp->peer_delay[port] = 0;
 	}
 	ptp->ops->release(ptp);
@@ -1867,14 +1834,14 @@ static void ptp_check(struct ptp_info *ptp)
 {
 	struct ptp_utime cur;
 	struct ptp_utime now;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp->features |= PTP_ADJ_HACK;
 	ptp->ops->acquire(ptp);
 	ptp->reg->get_time(ptp, &cur);
 	ptp->reg->adjust_time(ptp, true, 10, 0, true);
 	ptp->reg->get_time(ptp, &now);
-dbg_msg("%08x:%08x %08x:%08x\n", cur.sec, cur.nsec, now.sec, now.nsec);
+dbg_msg("%08x:%08x %08x:%08x"NL, cur.sec, cur.nsec, now.sec, now.nsec);
 	if (now.sec - cur.sec >= 10) {
 		ptp->features &= ~PTP_ADJ_HACK;
 		ptp->features |= PTP_ADJ_SEC;
@@ -1900,10 +1867,10 @@ dbg_msg("%08x:%08x %08x:%08x\n", cur.sec, cur.nsec, now.sec, now.nsec);
 		ptp->reg->set_time(ptp, &cur);
 		ptp->reg->adjust_time(ptp, false, 0, 800000000, false);
 		ptp->reg->get_time(ptp, &now);
-		dbg_msg("%x:%u %x:%u\n", cur.sec, cur.nsec, now.sec, now.nsec);
+		dbg_msg("%x:%u %x:%u"NL, cur.sec, cur.nsec, now.sec, now.nsec);
 		if (abs(now.sec - cur.sec) > 2) {
 			ptp->reg->get_time(ptp, &now);
-			dbg_msg("! %x:%u\n", now.sec, now.nsec);
+			dbg_msg("! %x:%u"NL, now.sec, now.nsec);
 			ptp->features |= PTP_ADJ_HACK;
 			sw->reg->w16(sw, REG_PTP_CLK_CTRL, data);
 
@@ -1912,7 +1879,7 @@ dbg_msg("%08x:%08x %08x:%08x\n", cur.sec, cur.nsec, now.sec, now.nsec);
 			ptp->reg->set_time(ptp, &cur);
 			ptp->reg->adjust_time(ptp, false, 0, 800000000, true);
 			ptp->reg->get_time(ptp, &now);
-			dbg_msg("ok %x:%u\n", now.sec, now.nsec);
+			dbg_msg("ok %x:%u"NL, now.sec, now.nsec);
 		}
 		sw->cached.ptp_clk_ctrl = data;
 		sw->reg->w16(sw, REG_PTP_CLK_CTRL, data);
@@ -1926,7 +1893,7 @@ static void ptp_start(struct ptp_info *ptp, int init)
 	u32 ctrl;
 	struct timespec ts;
 	struct ptp_utime t;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	if (!ptp->version) {
 		ptp_hw_enable(ptp);
@@ -1938,10 +1905,10 @@ static void ptp_start(struct ptp_info *ptp, int init)
 	if (init && (sw->features & NEW_CAP))
 		ptp_hw_enable(ptp);
 	ptp->ops->acquire(ptp);
-	ctrl = sw_r16(sw, REG_PTP_MSG_CONF1);
+	ctrl = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
 	if (ctrl == ptp->mode) {
-		ptp->cfg = sw_r16(sw, REG_PTP_MSG_CONF2);
-		ptp->domain = sw_r16(sw, REG_PTP_DOMAIN_VERSION) &
+		ptp->cfg = sw->reg->r16(sw, REG_PTP_MSG_CONF2);
+		ptp->domain = sw->reg->r16(sw, REG_PTP_DOMAIN_VERSION) &
 			PTP_DOMAIN_M;
 		if (!init) {
 			ptp->ops->release(ptp);
@@ -1950,17 +1917,17 @@ static void ptp_start(struct ptp_info *ptp, int init)
 	} else if (!init)
 		ptp->mode = ctrl;
 	if (ptp->mode != ptp->def_mode) {
-		dbg_msg("mode changed: %04x %04x; %04x %04x\n",
+		dbg_msg("mode changed: %04x %04x; %04x %04x"NL,
 			ptp->mode, ptp->def_mode, ptp->cfg, ptp->def_cfg);
 		ptp->mode = ptp->def_mode;
 		ptp->cfg = ptp->def_cfg;
 		ptp->ptp_synt = false;
 	}
-	dbg_msg("ptp_start: %04x %04x\n",
+	dbg_msg("ptp_start: %04x %04x"NL,
 		ptp->mode, ptp->cfg);
-	sw_w16(sw, REG_PTP_MSG_CONF1, ptp->mode);
-	sw_w16(sw, REG_PTP_MSG_CONF2, ptp->cfg);
-	sw_w32(sw, REG_PTP_INT_STATUS__4, 0xffffffff);
+	sw->reg->w16(sw, REG_PTP_MSG_CONF1, ptp->mode);
+	sw->reg->w16(sw, REG_PTP_MSG_CONF2, ptp->cfg);
+	sw->reg->w32(sw, REG_PTP_INT_STATUS__4, 0xffffffff);
 	if (sw->overrides & TAIL_TAGGING)
 		sw->overrides |= PTP_TAG;
 	ptp->tx_intr = PTP_PORT_XDELAY_REQ_INT;
@@ -1991,19 +1958,6 @@ static void save_msg_info(struct ptp_info *ptp, struct ptp_msg_info *info,
 {
 	struct ptp_msg_options *data = &info->data;
 
-#if 0
-dbg_msg("save %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x.%04x %x %04x %x %d=%08x\n",
-hdr->sourcePortIdentity.clockIdentity.addr[0],
-hdr->sourcePortIdentity.clockIdentity.addr[1],
-hdr->sourcePortIdentity.clockIdentity.addr[2],
-hdr->sourcePortIdentity.clockIdentity.addr[3],
-hdr->sourcePortIdentity.clockIdentity.addr[4],
-hdr->sourcePortIdentity.clockIdentity.addr[5],
-hdr->sourcePortIdentity.clockIdentity.addr[6],
-hdr->sourcePortIdentity.clockIdentity.addr[7],
-hdr->sourcePortIdentity.port,
-hdr->messageType, hdr->sequenceId, hdr->domainNumber, port, timestamp);
-#endif
 	memcpy(&data->id, &hdr->sourcePortIdentity,
 		sizeof(struct ptp_port_identity));
 	data->seqid = hdr->sequenceId;
@@ -2137,11 +2091,11 @@ static int ptp_stop(struct ptp_info *ptp, int hw_access)
 	return false;
 }  /* ptp_stop */
 
-static struct ptp_dev_info *find_minor_dev(struct ptp_dev_info *info)
+static struct file_dev_info *find_minor_dev(struct file_dev_info *info)
 {
-	struct ptp_info *ptp = info->ptp;
-	struct ptp_dev_info *dev;
-	struct ptp_dev_info *prev;
+	struct ptp_info *ptp = info->dev;
+	struct file_dev_info *dev;
+	struct file_dev_info *prev;
 
 	dev = ptp->dev[info->minor ^ 1];
 	prev = ptp->dev[info->minor];
@@ -2156,7 +2110,6 @@ static struct ptp_dev_info *find_minor_dev(struct ptp_dev_info *info)
 
 static void ptp_init_state(struct ptp_info *ptp)
 {
-	u32 reg;
 	struct ptp_utime t;
 	struct ptp_msg_info *tx_msg;
 
@@ -2165,9 +2118,6 @@ static void ptp_init_state(struct ptp_info *ptp)
 		return;
 	}
 	mutex_lock(&ptp->lock);
-	ptp->udp_head = ptp->udp_tail = 0;
-	for (reg = 0; reg < MAX_TSM_UDP_CNT; reg++)
-		ptp->udp[reg].len = 0;
 	tx_msg = &ptp->tx_msg_info[7];
 	tx_msg->data.port = 0;
 	tx_msg->data.ts.timestamp = 0;
@@ -2223,7 +2173,7 @@ static void ptp_exit_state(struct ptp_info *ptp)
 	}
 	if (ptp->mode & PTP_MASTER) {
 		u16 data;
-		struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+		struct ksz_sw *sw = ptp->parent;
 
 		ptp->ops->acquire(ptp);
 		data = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
@@ -2473,7 +2423,7 @@ static void get_rx_tstamp(void *ptr, struct sk_buff *skb)
 
 static void get_tx_tstamp(struct ptp_info *ptp, struct sk_buff *skb)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	int cnt;
 	uint m;
 	uint n;
@@ -2607,7 +2557,7 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 static int ptp_chk_rx_msg(struct ptp_info *ptp, u8 *data, uint port)
 {
 	struct ptp_msg *msg;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	/* Use previously parsed PTP message if available. */
 	msg = ptp->rx_msg;
@@ -2627,10 +2577,10 @@ static int ptp_chk_rx_msg(struct ptp_info *ptp, u8 *data, uint port)
 static int ptp_drop_pkt(struct ptp_info *ptp, struct sk_buff *skb, u32 vlan_id,
 	int *tag, int *ptp_tag, int *forward)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	/* Not PTP message. */
-	if (!(sw->tag.ports & 0x80))
+	if (!get_rx_tag_ptp(&sw->tag))
 		return false;
 	do {
 		u16 vid;
@@ -2648,7 +2598,7 @@ static int ptp_drop_pkt(struct ptp_info *ptp, struct sk_buff *skb, u32 vlan_id,
 		if (*protocol == ntohs(0x88F7) && vid != ptp->vid)
 			return true;
 	} while (0);
-	*ptp_tag = sw->tag.ports & ~0x80;
+	*ptp_tag = get_rx_tag_ports(&sw->tag);
 	ptp->ops->get_rx_info(ptp, skb->data, *ptp_tag, sw->tag.timestamp);
 	*forward = ptp->forward;
 	if (!ptp->op_state) {
@@ -2683,7 +2633,7 @@ static void set_msg_info(struct ptp_info *ptp, struct ptp_msg_hdr *hdr,
 }  /* set_msg_info */
 
 static int proc_ptp_hw_access(struct ptp_info *ptp, int cmd, int subcmd,
-	int option, void *data, size_t len, struct ptp_dev_info *info,
+	int option, void *data, size_t len, struct file_dev_info *info,
 	int *output, int wait);
 
 #ifdef DBG_PROC_SYNC
@@ -2741,13 +2691,13 @@ static struct ksz_ptp_time last_offset;
 	if (!sync.sec)
 		return;
 	if (sync_corr) {
-		u32 rem;
+		s32 rem;
 
 		corr = ts.t.sec;
 		corr *= NANOSEC_IN_SEC;
 		corr += ts.t.nsec;
 		corr -= sync_corr;
-		corr = div_s64_rem(corr, NANOSEC_IN_SEC, &rem);
+		corr = div_s64_s32_rem(corr, NANOSEC_IN_SEC, &rem);
 		ts.t.sec = (u32) corr;
 		ts.t.nsec = rem;
 	}
@@ -2797,14 +2747,12 @@ static struct ksz_ptp_time last_offset;
 		drift_per_sec *= NANOSEC_IN_SEC;
 		drift_per_sec += abs(drift.nsec);
 		drift_per_sec *= NANOSEC_IN_SEC;
-		drift_per_sec = div64_s64(drift_per_sec, nsec);
-		avg = div64_s64(cur_recv, cur_sync);
+		drift_per_sec = div_s64_s64(drift_per_sec, nsec);
+		avg = div_s64_s64(cur_recv, cur_sync);
 	}
 	if (sync_corr) {
-		u32 rem;
-
 		cur_recv = avg * nsec;
-		cur_recv = div_s64_rem(cur_recv, NANOSEC_IN_SEC, &rem);
+		cur_recv = div_s64_u32(cur_recv, NANOSEC_IN_SEC);
 		cur_recv += nsec;
 		corr = last_rcv.sec;
 		corr *= NANOSEC_IN_SEC;
@@ -2814,13 +2762,13 @@ static struct ksz_ptp_time last_offset;
 		corr *= NANOSEC_IN_SEC;
 		corr += recv.nsec;
 		corr -= cur_recv;
-printk(" corr: %lld %lld %lld\n", sync_corr, corr, corr - sync_corr);
+printk(" corr: %lld %lld %lld"NL, sync_corr, corr, corr - sync_corr);
 		sync_corr = 0;
 	}
-dbg_msg("sync: %x:%9u %x:%9u p:%10lld d:%lld a:%lld %lld\n",
+dbg_msg("sync: %x:%9u %x:%9u p:%10lld d:%lld a:%lld %lld"NL,
 ts.t.sec, ts.t.nsec,
 sync.sec, sync.nsec, nsec, drift_per_sec, avg, drift_per_sec - avg);
-dbg_msg("o: %d\n", offset.nsec);
+dbg_msg("o: %d"NL, offset.nsec);
 #if 0
 	if (nsec && nsec < 5000000000) {
 		struct ptp_clk_options clk_opt;
@@ -2912,7 +2860,7 @@ static struct ptp_msg *ptp_set_rx_info(struct ptp_info *ptp, u8 *data, u8 port,
 	if (seqid) {
 		if (((*seqid + 1) & 0xffff) != ntohs(msg->hdr.sequenceId) &&
 		    *seqid)
-			printk(KERN_INFO " %d=%x:%04x %04x\n", port,
+			printk(KERN_INFO " %d=%x:%04x %04x"NL, port,
 			       msg->hdr.messageType, *seqid,
 			       ntohs(msg->hdr.sequenceId));
 		*seqid = ntohs(msg->hdr.sequenceId);
@@ -3004,13 +2952,13 @@ static void ptp_get_rx_info(struct ptp_info *ptp, u8 *data, u8 port,
 
 			calc_udiff(&ptp->last_tx_ts.t, &rx_msg->data.ts.t,
 				&diff);
-			dbg_msg("pd: %d\n", diff.nsec);
+			dbg_msg("pd: %d"NL, diff.nsec);
 		} else
 			ptp->last_rx_ts = rx_msg->data.ts;
 	}
 #if 0
 	if (ptp->overrides & PTP_CHECK_SYNC_TIME)
-dbg_msg(" %x; %08x; %x:%09u\n", ptp->cur_time.sec, timestamp,
+dbg_msg(" %x; %08x; %x:%09u"NL, ptp->cur_time.sec, timestamp,
 rx_msg->data.ts.t.sec, rx_msg->data.ts.t.nsec);
 #endif
 
@@ -3062,9 +3010,10 @@ rx_msg->data.ts.t.sec, rx_msg->data.ts.t.nsec);
 
 static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	int found;
 	bool dest;
+	bool prio;
 	struct ptp_msg *msg;
 	struct ptp_msg_options tx_msg;
 	struct ksz_sw_tx_tag *tag = ptr;
@@ -3077,8 +3026,9 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 	ptp->tx_msg = ptp_get_tx_info(ptp, data, &tx_msg.port,
 		&tx_msg.ts.timestamp);
 	dest = false;
-	if (tag->ports & sw->PORT_MASK)
+	if (get_tx_tag_ports(sw, tag))
 		dest = true;
+	prio = dest;
 	if (!ptp->tx_msg) {
 
 		/* Block PTP messages for blocked ports. */
@@ -3088,11 +3038,11 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 				ptp->tx_msg_parsed = true;
 			}
 			if (ptp->tx_msg)
-				tag->ports = sw->on_ports;
+				set_tx_tag_ports(tag, sw->on_ports);
 		}
 
 		/* Remember transmit ports for transmit timestamp report. */
-		ptp->tx_ports = tag->ports;
+		ptp->tx_ports = get_tx_tag_ports(sw, tag);
 		return;
 	}
 	msg = ptp->tx_msg;
@@ -3110,7 +3060,7 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 		if (tx_msg.port)
 			bits = tx_msg.port;
 		else
-			bits = tag->ports;
+			bits = get_tx_tag_ports(sw, tag);
 		bits &= sw->PORT_MASK;
 		while (bits) {
 			if ((bits & 1) && bits != 1) {
@@ -3199,10 +3149,15 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 
 	if (found || tx_msg.port) {
 		if (tx_msg.port) {
+			uint ports;
+
 			if (1 == found)
-				tag->ports = (1 << tx_msg.port);
+				ports = (1 << tx_msg.port);
 			else
-				tag->ports = tx_msg.port;
+				ports = tx_msg.port;
+			if (ports)
+				prio = true;
+			set_tx_tag_ports(tag, ports);
 		}
 		goto set_tx_info_done;
 	} else if (ptp->op_mode != 3)
@@ -3251,20 +3206,21 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 	}
 
 	if (found)
-		tag->ports = (1 << tx_msg.port);
-dbg_msg("  tx m:%x f:%d p:%x\n", msg->hdr.messageType, found, tag->ports);
+		set_tx_tag_ports(tag, (1 << tx_msg.port));
+dbg_msg("  tx m:%x f:%d p:%x"NL, msg->hdr.messageType, found,
+get_tx_tag_ports(sw, tag));
 
 set_tx_info_done:
 	if ((sw->features & USE_802_1X_AUTH) && !dest) {
-		tag->ports = sw->on_ports;
+		set_tx_tag_ports(tag, sw->on_ports);
 	}
 
 	/* Remember transmit ports for transmit timestamp report. */
-	ptp->tx_ports = tag->ports;
+	ptp->tx_ports = get_tx_tag_ports(sw, tag);
 
 	/* Need destination ports for queue assignment to work. */
-	if (dest)
-		tag->ports |= sw->ctrl_queue << sw->TAIL_TAG_SHIFT;
+	if (prio)
+		set_tx_tag_queue(sw, tag, sw->ctrl_queue);
 
 	do {
 		uint m;
@@ -3304,6 +3260,9 @@ set_tx_info_done:
 			tx = &xtx[p];
 			memcpy(&tx->hdr, &msg->hdr,
 				sizeof(struct ptp_msg_hdr));
+
+			/* Clear previous timestamp if any exists. */
+			tx->ts.timestamp = 0;
 		}
 	} while (0);
 }  /* ptp_set_tx_info */
@@ -3311,7 +3270,7 @@ set_tx_info_done:
 static void proc_ptp_get_cfg(struct ptp_info *ptp, u8 *data)
 {
 	struct ptp_cfg_options *cmd = (struct ptp_cfg_options *) data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp->ops->acquire(ptp);
 	ptp->mode = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
@@ -3323,7 +3282,7 @@ static void proc_ptp_get_cfg(struct ptp_info *ptp, u8 *data)
 
 	/* Check mode in case the switch is reset outside of driver control. */
 	if (ptp->mode != ptp->def_mode && ptp->started) {
-		dbg_msg("mode mismatched: %04x %04x; %04x %04x\n",
+		dbg_msg("mode mismatched: %04x %04x; %04x %04x"NL,
 			ptp->mode, ptp->def_mode, ptp->cfg, ptp->def_cfg);
 		ptp->mode = ptp->def_mode;
 		ptp->cfg = ptp->def_cfg;
@@ -3352,7 +3311,7 @@ static int proc_ptp_set_cfg(struct ptp_info *ptp, u8 *data)
 	u16 cfg;
 	u16 mode;
 	u8 domain;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	mode = ptp->mode;
 	cfg = ptp->cfg;
@@ -3455,7 +3414,7 @@ static int proc_ptp_set_cfg(struct ptp_info *ptp, u8 *data)
 		else
 			ptp->tx_intr |=
 				(PTP_PORT_SYNC_INT | PTP_PORT_PDELAY_RESP_INT);
-		dbg_msg("mode: %x %x; %x\n", mode, ptp->mode, ptp->tx_intr);
+		dbg_msg("mode: %x %x; %x"NL, mode, ptp->mode, ptp->tx_intr);
 		mode = ptp->mode;
 		if (ptp->overrides & PTP_VERIFY_TIMESTAMP)
 			mode |= PTP_1STEP;
@@ -3465,7 +3424,7 @@ static int proc_ptp_set_cfg(struct ptp_info *ptp, u8 *data)
 			ptp_tx_intr_enable(ptp);
 	}
 	if (cfg != ptp->cfg) {
-		dbg_msg("cfg: %x %x\n", cfg, ptp->cfg);
+		dbg_msg("cfg: %x %x"NL, cfg, ptp->cfg);
 		sw->reg->w16(sw, REG_PTP_MSG_CONF2, ptp->cfg);
 	}
 	if (domain != ptp->domain) {
@@ -3509,7 +3468,7 @@ static void cancel_rx_unit(struct ptp_info *ptp, int tsi)
 			ptp->tsi_intr &= ~tsi_bit;
 			ptp->tsi_used &= ~tsi_bit;
 			if (ptp->tsi_sys & tsi_bit) {
-				printk(KERN_INFO "tsi %d off!\n", tsi);
+				printk(KERN_INFO "tsi %d off!"NL, tsi);
 				ptp->tsi_sys &= ~tsi_bit;
 				ptp->update_sec_jiffies = jiffies;
 				schedule_delayed_work(&ptp->update_sec,
@@ -3525,7 +3484,6 @@ static void cancel_rx_unit(struct ptp_info *ptp, int tsi)
 static int check_expired_rx_unit(struct ptp_info *ptp, int tsi)
 {
 	int first;
-	int last;
 	u32 expired;
 	struct ptp_event *events;
 	struct ksz_ptp_time diff;
@@ -3533,11 +3491,8 @@ static int check_expired_rx_unit(struct ptp_info *ptp, int tsi)
 
 	events = &ptp->events[tsi];
 	first = tsi;
-	if (events->last) {
+	if (events->last)
 		first = events->first;
-		last = events->last;
-	} else
-		last = first + 1;
 	events = &ptp->events[first];
 	if (events->num && events->timeout) {
 		ptp->ops->acquire(ptp);
@@ -3556,9 +3511,9 @@ static int check_expired_rx_unit(struct ptp_info *ptp, int tsi)
 	return 0;
 }  /* check_expired_rx_unit */
 
-static int proc_dev_rx_event(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_rx_event(struct file_dev_info *info, u8 *data)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	struct ptp_tsi_options *cmd = (struct ptp_tsi_options *) data;
 	u8 event;
 	int first;
@@ -3704,9 +3659,9 @@ static int find_avail_tx_unit(struct ptp_info *ptp, int total, int *unit)
 	return 0;
 }  /* find_avail_tx_unit */
 
-static int proc_dev_tx_event(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_tx_event(struct file_dev_info *info, u8 *data)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	struct ptp_tso_options *cmd = (struct ptp_tso_options *) data;
 	int gpo;
 	int intr;
@@ -3716,7 +3671,7 @@ static int proc_dev_tx_event(struct ptp_dev_info *info, u8 *data)
 	u16 active;
 	u32 status;
 	int err = 0;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	gpo = cmd->gpo;
 	if (gpo >= MAX_GPIO)
@@ -3763,7 +3718,7 @@ static int proc_dev_tx_event(struct ptp_dev_info *info, u8 *data)
 
 			if (!(error & tso_bit))
 				return DEV_IOC_UNIT_USED;
-			dbg_msg("trig err: %d\n", tso);
+			dbg_msg("trig err: %d"NL, tso);
 		}
 		if (!(active & TRIG_ACTIVE)) {
 			u16 done = status & PTP_TRIG_UNIT_M;
@@ -3771,7 +3726,7 @@ static int proc_dev_tx_event(struct ptp_dev_info *info, u8 *data)
 			if (!(done & tso_bit)) {
 				/* Reset the unit. */
 				ptp->cascade_tx |= tso_bit;
-				dbg_msg(" !? trig done: %d\n", tso);
+				dbg_msg(" !? trig done: %d"NL, tso);
 			}
 		}
 		ptp->ops->acquire(ptp);
@@ -3826,7 +3781,7 @@ static int proc_ptp_tx_cascade_init(struct ptp_info *ptp, u8 *data)
 	int tso;
 	int total;
 	u32 status;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	tso = cmd->tso;
 	gpo = cmd->gpo;
@@ -3930,7 +3885,6 @@ proc_ptp_tx_cascade_init_done:
 static int proc_ptp_tx_cascade(struct ptp_info *ptp, u8 *data)
 {
 	struct ptp_tso_options *cmd = (struct ptp_tso_options *) data;
-	int first;
 	int gpo;
 	int tso;
 	int total;
@@ -3941,7 +3895,6 @@ static int proc_ptp_tx_cascade(struct ptp_info *ptp, u8 *data)
 		return -EINVAL;
 	tso = cmd->tso;
 	total = cmd->total;
-	first = tso;
 	if (!ptp->cascade || tso != ptp->cascade_gpo[gpo].first ||
 			total != ptp->cascade_gpo[gpo].total)
 		return DEV_IOC_UNIT_UNAVAILABLE;
@@ -3978,14 +3931,14 @@ static void proc_tsm_get_gps(struct ptp_info *ptp, u8 *data)
 	get->seqid = htons(ptp->gps_seqid);
 	get->sec = htonl(ptp->gps_time.sec);
 	get->nsec = htonl(ptp->gps_time.nsec);
-	ptp_setup_udp_msg(ptp->gps_dev, data, sizeof(struct tsm_get_gps),
+	file_dev_setup_msg(ptp->gps_dev, data, sizeof(struct tsm_get_gps),
 		NULL, NULL);
 	ptp->gps_dev = NULL;
 }  /* proc_tsm_get_gps */
 
-static int proc_dev_get_event(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_get_event(struct file_dev_info *info, u8 *data)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	int len;
 	struct ptp_tsi_info *in = (struct ptp_tsi_info *) data;
 	u8 buf[sizeof(struct ptp_utime) * MAX_TIMESTAMP_EVENT_UNIT +
@@ -4004,7 +3957,7 @@ static int proc_dev_get_event(struct ptp_dev_info *info, u8 *data)
 	len = sizeof(struct ptp_utime) * out->num;
 	memcpy(out->t, ptp->events[in->unit].t, len);
 	len += sizeof(struct ptp_tsi_info);
-	ptp_setup_udp_msg(info, buf, len, NULL, NULL);
+	file_dev_setup_msg(info, buf, len, NULL, NULL);
 	return 0;
 }  /* proc_dev_get_event */
 
@@ -4043,15 +3996,15 @@ static int proc_ptp_get_trig(struct ptp_info *ptp, u8 *data, u16 done,
 	memcpy(out->t, &cur->trig, len);
 	len += sizeof(struct ptp_tsi_info);
 	if (ptp->tso_dev[tso]) {
-		ptp_setup_udp_msg(ptp->tso_dev[tso], buf, len, NULL, NULL);
+		file_dev_setup_msg(ptp->tso_dev[tso], buf, len, NULL, NULL);
 		return 0;
 	}
 	return -1;
 }  /* proc_ptp_get_trig */
 
-static int proc_dev_poll_event(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_poll_event(struct file_dev_info *info, u8 *data)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	struct ptp_tsi_info *in = (struct ptp_tsi_info *) data;
 
 	if (in->unit >= MAX_TIMESTAMP_UNIT)
@@ -4061,7 +4014,7 @@ static int proc_dev_poll_event(struct ptp_dev_info *info, u8 *data)
 	return proc_dev_get_event(info, data);
 }  /* proc_dev_poll_event */
 
-static int proc_dev_get_event_info(struct ptp_dev_info *info, u8 *data)
+static int proc_dev_get_event_info(struct file_dev_info *info, u8 *data)
 {
 	struct ptp_tsi_info *in = (struct ptp_tsi_info *) data;
 
@@ -4112,7 +4065,7 @@ static int proc_ptp_set_clk(struct ptp_info *ptp, u8 *data)
 	calc_udiff(&ptp->cur_time, &sys_time, &ptp->time_diff);
 	generate_tx_event(ptp, ptp->pps_gpo);
 	ptp->ops->release(ptp);
-	dbg_msg(" set clk: %x:%09u\n", cmd->sec, cmd->nsec);
+	dbg_msg(" set clk: %x:%09u"NL, cmd->sec, cmd->nsec);
 	return 0;
 }  /* proc_ptp_set_clk */
 
@@ -4128,7 +4081,7 @@ static int proc_ptp_adj_clk(struct ptp_info *ptp, u8 *data, int adjust)
 			ptp->adjust_sec = -ptp->adjust_sec;
 			ptp->adjust_offset = -ptp->adjust_offset;
 		}
-		dbg_msg("adj clk: %d %u:%09u\n", adjust, cmd->sec, cmd->nsec);
+		dbg_msg("adj clk: %d %u:%09u"NL, adjust, cmd->sec, cmd->nsec);
 		cmd->sec = cmd->nsec = 0;
 		ptp->adj_clk.func(&ptp->adj_clk);
 	}
@@ -4144,13 +4097,15 @@ static int proc_ptp_adj_clk(struct ptp_info *ptp, u8 *data, int adjust)
 		ptp->offset_changed = cmd->nsec;
 		if (!adjust)
 			ptp->offset_changed = -cmd->nsec;
-		if (ptp->sec_changed)
+		if (ptp->sec_changed || ptp->clk_add)
 			generate_tx_event(ptp, ptp->pps_gpo);
+#ifndef NO_PPS_DETECT
 		else {
 			ptp->update_sec_jiffies = jiffies;
 			schedule_delayed_work(&ptp->check_pps,
 					      msecs_to_jiffies(1200));
 		}
+#endif
 		if (ptp->sec_changed) {
 			if (adjust)
 				ptp->cur_time.sec += cmd->sec;
@@ -4163,7 +4118,7 @@ static int proc_ptp_adj_clk(struct ptp_info *ptp, u8 *data, int adjust)
 		else
 			sub_nsec(&ptp->cur_time, cmd->nsec);
 		if (cmd->sec)
-		dbg_msg(" adj clk: %d %u:%09u\n", adjust, cmd->sec, cmd->nsec);
+		dbg_msg(" adj clk: %d %u:%09u"NL, adjust, cmd->sec, cmd->nsec);
 	}
 	if (cmd->interval) {
 		ptp->drift = cmd->drift;
@@ -4179,11 +4134,11 @@ static int proc_ptp_adj_clk(struct ptp_info *ptp, u8 *data, int adjust)
 			ptp->ptp_synt = true;
 		}
 if (!ptp->first_drift && ptp->drift_set)
-dbg_msg("first drift: %d\n", ptp->drift_set);
+dbg_msg("first drift: %d"NL, ptp->drift_set);
 		if (!ptp->first_drift)
 			ptp->first_drift = ptp->drift_set;
 #if 0
-		dbg_msg(" adj drift: %d\n", cmd->drift);
+		dbg_msg(" adj drift: %d"NL, cmd->drift);
 #endif
 	}
 	ptp->ops->release(ptp);
@@ -4193,7 +4148,7 @@ dbg_msg("first drift: %d\n", ptp->drift_set);
 static int proc_ptp_get_delay(struct ptp_info *ptp, uint port, u8 *data)
 {
 	struct ptp_delay_values *delay = (struct ptp_delay_values *) data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	if (port > ptp->ports)
 		return DEV_IOC_INVALID_CMD;
@@ -4209,7 +4164,7 @@ static int proc_ptp_get_delay(struct ptp_info *ptp, uint port, u8 *data)
 static int proc_ptp_set_delay(struct ptp_info *ptp, uint port, u8 *data)
 {
 	struct ptp_delay_values *delay = (struct ptp_delay_values *) data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	int index;
 
 	if (port > ptp->ports)
@@ -4224,7 +4179,7 @@ static int proc_ptp_set_delay(struct ptp_info *ptp, uint port, u8 *data)
 	ptp->tx_latency[port][index] = delay->tx_latency;
 	ptp->asym_delay[port][index] = delay->asym_delay;
 	ptp->ops->release(ptp);
-	dbg_msg("set delay: %d = %d %d %d\n", port,
+	dbg_msg("set delay: %d = %d %d %d"NL, port,
 		ptp->rx_latency[port][index],
 		ptp->tx_latency[port][index],
 		ptp->asym_delay[port][index]);
@@ -4234,7 +4189,7 @@ static int proc_ptp_set_delay(struct ptp_info *ptp, uint port, u8 *data)
 static int proc_ptp_get_peer_delay(struct ptp_info *ptp, uint port, u8 *data)
 {
 	struct ptp_delay_values *delay = (struct ptp_delay_values *) data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	u32 link;
 
 	if (port > ptp->ports)
@@ -4254,7 +4209,7 @@ static int proc_ptp_get_peer_delay(struct ptp_info *ptp, uint port, u8 *data)
 static int proc_ptp_set_peer_delay(struct ptp_info *ptp, uint port, u8 *data)
 {
 	struct ptp_delay_values *delay = (struct ptp_delay_values *) data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	u32 link;
 
 	if (port > ptp->ports)
@@ -4268,7 +4223,7 @@ static int proc_ptp_set_peer_delay(struct ptp_info *ptp, uint port, u8 *data)
 		set_ptp_link(ptp, port, link);
 		ptp->peer_delay[port] = link;
 		if (abs(link - ptp->peer_delay[port]) > 5)
-			dbg_msg("set delay: %d = %d\n", port,
+			dbg_msg("set delay: %d = %d"NL, port,
 				ptp->peer_delay[port]);
 	}
 	ptp->ops->release(ptp);
@@ -4278,7 +4233,7 @@ static int proc_ptp_set_peer_delay(struct ptp_info *ptp, uint port, u8 *data)
 static int proc_ptp_get_port_cfg(struct ptp_info *ptp, uint port, u8 *data)
 {
 	struct ptp_delay_values *delay = (struct ptp_delay_values *) data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_port_cfg *cfg;
 
 	if (port > ptp->ports)
@@ -4296,7 +4251,7 @@ static int proc_ptp_get_port_cfg(struct ptp_info *ptp, uint port, u8 *data)
 static int proc_ptp_set_port_cfg(struct ptp_info *ptp, uint port, u8 *data)
 {
 	struct ptp_delay_values *delay = (struct ptp_delay_values *) data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_port_cfg *cfg;
 
 	if (port > ptp->ports)
@@ -4313,7 +4268,7 @@ static int proc_ptp_set_port_cfg(struct ptp_info *ptp, uint port, u8 *data)
 	if (sw->features & MRP_SUPPORT) {
 		struct mrp_info *mrp = &sw->mrp;
 
-dbg_msg("as: %d=%d\n", port, cfg->asCapable);
+dbg_msg("as: %d=%d"NL, port, cfg->asCapable);
 		mrp->ops->chk_talker(mrp, port);
 	}
 #endif
@@ -4326,7 +4281,7 @@ static void ptp_tx_done(struct ptp_info *ptp, int tso)
 	int last;
 	int prev;
 	u32 data;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp_write_index(ptp, PTP_TOU_INDEX_S, tso);
 	data = sw->reg->r32(sw, REG_TRIG_CTRL__4);
@@ -4348,13 +4303,13 @@ static void ptp_tx_done(struct ptp_info *ptp, int tso)
 	ptp_tso_off(ptp, tso, (1 << tso));
 }  /* ptp_tx_done */
 
-static struct ptp_tx_ts *proc_get_ts(struct ptp_info *ptp, u8 port, u8 msg,
-	u16 seqid, u8 *mac, struct ptp_dev_info *info, int len)
+static struct ptp_tx_ts *proc_get_ts(struct ptp_info *ptp, uint port, u8 msg,
+	u16 seqid, u8 *mac, struct file_dev_info *info, int len)
 {
 	struct ptp_tx_ts *tx;
 	int from_stack = false;
 	u8 *data = NULL;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	bool linked = (media_connected == sw->port_info[port].state);
 
 	if (info)
@@ -4368,7 +4323,7 @@ static struct ptp_tx_ts *proc_get_ts(struct ptp_info *ptp, u8 port, u8 msg,
 	if (seqid || mac[0] || mac[1])
 		from_stack = true;
 	if (data && tx->req_time && linked && port < 5)
-		dbg_msg("  last %x=%04x: p=%d, j=%lu\n", msg, seqid, port,
+		dbg_msg("  last %x=%04x: p=%d, j=%lu"NL, msg, seqid, port,
 			jiffies - tx->req_time);
 	tx->missed = false;
 	tx->req_time = jiffies;
@@ -4377,11 +4332,11 @@ static struct ptp_tx_ts *proc_get_ts(struct ptp_info *ptp, u8 port, u8 msg,
 
 		/* The timestamp is not valid. */
 		if (diff >= 4 * ptp->delay_ticks) {
-			dbg_msg("  invalid: %x=%04x: %d, %lu\n",
+			dbg_msg("  invalid: %x=%04x: %d, %lu"NL,
 				msg, seqid, port, diff);
 			tx->ts.timestamp = 0;
 		} else if (diff > 2 * ptp->delay_ticks)
-			dbg_msg("  ready? %x=%04x: %d, %lu\n",
+			dbg_msg("  ready? %x=%04x: %d, %lu"NL,
 				msg, seqid, port, diff);
 	}
 	if (!tx->ts.timestamp && linked && data) {
@@ -4399,7 +4354,7 @@ static struct ptp_tx_ts *proc_get_ts(struct ptp_info *ptp, u8 port, u8 msg,
 			tx->dev = info;
 		}
 		if (linked && port < 5)
-			dbg_msg("  missed %x=%04x: p=%d, j=%lu\n",
+			dbg_msg("  missed %x=%04x: p=%d, j=%lu"NL,
 				msg, seqid, port, jiffies - tx->req_time);
 		tx = NULL;
 	}
@@ -4407,7 +4362,7 @@ static struct ptp_tx_ts *proc_get_ts(struct ptp_info *ptp, u8 port, u8 msg,
 }  /* proc_get_ts */
 
 static int proc_ptp_get_timestamp(struct ptp_info *ptp, u8 *data,
-	struct ptp_dev_info *info)
+	struct file_dev_info *info)
 {
 	struct ptp_ts_options *opt = (struct ptp_ts_options *) data;
 
@@ -4421,8 +4376,8 @@ static int proc_ptp_get_timestamp(struct ptp_info *ptp, u8 *data,
 	} else {
 		struct ptp_tx_ts *tx;
 		struct tsm_db *db;
-		u8 port;
-		struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+		uint port;
+		struct ksz_sw *sw = ptp->parent;
 
 		if (opt->port > ptp->ports)
 			return DEV_IOC_INVALID_CMD;
@@ -4462,7 +4417,7 @@ static struct ptp_tx_ts *proc_get_ts_port(struct ptp_info *ptp, u8 msg,
 	uint p;
 	struct ptp_tx_ts *tx;
 	struct ptp_tx_ts *xts = NULL;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_port_info *info;
 	bool linked;
 
@@ -4510,10 +4465,10 @@ static struct ptp_tx_ts *proc_get_ts_port(struct ptp_info *ptp, u8 msg,
 	return xts;
 }  /* proc_get_ts_port */
 
-static int proc_ptp_get_msg_info(struct ptp_info *ptp, int start, u8 *data,
-	struct ptp_dev_info *info, int *tx)
+static int proc_ptp_get_msg_info(struct ptp_info *ptp, u8 *data,
+	struct file_dev_info *info, int *tx)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ptp_msg_options *opt = (struct ptp_msg_options *) data;
 
 	if (!*tx) {
@@ -4534,8 +4489,7 @@ static int proc_ptp_get_msg_info(struct ptp_info *ptp, int start, u8 *data,
 			opt->ts = tx_msg.ts;
 		} else
 			return DEV_IOC_UNIT_UNAVAILABLE;
-	}
-	else {
+	} else {
 		struct ptp_tx_ts *xts;
 		uint port = 0;
 
@@ -4559,10 +4513,10 @@ static int proc_ptp_get_msg_info(struct ptp_info *ptp, int start, u8 *data,
 	return 0;
 }  /* proc_ptp_get_msg_info */
 
-static int proc_ptp_set_msg_info(struct ptp_info *ptp, int start, u8 *data,
-	struct ptp_dev_info *info)
+static int proc_ptp_set_msg_info(struct ptp_info *ptp, u8 *data,
+	struct file_dev_info *info)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ptp_msg_options *opt = (struct ptp_msg_options *) data;
 
 	/* Used for testing. */
@@ -4570,9 +4524,17 @@ static int proc_ptp_set_msg_info(struct ptp_info *ptp, int start, u8 *data,
 		struct ptp_msg_info *tx_msg;
 		u32 ports = opt->port;
 
-#ifdef USE_LOG_MASK
-		ports = get_phy_mask_from_log(sw, ports);
-#endif
+		if (ports >= (1 << ptp->ports))
+			return DEV_IOC_INVALID_CMD;
+
+		ports = sw->ops->get_phy_mask_from_log(sw, ports);
+
+		/* Do not allow sending to host port. */
+		if (ports == sw->HOST_MASK)
+			return DEV_IOC_INVALID_CMD;
+
+		/* Host port is not sending. */
+		ports &= ~sw->HOST_MASK;
 		tx_msg = &ptp->tx_msg_info[opt->msg];
 		tx_msg->data.port = ports;
 		tx_msg->data.ts.timestamp = opt->ts.timestamp;
@@ -4587,9 +4549,17 @@ static int proc_ptp_set_msg_info(struct ptp_info *ptp, int start, u8 *data,
 		struct ptp_msg_hdr hdr;
 		u32 ports = opt->port;
 
-#ifdef USE_LOG_MASK
-		ports = get_phy_mask_from_log(sw, ports);
-#endif
+		if (ports >= (1 << ptp->ports))
+			return DEV_IOC_INVALID_CMD;
+
+		ports = sw->ops->get_phy_mask_from_log(sw, ports);
+
+		/* Do not allow sending to host port. */
+		if (ports == sw->HOST_MASK)
+			return DEV_IOC_INVALID_CMD;
+
+		/* Host port is not sending. */
+		ports &= ~sw->HOST_MASK;
 		memcpy(&hdr.sourcePortIdentity, &opt->id,
 			sizeof(struct ptp_port_identity));
 		hdr.messageType = opt->msg;
@@ -4602,9 +4572,9 @@ static int proc_ptp_set_msg_info(struct ptp_info *ptp, int start, u8 *data,
 	return 0;
 }  /* proc_ptp_set_msg_info */
 
-static int parse_tsm_msg(struct ptp_dev_info *info, int len)
+static int parse_tsm_msg(struct file_dev_info *info, int len)
 {
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	u8 *data = info->write_buf;
 	u8 cmd = data[0] & 0xf0;
 	u8 msg = data[0] & 0x03;
@@ -4624,13 +4594,13 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 			ptp->reg->get_time(ptp, &ts.t);
 			ptp->ops->release(ptp);
 		}
-		ptp_setup_udp_msg(info, data, len, ptp_tsm_get_time_resp,
+		file_dev_setup_msg(info, data, len, ptp_tsm_get_time_resp,
 			&ts.t);
 		break;
 	}
 	case TSM_CMD_DB_GET:
 	{
-		struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+		struct ksz_sw *sw = ptp->parent;
 		struct tsm_db *db = (struct tsm_db *) data;
 
 		if (db->index <= (1 << 7)) {
@@ -4643,7 +4613,7 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 			tx = proc_get_ts(ptp, port, msg, ntohs(db->seqid),
 				db->mac, info, len);
 			if (tx) {
-				ptp_setup_udp_msg(info, data, len,
+				file_dev_setup_msg(info, data, len,
 					ptp_tsm_resp, &tx->ts);
 				tx->ts.timestamp = 0;
 				tx->req_time = 0;
@@ -4669,7 +4639,7 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 
 			/* The timestamp is not valid. */
 			if (diff >= 2 * ptp->delay_ticks) {
-				dbg_msg("  invalid gps: %lu\n", diff);
+				dbg_msg("  invalid gps: %lu"NL, diff);
 				ptp->gps_time.sec = 0;
 			}
 		}
@@ -4678,7 +4648,7 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 			ptp->gps_time.sec = 0;
 			ptp->gps_req_time = 0;
 		} else
-			dbg_msg("  missed gps\n");
+			dbg_msg("  missed gps"NL);
 		break;
 	}
 	case TSM_CMD_CNF_SET:
@@ -4747,9 +4717,11 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 			ptp->offset_changed = nsec;
 			if (ptp_offset)
 				ptp->offset_changed = -nsec;
+#ifndef NO_PPS_DETECT
 			ptp->update_sec_jiffies = jiffies;
 			schedule_delayed_work(&ptp->check_pps,
 					      msecs_to_jiffies(1200));
+#endif
 		}
 		if (clk->add & 1)
 			ptp->drift = drift;
@@ -4764,105 +4736,17 @@ static int parse_tsm_msg(struct ptp_dev_info *info, int len)
 			NANOSEC_IN_SEC);
 		set_ptp_adjust(ptp, ptp->adjust);
 if (!ptp->first_drift)
-dbg_msg("  first drift: %d\n", ptp->drift_set);
+dbg_msg("  first drift: %d"NL, ptp->drift_set);
 		if (!ptp->first_drift)
 			ptp->first_drift = ptp->drift_set;
 		ptp->ops->release(ptp);
 		break;
 	}
 	default:
-		dbg_msg("tsm cmd: %02X, %d\n", cmd, len);
+		dbg_msg("tsm cmd: %02X, %d"NL, cmd, len);
 	}
 	return result;
 }  /* parse_tsm_msg */
-
-static struct ptp_info *ptp_priv;
-
-static struct ptp_dev_info *alloc_dev_info(unsigned int minor)
-{
-	struct ptp_dev_info *info;
-
-	info = kzalloc(sizeof(struct ptp_dev_info), GFP_KERNEL);
-	if (info) {
-		info->ptp = ptp_priv;
-		sema_init(&info->sem, 1);
-		mutex_init(&info->lock);
-		init_waitqueue_head(&info->wait_udp);
-		info->write_len = 1000;
-		info->write_buf = kzalloc(info->write_len, GFP_KERNEL);
-		info->read_max = 60000;
-		info->read_buf = kzalloc(info->read_max, GFP_KERNEL);
-
-		info->minor = minor;
-		info->next = ptp_priv->dev[minor];
-		ptp_priv->dev[minor] = info;
-	}
-	return info;
-}  /* alloc_dev_info */
-
-static void free_dev_info(struct ptp_dev_info *info)
-{
-	if (info) {
-		int i;
-		struct ptp_info *ptp = info->ptp;
-		unsigned int minor = info->minor;
-		struct ptp_dev_info *prev = ptp->dev[minor];
-
-		for (i = 0; i < MAX_TIMESTAMP_UNIT; i++) {
-			if (ptp->tsi_dev[i] == info) {
-				cancel_rx_unit(ptp, i);
-			}
-		}
-		for (i = 0; i < MAX_TRIG_UNIT; i++) {
-			if (ptp->tso_dev[i] == info) {
-				ptp->ops->acquire(ptp);
-				ptp_tso_off(ptp, i, (1 << i));
-				ptp->ops->release(ptp);
-			}
-		}
-		if (ptp->gps_dev == info)
-			ptp->gps_dev = NULL;
-		if (prev == info) {
-			ptp->dev[minor] = info->next;
-		} else {
-			while (prev && prev->next != info)
-				prev = prev->next;
-			if (prev)
-				prev->next = info->next;
-		}
-		kfree(info->read_buf);
-		kfree(info->write_buf);
-		kfree(info);
-	}
-}  /* free_dev_info */
-
-static int ptp_dev_open(struct inode *inode, struct file *filp)
-{
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
-		filp->private_data;
-	unsigned int minor = MINOR(inode->i_rdev);
-
-	if (minor > 1)
-		return -ENODEV;
-	if (!info) {
-		info = alloc_dev_info(minor);
-		if (info)
-			filp->private_data = info;
-		else
-			return -ENOMEM;
-	}
-	return 0;
-}  /* ptp_dev_open */
-
-static int ptp_dev_release(struct inode *inode, struct file *filp)
-{
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
-		filp->private_data;
-
-	free_dev_info(info);
-	filp->private_data = NULL;
-	return 0;
-}  /* ptp_dev_release */
 
 static int ptp_get_port_info(struct ptp_info *ptp, u8 *data, int *output)
 {
@@ -4883,7 +4767,7 @@ static int ptp_get_port_info(struct ptp_info *ptp, u8 *data, int *output)
 	bool matched = false;
 	unsigned int vlan = 0;
 	int result = DEV_IOC_OK;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	int dev_count = sw->dev_count + sw->dev_offset;
 
 	len = strnlen(name, sizeof(devname));
@@ -4969,14 +4853,14 @@ static void proc_ptp_work(struct work_struct *work)
 	struct ptp_work *parent =
 		container_of(work, struct ptp_work, work);
 	struct ptp_info *ptp = parent->ptp;
-	struct ptp_dev_info *info = parent->dev_info;
+	struct file_dev_info *info = parent->dev_info;
 	u8 *data = parent->param.data;
 	uint port;
 	u32 reg;
 	u32 val;
 	size_t width;
 	int result = DEV_IOC_OK;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	parent->output = parent->option;
 	switch (parent->cmd) {
@@ -5040,7 +4924,7 @@ static void proc_ptp_work(struct work_struct *work)
 						PTP_VERIFY_TIMESTAMP |
 						PTP_UPDATE_PDELAY_RESP_TIME;
 				ptp->cap = cap;
-dbg_msg("op_mode: %x %d %x:%x\n", ptp->cap, ptp->op_mode, ptp->rx_en, ptp->tx_en);
+dbg_msg("op_mode: %x %d %x:%x"NL, ptp->cap, ptp->op_mode, ptp->rx_en, ptp->tx_en);
 			}
 
 skip:
@@ -5222,7 +5106,7 @@ skip:
 }  /* proc_ptp_work */
 
 static int proc_ptp_hw_access(struct ptp_info *ptp, int cmd, int subcmd,
-	int option, void *data, size_t len, struct ptp_dev_info *info,
+	int option, void *data, size_t len, struct file_dev_info *info,
 	int *output, int wait)
 {
 	struct ptp_access *access;
@@ -5233,7 +5117,7 @@ static int proc_ptp_hw_access(struct ptp_info *ptp, int cmd, int subcmd,
 	mutex_lock(&access->lock);
 	work = &access->works[access->index];
 	if (work->used) {
-		pr_alert("work full\n");
+		pr_alert("work full"NL);
 		mutex_unlock(&access->lock);
 		return -EFAULT;
 	}
@@ -5386,22 +5270,12 @@ static void ptp_update_sec(struct work_struct *work)
 		container_of(dwork, struct ptp_info, update_sec);
 
 	if (ptp->update_sec_jiffies) {
-		bool pps_detect = false;
-
-#if !defined(NO_PPS_DETECT)
-		if (pps_gpo)
-			pps_detect = true;
-#endif
-		if (pps_detect) {
+		ptp->ops->acquire(ptp);
+		ptp->reg->get_time(ptp, &ptp->cur_time);
+		ptp->ops->release(ptp);
+		if (ptp->cur_time.nsec >= 999000000) {
+			ptp->cur_time.nsec = 0;
 			ptp->cur_time.sec++;
-		} else {
-			ptp->ops->acquire(ptp);
-			ptp->reg->get_time(ptp, &ptp->cur_time);
-			ptp->ops->release(ptp);
-			if (ptp->cur_time.nsec >= 999000000) {
-				ptp->cur_time.nsec = 0;
-				ptp->cur_time.sec++;
-			}
 		}
 		ptp->sec_lo++;
 		if (!(ptp->sec_lo & 3)) {
@@ -5455,7 +5329,6 @@ static u32 test_avg_time(struct ptp_info *ptp,
 	u32 now_cnt;
 	u32 hw_delay[6];
 	u64 clk;
-	u32 rem;
 
 	cur.sec = 5;
 	cur.nsec = 0x12345678;
@@ -5474,8 +5347,8 @@ static u32 test_avg_time(struct ptp_info *ptp,
 		clk = hw_delay[i];
 		clk *= 1000000;
 		if (ptp->clk_divider)
-			clk = div_u64_rem(clk, ptp->clk_divider, &rem);
-		dbg_msg(" %u %u=%llu\n", clk_delay[i], hw_delay[i], clk);
+			clk = div_u64_u32(clk, ptp->clk_divider);
+		dbg_msg(" %u %u=%llu"NL, clk_delay[i], hw_delay[i], clk);
 		if (clk_delay[i] < clk_delay[5])
 			clk_delay[5] = clk_delay[i];
 		if (hw_delay[i] < hw_delay[5])
@@ -5484,8 +5357,8 @@ static u32 test_avg_time(struct ptp_info *ptp,
 	clk = hw_delay[5];
 	clk *= 1000000;
 	if (ptp->clk_divider)
-		clk = div_u64_rem(clk, ptp->clk_divider, &rem);
-	dbg_msg("%u %llu\n", clk_delay[5], clk);
+		clk = div_u64_u32(clk, ptp->clk_divider);
+	dbg_msg("%u %llu"NL, clk_delay[5], clk);
 	return clk_delay[5];
 }
 
@@ -5499,7 +5372,7 @@ static void _test_access_time(struct ptp_info *ptp)
 		ptp->delay_ticks = 20 * HZ / 1000;
 	else
 		ptp->delay_ticks = 30 * HZ / 1000;
-	dbg_msg("delay_ticks: %lu\n", ptp->delay_ticks);
+	dbg_msg("delay_ticks: %lu"NL, ptp->delay_ticks);
 }  /* test_access_time */
 
 #ifndef NO_PPS_DETECT
@@ -5514,7 +5387,7 @@ static void set_ptp_drift(struct ptp_info *ptp, int drift)
 	set_ptp_adjust(ptp, ptp->adjust);
 	syntonize_clk(ptp);
 	ptp->ptp_synt = true;
-	dbg_msg("drift: %d\n", drift);
+	dbg_msg("drift: %d"NL, drift);
 }  /* set_ptp_drift */
 
 static void check_sys_time(struct ptp_info *ptp, unsigned long cur_jiffies,
@@ -5551,7 +5424,6 @@ static void check_sys_time(struct ptp_info *ptp, unsigned long cur_jiffies,
 	diff = ptp->cur_time.sec - ptp->first_sec;
 
 	if (diff >= 1 && !(diff % interval)) {
-		u32 rem;
 		u64 clk;
 		u64 clk_cnt;
 		s64 drift_clk;
@@ -5579,40 +5451,38 @@ static void check_sys_time(struct ptp_info *ptp, unsigned long cur_jiffies,
 		clk = ptp->total_jiffies * (1000000 / HZ);
 		drift_jiffies = clk - passed_usec;
 		drift_jiffies *= 1000;
-		drift_jiffies = div_s64_rem(drift_jiffies, passed_sec, &rem);
+		drift_jiffies = div_s64_u32(drift_jiffies, passed_sec);
 
 		cur_ktime.tv64 -= ptp->first_ktime.tv64;
 		drift_ktime = cur_ktime.tv64 - passed_nsec;
-		drift_ktime = div_s64_rem(drift_ktime, passed_sec, &rem);
+		drift_ktime = div_s64_u32(drift_ktime, passed_sec);
 
 		if (!ptp->clk_divider) {
 			if (!ptp->first_drift)
 				set_ptp_drift(ptp, (int) drift_ktime);
 			else
-				printk(KERN_INFO "%lld %lld\n",
+				printk(KERN_INFO "%lld %lld"NL,
 					drift_jiffies, drift_ktime);
 			return;
 		}
 
-		clk_cnt = div_u64_rem(ptp->total_clk_cnt, passed_sec, &rem);
+		clk_cnt = div_u64_u32(ptp->total_clk_cnt, passed_sec);
 
 		clk = ptp->total_clk_cnt * 1000000;
-		clk = div_u64_rem(clk, ptp->clk_divider, &rem);
+		clk = div_u64_u32(clk, ptp->clk_divider);
 		drift_clk = clk;
 		if (drift_clk < 0)
 			ptp->overrides &= ~PTP_CHECK_SYS_TIME;
 		drift_clk -= passed_nsec;
-		drift_clk = div_s64_rem(drift_clk, passed_sec, &rem);
+		drift_clk = div_s64_u32(drift_clk, passed_sec);
 
 		if (!ptp->first_drift)
 			set_ptp_drift(ptp, (int) drift_clk);
 		else
-			printk(KERN_INFO "%10llu %lld %lld %lld\n",
+			printk(KERN_INFO "%10llu %lld %lld %lld"NL,
 				clk_cnt, drift_clk, drift_jiffies, drift_ktime);
 	}
 }  /* check_sys_time */
-
-static int dbg_ts_intr;
 #endif
 
 static void proc_ptp_intr(struct ptp_info *ptp)
@@ -5629,7 +5499,7 @@ static void proc_ptp_intr(struct ptp_info *ptp)
 	int tsi;
 	ktime_t cur_ktime;
 	struct timespec ts;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	cur_ktime = ktime_get_real();
 	ts = ktime_to_timespec(cur_ktime);
@@ -5670,10 +5540,6 @@ proc_chk_ts_intr:
 		tsi_bit = 1 << i;
 		if (!(status & tsi_bit))
 			continue;
-if (!(status & ptp->ts_intr)) {
-printk("  !!\n");
-ptp->reg->rx_reset(ptp, i, NULL);
-}
 		ptp->reg->read_event(ptp, i);
 		event = &ptp->events[i];
 		if (event->timeout &&
@@ -5709,20 +5575,10 @@ ptp->reg->rx_reset(ptp, i, NULL);
 		/* For system use only. */
 		if (!(ptp->tsi_sys & tsi_bit))
 			continue;
-#if !defined(NO_PPS_DETECT)
+#ifndef NO_PPS_DETECT
 		if (i == ptp->pps_tsi) {
 			struct ptp_utime sys_time;
 
-			if (event->num > 1)
-if (dbg_ts_intr < 20) {
-dbg_msg(" events %d %x:%9u %x:%9u; %x\n", event->num,
-event->t[0].sec, event->t[0].nsec,
-event->t[event->num - 1].sec, event->t[event->num - 1].nsec,
-ptp->cur_time.sec);
-++dbg_ts_intr;
-dbg_msg(" %d %d; %x %x %x\n", event->timeout, event->last,
-ptp->ts_status, ptp->ts_intr, ptp->tsi_used);
-}
 			ptp->cur_time.sec = event->t[0].sec;
 			ptp->cur_time.nsec = event->t[0].nsec;
 			ptp->update_sec_jiffies = 0;
@@ -5774,7 +5630,7 @@ static int ptp_get_ts_info(struct ptp_info *ptp, struct net_device *dev,
 	struct ethtool_ts_info *info)
 {
 	int ptp_clock = false;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	int ret = -ENODEV;
 
 #ifdef CONFIG_PTP_1588_CLOCK
@@ -5792,16 +5648,15 @@ static int ptp_get_ts_info(struct ptp_info *ptp, struct net_device *dev,
 
 static void proc_ptp_tx_intr(struct ptp_info *ptp, uint port)
 {
-	u32 reg;
+	uint p = port;
 	u16 status;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
-	reg = PORT_CTRL_ADDR(port, REG_PTP_PORT_TX_INT_STATUS__2);
-	status = sw->reg->r16(sw, reg);
+	sw->ops->p_r16(sw, p, REG_PTP_PORT_TX_INT_STATUS__2, &status);
 	if (status) {
-		sw->reg->w16(sw, reg, status);
+		sw->ops->p_w16(sw, p, REG_PTP_PORT_TX_INT_STATUS__2, status);
 		status &= ptp->tx_intr;
-		if (get_tx_time(ptp, port, status))
+		if (get_tx_time(ptp, port, p, status))
 			wake_up_interruptible(&ptp->wait_ts[port]);
 	}
 }  /* proc_ptp_tx_intr */
@@ -5853,7 +5708,7 @@ static int ixxat_ptp_ioctl(struct ptp_info *ptp, unsigned int cmd,
 	int drift;
 	int err = 0;
 	uint port;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	switch (cmd) {
 	case PTP_ENABLE_TXTS:
@@ -5907,19 +5762,6 @@ static int ixxat_ptp_ioctl(struct ptp_info *ptp, unsigned int cmd,
 			hdr.messageType = ptp_data.ident.mType;
 			hdr.sequenceId = htons(ptp_data.ident.seqId);
 			hdr.domainNumber = ptp_data.ident.vers;
-#if 0
-printk("%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x.%04x %x %04x %x\n",
-hdr.sourcePortIdentity.clockIdentity.addr[0],
-hdr.sourcePortIdentity.clockIdentity.addr[1],
-hdr.sourcePortIdentity.clockIdentity.addr[2],
-hdr.sourcePortIdentity.clockIdentity.addr[3],
-hdr.sourcePortIdentity.clockIdentity.addr[4],
-hdr.sourcePortIdentity.clockIdentity.addr[5],
-hdr.sourcePortIdentity.clockIdentity.addr[6],
-hdr.sourcePortIdentity.clockIdentity.addr[7],
-hdr.sourcePortIdentity.port,
-hdr.messageType, hdr.sequenceId, hdr.domainNumber);
-#endif
 			found = find_msg_info(&ptp->rx_msg_info[
 				hdr.messageType],
 				&ptp->rx_msg_lock, &hdr,
@@ -5930,7 +5772,7 @@ hdr.messageType, hdr.sequenceId, hdr.domainNumber);
 			}
 		}
 #if 0
-printk("%u:%09u\n", ts.t.sec, ts.t.nsec);
+printk("%u:%09u"NL, ts.t.sec, ts.t.nsec);
 #endif
 		ptp_data.ts.sec = ts.t.sec;
 		ptp_data.ts.nsec = ts.t.nsec;
@@ -6017,8 +5859,8 @@ printk("%u:%09u\n", ts.t.sec, ts.t.nsec);
 	return err;
 }
 
-static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
-	struct ptp_dev_info *info)
+static int ptp_dev_req(struct ptp_info *ptp, char *arg,
+	struct file_dev_info *info)
 {
 	struct ksz_request *req = (struct ksz_request *) arg;
 	int len;
@@ -6027,7 +5869,7 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 	int subcmd;
 	int output;
 	u8 data[PARAM_DATA_SIZE];
-	struct ptp_dev_info *dev;
+	struct file_dev_info *dev;
 	int err = 0;
 	int result = 0;
 	int v2 = 0;
@@ -6051,8 +5893,8 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 		switch (subcmd) {
 		case DEV_INFO_INIT:
 		{
-			struct ksz_sw *sw = container_of(ptp,
-				struct ksz_sw, ptp_hw);
+			struct ksz_sw *sw = ptp->parent;
+			int p = ptp->ports;
 
 			if (chk_ioctl_size(len, 6,
 					SIZEOF_ksz_request,
@@ -6072,12 +5914,12 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 			data[2] = 'c';
 			data[3] = 'r';
 			data[4] = ptp->version;
-			data[5] = ptp->ports + 1;
 			if (v2) {
+				++p;
 				data[6] = sw->HOST_PORT + 1;
 				data[7] = 0;
-			} else
-				data[5] = ptp->ports;
+			}
+			data[5] = p;
 			if (!access_ok(VERIFY_WRITE, req->param.data, len) ||
 			    copy_to_user(req->param.data, data, len)) {
 				err = -EFAULT;
@@ -6098,8 +5940,8 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 			data[0] = 0xF0;
 			dev = find_minor_dev(info);
 			if (dev)
-				ptp_setup_udp_msg(dev, data, 4, NULL, NULL);
-			ptp_setup_udp_msg(info, data, 4, NULL, NULL);
+				file_dev_setup_msg(dev, data, 4, NULL, NULL);
+			file_dev_setup_msg(info, data, 4, NULL, NULL);
 			break;
 		case DEV_INFO_RESET:
 			if (output < 3) {
@@ -6260,7 +6102,7 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 					SIZEOF_ksz_request,
 					&req_size, &result, &req->param, data))
 				goto dev_ioctl_resp;
-			result = proc_ptp_set_msg_info(ptp, start, data, info);
+			result = proc_ptp_set_msg_info(ptp, data, info);
 			break;
 		case DEV_PTP_PORT_CFG:
 			if (chk_ioctl_size(len,
@@ -6445,7 +6287,7 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 					SIZEOF_ksz_request,
 					&req_size, &result, &req->param, data))
 				goto dev_ioctl_resp;
-			result = proc_ptp_get_msg_info(ptp, start, data, info,
+			result = proc_ptp_get_msg_info(ptp, data, info,
 				&output);
 			__put_user(output, &req->output);
 			if (result)
@@ -6476,6 +6318,9 @@ static int ptp_dev_req(struct ptp_info *ptp, int start, char *arg,
 				goto dev_ioctl_done;
 			}
 			break;
+		default:
+			result = DEV_IOC_INVALID_CMD;
+			break;
 		}
 		break;
 	default:
@@ -6503,9 +6348,9 @@ static int ptp_dev_ioctl(struct inode *inode, struct file *filp,
 	unsigned int cmd, unsigned long arg)
 #endif
 {
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
-	struct ptp_info *ptp = info->ptp;
+	struct ptp_info *ptp = info->dev;
 	int err = 0;
 
 	if (_IOC_TYPE(cmd) != DEV_IOC_MAGIC)
@@ -6517,13 +6362,13 @@ static int ptp_dev_ioctl(struct inode *inode, struct file *filp,
 	else if (_IOC_DIR(cmd) & _IOC_WRITE)
 		err = !access_ok(VERIFY_READ, (void *) arg, _IOC_SIZE(cmd));
 	if (err) {
-		printk(KERN_ALERT "err fault\n");
+		printk(KERN_ALERT "err fault"NL);
 		return -EFAULT;
 	}
 	if (down_interruptible(&info->sem))
 		return -ERESTARTSYS;
 
-	err = ptp_dev_req(ptp, 0, (char *) arg, info);
+	err = ptp_dev_req(ptp, (char *) arg, info);
 	up(&info->sem);
 	return err;
 }  /* ptp_dev_ioctl */
@@ -6531,14 +6376,14 @@ static int ptp_dev_ioctl(struct inode *inode, struct file *filp,
 static ssize_t ptp_dev_read(struct file *filp, char *buf, size_t count,
 	loff_t *offp)
 {
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 	ssize_t result = 0;
 	int rc;
 
 	if (!info->read_len) {
 		*offp = 0;
-		rc = wait_event_interruptible(info->wait_udp,
+		rc = wait_event_interruptible(info->wait_msg,
 			0 != info->read_len);
 
 		/* Cannot continue if ERESTARTSYS. */
@@ -6581,7 +6426,7 @@ dev_read_done:
 static ssize_t ptp_dev_write(struct file *filp, const char *buf, size_t count,
 	loff_t *offp)
 {
-	struct ptp_dev_info *info = (struct ptp_dev_info *)
+	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 	ssize_t result = 0;
 	size_t size;
@@ -6625,7 +6470,7 @@ static ssize_t ptp_dev_write(struct file *filp, const char *buf, size_t count,
 		size = sizeof(struct tsm_clock_correct);
 		break;
 	default:
-		dbg_msg("tsm: %x\n", info->write_buf[0]);
+		dbg_msg("tsm: %x"NL, info->write_buf[0]);
 		result = count;
 		goto dev_write_done;
 	}
@@ -6642,6 +6487,86 @@ dev_write_done:
 	up(&info->sem);
 	return result;
 }  /* ptp_dev_write */
+
+static struct ptp_info *ptp_priv;
+
+static struct file_dev_info *alloc_dev_info(uint minor)
+{
+	struct file_dev_info *info;
+
+	info = kzalloc(sizeof(struct file_dev_info), GFP_KERNEL);
+	if (info) {
+		info->dev = ptp_priv;
+		sema_init(&info->sem, 1);
+		mutex_init(&info->lock);
+		init_waitqueue_head(&info->wait_msg);
+		info->read_max = 60000;
+		info->read_tmp = MAX_TSM_UDP_LEN;
+		info->read_buf = kzalloc(info->read_max + info->read_tmp,
+			GFP_KERNEL);
+		info->read_in = &info->read_buf[info->read_max];
+		info->write_len = 1000;
+		info->write_buf = kzalloc(info->write_len, GFP_KERNEL);
+
+		info->minor = minor;
+		info->next = ptp_priv->dev[minor];
+		ptp_priv->dev[minor] = info;
+	}
+	return info;
+}  /* alloc_dev_info */
+
+static void free_dev_info(struct file_dev_info *info)
+{
+	if (info) {
+		int i;
+		struct ptp_info *ptp = info->dev;
+		uint minor = info->minor;
+
+		for (i = 0; i < MAX_TIMESTAMP_UNIT; i++) {
+			if (ptp->tsi_dev[i] == info) {
+				cancel_rx_unit(ptp, i);
+			}
+		}
+		for (i = 0; i < MAX_TRIG_UNIT; i++) {
+			if (ptp->tso_dev[i] == info) {
+				ptp->ops->acquire(ptp);
+				ptp_tso_off(ptp, i, (1 << i));
+				ptp->ops->release(ptp);
+			}
+		}
+		if (ptp->gps_dev == info)
+			ptp->gps_dev = NULL;
+		file_gen_dev_release(info, &ptp->dev[minor]);
+	}
+}  /* free_dev_info */
+
+static int ptp_dev_open(struct inode *inode, struct file *filp)
+{
+	struct file_dev_info *info = (struct file_dev_info *)
+		filp->private_data;
+	uint minor = MINOR(inode->i_rdev);
+
+	if (minor > 1)
+		return -ENODEV;
+	if (!info) {
+		info = alloc_dev_info(minor);
+		if (info)
+			filp->private_data = info;
+		else
+			return -ENOMEM;
+	}
+	return 0;
+}  /* ptp_dev_open */
+
+static int ptp_dev_release(struct inode *inode, struct file *filp)
+{
+	struct file_dev_info *info = (struct file_dev_info *)
+		filp->private_data;
+
+	free_dev_info(info);
+	filp->private_data = NULL;
+	return 0;
+}  /* ptp_dev_release */
 
 static const struct file_operations ptp_dev_fops = {
 	.read		= ptp_dev_read,
@@ -6663,7 +6588,7 @@ static int init_ptp_device(int dev_major, char *dev_name, char *minor_name)
 
 	result = register_chrdev(dev_major, dev_name, &ptp_dev_fops);
 	if (result < 0) {
-		printk(KERN_WARNING "%s: can't get major %d\n", dev_name,
+		printk(KERN_WARNING "%s: can't get major %d"NL, dev_name,
 			dev_major);
 		return result;
 	}
@@ -6701,7 +6626,7 @@ static void ptp_init(struct ptp_info *ptp, u8 *mac_addr)
 	uint n;
 	int latency[2][3];
 	struct ksz_port_cfg *cfg;
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	ptp->utc_offset = CURRENT_UTC_OFFSET;
 	ptp->get_delay = 100000;
@@ -6772,9 +6697,9 @@ static void ptp_init(struct ptp_info *ptp, u8 *mac_addr)
 		i = get_phy_port(sw, n);
 		cfg = get_port_cfg(sw, i);
 		cfg->ptp_enabled = true;
-#if 0
-		cfg->asCapable_set = true;
-#endif
+		if ((sw->features & AVB_SUPPORT) &&
+		    !(sw->features & MRP_SUPPORT))
+			cfg->asCapable_set = true;
 		ptp->rx_latency[i][0] = latency[0][0];
 		ptp->tx_latency[i][0] = latency[1][0];
 		ptp->rx_latency[i][1] = latency[0][1];
@@ -6859,46 +6784,46 @@ static ssize_t sysfs_ptp_read(struct ptp_info *ptp, int proc_num, ssize_t len,
 {
 	switch (proc_num) {
 	case PROC_SET_PTP_FEATURES:
-		len += sprintf(buf + len, "%08x:\n", ptp->features);
-		len += sprintf(buf + len, "\t%08x = adjust hack\n",
+		len += sprintf(buf + len, "%08x:"NL, ptp->features);
+		len += sprintf(buf + len, "\t%08x = adjust hack"NL,
 			PTP_ADJ_HACK);
-		len += sprintf(buf + len, "\t%08x = adjust sec\n",
+		len += sprintf(buf + len, "\t%08x = adjust sec"NL,
 			PTP_ADJ_SEC);
 		break;
 	case PROC_SET_PTP_OVERRIDES:
-		len += sprintf(buf + len, "%08x:\n", ptp->overrides);
-		len += sprintf(buf + len, "\t%08x = PTP port forwarding\n",
-			PTP_PORT_FORWARD);
-		len += sprintf(buf + len, "\t%08x = PTP port TX forwarding\n",
-			PTP_PORT_TX_FORWARD);
-		len += sprintf(buf + len, "\t%08x = PTP check path delay\n",
-			PTP_CHECK_PATH_DELAY);
-		len += sprintf(buf + len, "\t%08x = PTP verify timestamp\n",
-			PTP_VERIFY_TIMESTAMP);
-		len += sprintf(buf + len, "\t%08x = PTP zero reserved field\n",
-			PTP_ZERO_RESERVED_FIELD);
-		len += sprintf(buf + len, "\t%08x = PTP update pdelay_resp\n",
-			PTP_UPDATE_PDELAY_RESP_TIME);
-		len += sprintf(buf + len, "\t%08x = PTP check system time\n",
-			PTP_CHECK_SYS_TIME);
-		len += sprintf(buf + len, "\t%08x = PTP check sync time\n",
-			PTP_CHECK_SYNC_TIME);
+		len += sprintf(buf + len, "%08x:"NL, ptp->overrides);
+		len += sprintf(buf + len, "\t%08x = PTP port forwarding"NL,
+			(uint)PTP_PORT_FORWARD);
+		len += sprintf(buf + len, "\t%08x = PTP port TX forwarding"NL,
+			(uint)PTP_PORT_TX_FORWARD);
+		len += sprintf(buf + len, "\t%08x = PTP check path delay"NL,
+			(uint)PTP_CHECK_PATH_DELAY);
+		len += sprintf(buf + len, "\t%08x = PTP verify timestamp"NL,
+			(uint)PTP_VERIFY_TIMESTAMP);
+		len += sprintf(buf + len, "\t%08x = PTP zero reserved field"NL,
+			(uint)PTP_ZERO_RESERVED_FIELD);
+		len += sprintf(buf + len, "\t%08x = PTP update pdelay_resp"NL,
+			(uint)PTP_UPDATE_PDELAY_RESP_TIME);
+		len += sprintf(buf + len, "\t%08x = PTP check system time"NL,
+			(uint)PTP_CHECK_SYS_TIME);
+		len += sprintf(buf + len, "\t%08x = PTP check sync time"NL,
+			(uint)PTP_CHECK_SYNC_TIME);
 		break;
 	case PROC_SET_PTP_VID:
-		len += sprintf(buf + len, "0x%04x\n", ptp->vid);
+		len += sprintf(buf + len, "0x%04x"NL, ptp->vid);
 		break;
 	case PROC_SET_PTP_GPIO_1:
 	case PROC_SET_PTP_GPIO_2:
 	{
 		u32 reg;
 		int gpo = (proc_num == PROC_SET_PTP_GPIO_1) ? 0 : 1;
-		struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+		struct ksz_sw *sw = ptp->parent;
 
 		ptp->ops->acquire(ptp);
 		ptp_write_index(ptp, PTP_GPIO_INDEX_S, gpo);
 		reg = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 		ptp->ops->release(ptp);
-		len += sprintf(buf + len, "%d\n", !(reg & GPIO_MODE_IN));
+		len += sprintf(buf + len, "%d"NL, !(reg & GPIO_MODE_IN));
 		break;
 	}
 	}
@@ -6942,7 +6867,7 @@ static void sysfs_ptp_write(struct ptp_info *ptp, int proc_num, int num,
 	{
 		u32 reg;
 		int gpo = (proc_num == PROC_SET_PTP_GPIO_1) ? 0 : 1;
-		struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+		struct ksz_sw *sw = ptp->parent;
 
 		ptp_write_index(ptp, PTP_GPIO_INDEX_S, gpo);
 		reg = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
@@ -6978,9 +6903,24 @@ static struct ptp_reg_ops ptp_reg_ops = {
 	.start			= ptp_start,
 };
 
+#ifdef CONFIG_KSZ_IBA
+#include "ksz_ptp_iba.c"
+#endif
+
+static void ptp_use_iba(struct ptp_info *ptp, bool iba)
+{
+#ifdef CONFIG_KSZ_IBA
+	if (iba)
+		ptp->reg = &ptp_iba_ops;
+	else
+		ptp->reg = &ptp_reg_ops;
+#endif
+}
+
 static struct ptp_ops ptp_ops = {
 	.acquire		= ptp_acquire,
 	.release		= ptp_release,
+	.use_iba		= ptp_use_iba,
 
 	.init			= ptp_init,
 	.exit			= ptp_exit,
@@ -6995,6 +6935,7 @@ static struct ptp_ops ptp_ops = {
 	.ixxat_ioctl		= ixxat_ptp_ioctl,
 	.dev_req		= ptp_dev_req,
 	.proc_intr		= proc_ptp_intr,
+	.proc_tx_intr		= proc_ptp_tx_intr,
 #ifdef ETHTOOL_GET_TS_INFO
 	.get_ts_info		= ptp_get_ts_info,
 #endif

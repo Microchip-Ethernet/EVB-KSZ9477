@@ -1,7 +1,7 @@
 /**
  * Microchip HSR code
  *
- * Copyright (c) 2016-2018 Microchip Technology Inc.
+ * Copyright (c) 2016-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright 2011-2014 Autronica Fire and Security AS
@@ -27,6 +27,7 @@ struct hsr_cfg_work {
 	struct ksz_sw *sw;
 	u8 addr[ETH_ALEN];
 	u16 member;
+	u16 vlan;
 };
 
 static void proc_hsr_cfg_work(struct work_struct *work)
@@ -37,6 +38,12 @@ static void proc_hsr_cfg_work(struct work_struct *work)
 
 	sw->ops->cfg_mac(sw, 0, cfg_work->addr, cfg_work->member,
 		false, false, 0);
+	if (cfg_work->vlan) {
+		if (cfg_work->member)
+			cfg_work->member = sw->HOST_MASK;
+		sw->ops->cfg_mac(sw, 0, cfg_work->addr, cfg_work->member,
+			false, true, cfg_work->vlan);
+	}
 
 	kfree(cfg_work);
 }  /* proc_hsr_work */
@@ -52,6 +59,8 @@ static void proc_hsr_cfg(struct ksz_hsr_info *info, u8 *addr, u16 member)
 	cfg_work->sw = info->sw_dev;
 	memcpy(cfg_work->addr, addr, ETH_ALEN);
 	cfg_work->member = member;
+	if (info->redbox_dev)
+		cfg_work->vlan = info->redbox_vlan;
 	schedule_work(&cfg_work->work);
 }  /* proc_hsr_cfg */
 
@@ -324,6 +333,9 @@ void hsr_handle_sup_frame(struct sk_buff *skb, struct hsr_node *node_curr,
 			  struct hsr_port *port_rcv)
 {
 	struct hsr_node *node_real;
+#if 1
+	struct hsr_node *node_redbox = NULL;
+#endif
 	struct hsr_sup_payload *hsr_sp;
 	struct hsr_sup_type *hsr_stype;
 	struct list_head *node_db;
@@ -340,10 +352,16 @@ void hsr_handle_sup_frame(struct sk_buff *skb, struct hsr_node *node_curr,
 	/* Check frame sent by RedBox. */
 	hsr_stype = (struct hsr_sup_type *)(hsr_sp + 1);
 	if (HSR_TLV_REDBOX == hsr_stype->HSR_TLV_Type) {
-		hsr_sp = (struct hsr_sup_payload *)(hsr_stype + 1);
+		struct hsr_sup_payload *hsr_redbox;
+
+		hsr_redbox = (struct hsr_sup_payload *)(hsr_stype + 1);
 		if (ether_addr_equal(eth_hdr(skb)->h_source,
-		    hsr_sp->MacAddressA))
+		    hsr_redbox->MacAddressA))
+#if 1
+			node_redbox = node_curr;
+#else
 			goto done;
+#endif
 	}
 
 	/* Merge node_curr (registered on MacAddressB) into node_real */
@@ -352,7 +370,10 @@ void hsr_handle_sup_frame(struct sk_buff *skb, struct hsr_node *node_curr,
 	if (!node_real)
 {
 	u8 *data = (u8 *) eth_hdr(skb)->h_source;
-dbg_msg("add new: %02x:%02x:%02x\n", data[3], data[4], data[5]);
+	u8 *addr = (u8 *) hsr_sp->MacAddressA;
+dbg_msg("add new: %02x:%02x:%02x; %02x:%02x:%02x\n",
+data[3], data[4], data[5],
+addr[3], addr[4], addr[5]);
 }
 	if (!node_real)
 		/* No frame received from AddrA of this node yet */
@@ -360,12 +381,26 @@ dbg_msg("add new: %02x:%02x:%02x\n", data[3], data[4], data[5]);
 					 HSR_SEQNR_START - 1);
 	if (!node_real)
 		goto done; /* No mem */
+
+	/* From HSR side in case the entry was added in Redbox. */
+	if (node_real->slave) {
+		struct hsr_priv *hsr = container_of(node_db,
+			struct hsr_priv, node_db);
+		struct ksz_hsr_info *info = container_of(hsr,
+			struct ksz_hsr_info, hsr);
+
+		node_real->slave = 0;
+		proc_hsr_cfg(info, node_real->MacAddressA, info->member);
+	}
 	if (node_real == node_curr)
 		/* Node has already been merged */
 		goto done;
 
-	ether_addr_copy(node_real->MacAddressB, eth_hdr(skb)->h_source);
 #if 1
+	if (!node_redbox)
+#endif
+	ether_addr_copy(node_real->MacAddressB, eth_hdr(skb)->h_source);
+#if 0
 do {
 	u8 *data = (u8 *) eth_hdr(skb)->h_source;
 dbg_msg("%s %02x:%02x:%02x:%02x:%02x:%02x\n", __func__,
@@ -382,6 +417,10 @@ data[0], data[1], data[2], data[3], data[4], data[5]);
 			node_real->seq_out[i] = node_curr->seq_out[i];
 	}
 	node_real->AddrB_port = port_rcv->type;
+#if 1
+	if (node_redbox)
+		goto done;
+#endif
 
 	list_del_rcu(&node_curr->mac_list);
 	kfree_rcu(node_curr, rcu_head);
@@ -543,13 +582,18 @@ static struct hsr_port *get_late_port(struct hsr_priv *hsr,
 
 static void hsr_notify_link_lost(struct ksz_hsr_info *info)
 {
+	static u8 lost_buf[sizeof(struct ksz_resp_msg) +
+		sizeof(struct ksz_hsr_node)];
+
 dbg_msg(" hsr: %u %u:%u %u:%u\n", info->ring,
 	info->p1_down, info->p2_down, info->p1_lost, info->p2_lost);
-	if (info->dev_info) {
-		u8 buf[sizeof(struct ksz_resp_msg) +
-			sizeof(struct ksz_hsr_node)];
-		struct ksz_resp_msg *msg = (struct ksz_resp_msg *) buf;
+	if ((info->notifications & HSR_INFO_LINK_LOST)) {
+		struct ksz_resp_msg *msg = (struct ksz_resp_msg *) lost_buf;
 		struct ksz_hsr_node active;
+		struct ksz_sw *sw = info->sw_dev;
+		struct file_dev_info *dev_info;
+		size_t n = sizeof(struct ksz_resp_msg) +
+			sizeof(struct ksz_hsr_node);
 
 		msg->module = DEV_MOD_HSR;
 		msg->cmd = DEV_INFO_HSR_LINK;
@@ -565,8 +609,14 @@ dbg_msg(" hsr: %u %u:%u %u:%u\n", info->ring,
 		memcpy(active.addr, info->src_addr, ETH_ALEN);
 		memcpy(&msg->resp.data[1], &active,
 			sizeof(struct ksz_hsr_node));
-		sw_setup_msg(info->dev_info, msg, sizeof(struct ksz_resp_msg) +
-			sizeof(struct ksz_hsr_node), NULL, NULL);
+		dev_info = sw->dev_list[0];
+		while (dev_info) {
+			if ((dev_info->notifications[DEV_MOD_HSR] &
+			    HSR_INFO_LINK_LOST))
+				file_dev_setup_msg(dev_info, msg, n, NULL,
+						   NULL);
+			dev_info = dev_info->next;
+		}
 	}
 }  /* hsr_notify_link_lost */
 
@@ -754,6 +804,25 @@ time_a, time_b, timestamp, jiffies - timestamp);
 	add_timer(&hsr->prune_timer);
 }
 
+static
+void hsr_rmv_slaves(struct ksz_hsr_info *info)
+{
+	struct hsr_priv *hsr = &info->hsr;
+	struct hsr_node *node;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(node, &hsr->node_db, mac_list) {
+
+		/* Prune slave entries */
+		if (node->slave) {
+			list_del_rcu(&node->mac_list);
+			/* Note that we need to free this entry later: */
+			kfree_rcu(node, rcu_head);
+		}
+	}
+	rcu_read_unlock();
+}
+
 
 #if 0
 static
@@ -846,7 +915,9 @@ static int hsr_dev_xmit(struct ksz_hsr_info *info, struct net_device *dev,
 {
 	int rc;
 	const struct net_device_ops *ops = dev->netdev_ops;
+	struct net_device **netdev = (struct net_device **)skb->cb;
 
+	*netdev = dev;
 	skb->dev = dev;
 	rc = ops->ndo_start_xmit(skb, skb->dev);
 	if (NETDEV_TX_BUSY == rc) {
@@ -1347,7 +1418,7 @@ dbg_msg(" S ");
 		skb = frame_get_stripped_skb(frame, port);
 		hsr_addr_subst_source(frame->node_src, skb);
 
-		if (!info->redbox)
+		if (!info->redbox_dev)
 			return;
 		do {
 			struct ksz_sw *sw = info->sw_dev;
@@ -1359,17 +1430,17 @@ dbg_msg(" S ");
 			else
 				forward = 0;
 		} while (0);
-#if 0
 #if 1
+#if 0
 		if (forward && (path_id >> 1) == info->hsr.redbox_id)
 			forward = 0;
 #endif
-#ifdef CONFIG_1588_PTP_
+#ifdef CONFIG_1588_PTP
 		/* Do not forward PTP messages. */
 		if (forward) {
 			struct ksz_sw *sw = info->sw_dev;
 
-			if (sw->tag.ports & 0x80)
+			if (get_rx_tag_ptp(&sw->tag))
 				forward = 0;
 		}
 #endif
@@ -1556,7 +1627,7 @@ static void *check_hsr_frame(u8 *data, struct hsr_frame_info *frame)
 
 static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 {
-#if 0 
+#if 1
 	struct sk_buff *new_skb;
 #endif
 	struct hsr_node *node;
@@ -1566,7 +1637,7 @@ static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 	int ret = 2;
 	struct ksz_sw *sw = info->sw_dev;
 
-	if (!info->redbox)
+	if (!info->redbox_dev)
 		return ret;
 
 	/* Stop processing if coming from HSR ports. */
@@ -1579,8 +1650,6 @@ static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 		forward = 2;
 	else
 		forward = 0;
-	if (!forward)
-		return ret;
 
 	node_db = &info->hsr.node_db;
 	node = find_node_by_AddrA(node_db, vlan->h_source);
@@ -1614,11 +1683,17 @@ static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 		ether_addr_copy(hsr_sp->MacAddressA, node->MacAddressA);
 		send_hsr_supervision_frame(master);
 	} else {
+
+		/* Remove the fixed entries in MAC table. */
+		if (!node->slave)
+			proc_hsr_cfg(info, node->MacAddressA, 0);
 		node->slave = 1;
 		node->time_in[HSR_PT_SLAVE_A] = jiffies;
 		node->time_in_stale[HSR_PT_SLAVE_A] = false;
 	}
-#if 0
+	if (!forward)
+		return ret;
+#if 1
 	if (1 == forward) {
 		new_skb = skb;
 		ret = 0;
@@ -1636,6 +1711,79 @@ static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 #endif
 	return ret;
 }  /* hsr_chk */
+
+static void hsr_tx_proc(struct work_struct *work)
+{
+	bool last;
+	struct sk_buff *skb;
+	struct ksz_hsr_info *info = container_of(work, struct ksz_hsr_info,
+						 tx_proc);
+
+	last = skb_queue_empty(&info->txq);
+	while (!last) {
+		skb = skb_dequeue(&info->txq);
+		last = skb_queue_empty(&info->txq);
+		if (!skb)
+			continue;
+		hsr_dev_xmit(info, info->redbox, skb);
+	}
+}  /* hsr_tx_proc */
+
+static void proc_hsr_tx(struct ksz_hsr_info *info, struct sk_buff *skb)
+{
+	skb_queue_tail(&info->txq, skb);
+	schedule_work(&info->tx_proc);
+}  /* proc_hsr_tx */
+
+static int hsr_fwd(struct ksz_hsr_info *info, struct sk_buff *skb)
+{
+	struct sk_buff *new_skb;
+	struct hsr_node *node;
+	struct list_head *node_db;
+	int forward = 0;
+	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *) skb->data;
+
+	/* Multicast address is sent to both devices. */
+	if (vlan->h_dest[0] & 0x01) {
+		forward = 3;
+		goto fwd_next;
+	}
+
+	node_db = &info->hsr.node_db;
+	node = find_node_by_AddrA(node_db, vlan->h_dest);
+
+	/* Unicast address is not learned. */
+	if (!node) {
+#if 0
+dbg_msg(" %02x:%02x:%02x:%02x:%02x:%02x\n",
+vlan->h_dest[0],
+vlan->h_dest[1],
+vlan->h_dest[2],
+vlan->h_dest[3],
+vlan->h_dest[4],
+vlan->h_dest[5]);
+#endif
+		forward = 3;
+		goto fwd_next;
+	}
+	if (node->slave)
+		forward = 2;
+	else
+		forward = 1;
+
+fwd_next:
+	if ((forward & 2) && forward != 2) {
+		new_skb = skb_copy(skb, GFP_ATOMIC);
+		if (new_skb)
+			proc_hsr_tx(info, new_skb);
+	}
+	if (forward == 2) {
+		struct net_device **netdev = (struct net_device **)skb->cb;
+
+		*netdev = info->dev;
+	}
+	return forward;
+}  /* hsr_fwd */
 
 static int hsr_rcv(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 {
@@ -1720,23 +1868,16 @@ static void hsr_change_addr(struct ksz_hsr_info *info, struct net_device *dev)
 			return;
 		sw->ops->cfg_mac(sw, BRIDGE_ADDR_ENTRY, info->src_addr, 0,
 			false, false, 0);
-		if (sw->eth_cnt > 1) {
-			sw->ops->cfg_mac(sw, DEV_0_ADDR_ENTRY, info->src_addr,
-				0, false, false, sw->eth_maps[0].vlan);
+		if (info->redbox_vlan)
 			sw->ops->cfg_mac(sw, DEV_1_ADDR_ENTRY, info->src_addr,
-				0, false, false, sw->eth_maps[1].vlan);
-		}
+					 0, false, false, 0);
 		prep_hsr_addr(info, dev->dev_addr);
 		sw->ops->cfg_mac(sw, BRIDGE_ADDR_ENTRY, info->src_addr,
 			sw->HOST_MASK, false, false, 0);
-		if (sw->eth_cnt > 1) {
-			sw->ops->cfg_mac(sw, DEV_0_ADDR_ENTRY, info->src_addr,
-				sw->HOST_MASK, false, false,
-				sw->eth_maps[0].vlan);
+		if (info->redbox_vlan)
 			sw->ops->cfg_mac(sw, DEV_1_ADDR_ENTRY, info->src_addr,
-				sw->HOST_MASK, false, false,
-				sw->eth_maps[1].vlan);
-		}
+					 sw->HOST_MASK, false, true,
+					 info->redbox_vlan);
 	} else {
 		prep_hsr_redbox_addr(info);
 	}
@@ -1877,9 +2018,10 @@ static void hsr_dev_destroy(struct ksz_hsr_info *info)
 	info->state = -1;
 }
 
-static void setup_hsr(struct ksz_hsr_info *info, struct net_device *dev)
+static void setup_hsr(struct ksz_hsr_info *info, struct net_device *dev, int i)
 {
 	info->dev = dev;
+	info->hsr_index = i;
 	info->vid = 0;
 
 	hsr_dev_init(info);
@@ -1894,9 +2036,11 @@ static void setup_hsr(struct ksz_hsr_info *info, struct net_device *dev)
 		prep_hsr_supervision_slave_frame(info);
 }  /* setup_hsr */
 
-static void setup_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
+static void setup_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev,
+			     int i)
 {
 	info->redbox = dev;
+	info->redbox_index = i;
 
 	/* Main HSR device is setup. */
 	if (info->dev)
@@ -1966,6 +2110,7 @@ static int hsr_dev_req(struct ksz_hsr_info *hsr, char *arg, void *info)
 	struct ksz_resp_msg *msg = (struct ksz_resp_msg *) data;
 	int err = 0;
 	int result = 0;
+	struct ksz_sw *sw = hsr->sw_dev;
 
 	get_user_data(&req_size, &req->size, info);
 	get_user_data(&maincmd, &req->cmd, info);
@@ -1990,7 +2135,6 @@ static int hsr_dev_req(struct ksz_hsr_info *hsr, char *arg, void *info)
 					6, info);
 				if (err)
 					goto dev_ioctl_done;
-				hsr->dev_info = info;
 			} else
 				result = DEV_IOC_INVALID_LEN;
 			break;
@@ -2002,20 +2146,24 @@ static int hsr_dev_req(struct ksz_hsr_info *hsr, char *arg, void *info)
 			/* Not called through char device. */
 			if (!info)
 				break;
+			file_dev_clear_notify(sw->dev_list[0], info,
+					      DEV_MOD_HSR,
+					      &hsr->notifications);
 			msg->module = DEV_MOD_HSR;
 			msg->cmd = DEV_INFO_QUIT;
 			msg->resp.data[0] = 0;
-			sw_setup_msg(info, msg, 8, NULL, NULL);
-			hsr->notifications = 0;
-			hsr->dev_info = NULL;
+			file_dev_setup_msg(info, msg, 8, NULL, NULL);
 			break;
 		case DEV_INFO_NOTIFY:
 			if (len >= 4) {
+				struct file_dev_info *dev_info = info;
 				uint *notify = (uint *) data;
 
 				_chk_ioctl_size(len, 4, 0, &req_size, &result,
 					&req->param, data, info);
-				hsr->notifications = *notify;
+				dev_info->notifications[DEV_MOD_HSR] =
+					*notify;
+				hsr->notifications |= *notify;
 			}
 			break;
 		default:
@@ -2078,6 +2226,8 @@ static struct hsr_ops hsr_ops = {
 static void prep_hsr(struct ksz_hsr_info *info, struct net_device *dev,
 	u8 *src)
 {
+	struct ksz_sw *sw = info->sw_dev;
+
 	info->dev = dev;
 	info->center = NULL;
 	info->seq_num = 0;
@@ -2092,20 +2242,24 @@ static void prep_hsr(struct ksz_hsr_info *info, struct net_device *dev,
 		vlan = (struct vlan_ethhdr *) info->slave_sup_frame;
 		vlan->h_vlan_TCI = htons(info->vid);
 	}
-	do {
-		struct ksz_sw *sw = info->sw_dev;
+	if (info->redbox) {
+		int i;
 
-		sw->ops->cfg_mac(sw, BRIDGE_ADDR_ENTRY, info->src_addr,
-			sw->HOST_MASK, false, false, 0);
-		if (sw->eth_cnt > 1) {
-			sw->ops->cfg_mac(sw, DEV_0_ADDR_ENTRY, info->src_addr,
-				sw->HOST_MASK, false, false,
-				sw->eth_maps[0].vlan);
-			sw->ops->cfg_mac(sw, DEV_1_ADDR_ENTRY, info->src_addr,
-				sw->HOST_MASK, false, false,
-				sw->eth_maps[1].vlan);
+		for (i = 0; i < sw->eth_cnt; i++) {
+			if (sw->eth_maps[i].proto & HSR_REDBOX) {
+				info->redbox_vlan = sw->eth_maps[i].vlan;
+				break;
+			}
 		}
-	} while (0);
+	}
+	sw->ops->cfg_mac(sw, BRIDGE_ADDR_ENTRY, info->src_addr, sw->HOST_MASK,
+			 false, false, 0);
+	if (info->redbox_vlan)
+		sw->ops->cfg_mac(sw, DEV_1_ADDR_ENTRY, info->src_addr,
+				 sw->HOST_MASK, false, true,
+				 info->redbox_vlan);
+	skb_queue_head_init(&info->txq);
+	INIT_WORK(&info->tx_proc, hsr_tx_proc);
 	hsr_dev_finalize(info);
 }  /* prep_hsr */
 
@@ -2141,6 +2295,19 @@ static void sw_setup_hsr(struct ksz_sw *sw)
 static void stop_hsr(struct ksz_hsr_info *info)
 {
 	hsr_dev_destroy(info);
+}
+
+static void start_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
+{
+	info->redbox_dev = dev;
+	info->redbox_up = netif_carrier_ok(dev);
+}
+
+static void stop_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
+{
+	if (info->redbox_dev == dev)
+		info->redbox_dev = NULL;
+	info->redbox_up = 0;
 }
 
 static void ksz_hsr_exit(struct ksz_hsr_info *info)

@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code in IBA format
  *
- * Copyright (c) 2015-2017 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -21,7 +21,7 @@ static u32 ptp_unit_index(struct ptp_info *ptp, int shift, u8 unit)
 {
 	u32 index;
 #ifndef USE_OLD_PTP_UNIT_INDEX
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 
 	index = sw->cached.ptp_unit_index;
 	index &= ~(PTP_UNIT_M << shift);
@@ -37,18 +37,10 @@ static void *get_time_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 *data = in;
 
-	info->data[0] = *data;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-		REG_PTP_CLK_CTRL);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_RTC_SEC);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_RTC_NANOSEC);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_16,
-		REG_PTP_RTC_SUB_NANOSEC__2);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16, REG_PTP_CLK_CTRL, *data);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_RTC_SEC, 0);
+	iba_cmd(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_RTC_NANOSEC);
+	iba_cmd(info, IBA_CMD_READ, IBA_CMD_16, REG_PTP_RTC_SUB_NANOSEC__2);
 	return info->fptr;
 }  /* get_time_pre */
 
@@ -65,15 +57,15 @@ static int get_time_post(struct ksz_iba_info *info, void *out, void *obj)
 
 			switch (reg) {
 			case REG_PTP_RTC_SEC:
-				t->sec = iba_get_val(size,
+				t->sec = info->ops->get_val(size,
 					info->regs[i].data[0]);
 				break;
 			case REG_PTP_RTC_NANOSEC:
-				t->nsec = iba_get_val(size,
+				t->nsec = info->ops->get_val(size,
 					info->regs[i].data[0]);
 				break;
 			case REG_PTP_RTC_SUB_NANOSEC__2:
-				subnsec = (u16) iba_get_val(size,
+				subnsec = (u16) info->ops->get_val(size,
 					info->regs[i].data[0]);
 				break;
 			}
@@ -87,13 +79,13 @@ static int get_time_post(struct ksz_iba_info *info, void *out, void *obj)
 
 static void get_ptp_time_iba(struct ptp_info *ptp, struct ptp_utime *t)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	u32 data[3];
 
 	data[0] = sw->cached.ptp_clk_ctrl;
 	data[0] |= PTP_READ_TIME;
-	iba_req(info, data, NULL, t, get_time_pre, get_time_post);
+	info->ops->req(info, data, NULL, t, get_time_pre, get_time_post);
 }  /* get_ptp_time_iba */
 
 static void *set_time_pre(struct ksz_iba_info *info, void *in, void *obj)
@@ -101,30 +93,26 @@ static void *set_time_pre(struct ksz_iba_info *info, void *in, void *obj)
 	u32 *data = in;
 	struct ptp_utime *t = obj;
 
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-		REG_PTP_RTC_SUB_NANOSEC__2);
-	info->data[0] = t->nsec;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_RTC_NANOSEC);
-	info->data[0] = t->sec;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_RTC_SEC);
-	info->data[0] = data[0];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-		REG_PTP_CLK_CTRL);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16,
+		REG_PTP_RTC_SUB_NANOSEC__2, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_RTC_NANOSEC,
+		t->nsec);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_RTC_SEC,
+		t->sec);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16, REG_PTP_CLK_CTRL,
+		data[0]);
 	return info->fptr;
 }  /* set_time_pre */
 
 static void set_ptp_time_iba(struct ptp_info *ptp, struct ptp_utime *t)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	u32 data[3];
 
 	data[0] = sw->cached.ptp_clk_ctrl;
 	data[0] |= PTP_LOAD_TIME;
-	iba_req(info, data, NULL, t, set_time_pre, NULL);
+	info->ops->req(info, data, NULL, t, set_time_pre, NULL);
 }  /* set_ptp_time_iba */
 
 static void *adjust_time_pre(struct ksz_iba_info *info, void *in,
@@ -134,25 +122,21 @@ static void *adjust_time_pre(struct ksz_iba_info *info, void *in,
 	u32 nsec = data[4];
 	u32 val = nsec;
 
-	info->data[0] = data[3];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_RTC_SEC);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_RTC_SEC,
+		data[3]);
 	do {
 		if (nsec > NANOSEC_IN_SEC - 1)
 			nsec = NANOSEC_IN_SEC - 1;
-		info->data[0] = nsec;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_PTP_RTC_NANOSEC);
-		info->data[0] = data[2];
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-			REG_PTP_CLK_CTRL);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_PTP_RTC_NANOSEC, nsec);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16, REG_PTP_CLK_CTRL,
+			data[2]);
 		val -= nsec;
 		nsec = val;
 	} while (val);
 	if (data[5]) {
-		info->data[0] = data[5];
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-			REG_PTP_CLK_CTRL);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16, REG_PTP_CLK_CTRL,
+			data[5]);
 	}
 	return info->fptr;
 }  /* adjust_time_pre */
@@ -160,7 +144,7 @@ static void *adjust_time_pre(struct ksz_iba_info *info, void *in,
 static void adjust_ptp_time_iba(struct ptp_info *ptp, int add, u32 sec,
 	u32 nsec, int adj_hack)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	u32 data[6];
 	u16 ctrl;
@@ -184,7 +168,11 @@ static void adjust_ptp_time_iba(struct ptp_info *ptp, int add, u32 sec,
 	data[5] = 0;
 	if (adj_hack && (adj & PTP_CLK_ADJ_ENABLE))
 		data[5] = adj;
-	iba_req(info, data, NULL, NULL, adjust_time_pre, NULL);
+	info->ops->req(info, data, NULL, NULL, adjust_time_pre, NULL);
+#ifdef NO_PPS_DETECT
+	if (add && (sec || nsec >= 1000))
+		ptp->clk_add = 1;
+#endif
 }  /* adjust_ptp_time_iba */
 
 static void *adjust_sync_time_pre(struct ksz_iba_info *info, void *in,
@@ -192,19 +180,17 @@ static void *adjust_sync_time_pre(struct ksz_iba_info *info, void *in,
 {
 	u32 *data = in;
 
-	info->data[0] = data[0];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_RATE_DURATION);
-	info->data[0] = data[1];
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_SUBNANOSEC_RATE);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_RATE_DURATION,
+		data[0]);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_SUBNANOSEC_RATE,
+		data[1]);
 	return info->fptr;
 }
 
 static void adjust_sync_time_iba(struct ptp_info *ptp, int diff, u32 interval,
 	u32 duration)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	u32 data[2];
 	u32 adjust;
@@ -213,7 +199,7 @@ static void adjust_sync_time_iba(struct ptp_info *ptp, int diff, u32 interval,
 	adjust |= PTP_TMP_RATE_ENABLE;
 	data[0] = duration;
 	data[1] = adjust;
-	iba_req(info, data, NULL, NULL, adjust_sync_time_pre, NULL);
+	info->ops->req(info, data, NULL, NULL, adjust_sync_time_pre, NULL);
 }  /* adjust_sync_time_iba */
 
 static void *ptp_unit_index_pre(struct ksz_iba_info *info, void *in, void *obj)
@@ -223,32 +209,25 @@ static void *ptp_unit_index_pre(struct ksz_iba_info *info, void *in, void *obj)
 	u8 unit = (u8) data[1];
 	struct ptp_info *ptp = obj;
 
-	info->data[0] = ptp_unit_index(ptp, shift, unit);
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_UNIT_INDEX__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_UNIT_INDEX__4,
+		ptp_unit_index(ptp, shift, unit));
 	return info->fptr;
 }  /* ptp_unit_index_pre */
 
 static void *rx_reset_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TS_RESET;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_1, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TS_ENABLE | TS_RESET;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_0, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TS_RESET);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_0, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TS_ENABLE | TS_RESET);
 	return info->fptr;
 }  /* rx_reset_pre */
 
 static void ptp_rx_reset_iba(struct ptp_info *ptp, u8 tsi, u32 *ctrl_ptr)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	int rc;
 	u32 buf[8];
@@ -269,24 +248,21 @@ static void ptp_rx_reset_iba(struct ptp_info *ptp, u8 tsi, u32 *ctrl_ptr)
 	func[i++] = rx_reset_pre;
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, NULL, ptp, func, NULL);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, NULL, ptp, func, NULL);
 }  /* ptp_rx_reset_iba */
 
 static void *rx_off_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TS_INT_ENABLE | TS_ENABLE;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_0, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_0, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TS_INT_ENABLE | TS_ENABLE);
 	return info->fptr;
 }  /* rx_off_pre */
 
 static void ptp_rx_off_iba(struct ptp_info *ptp, u8 tsi)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	u16 tsi_bit = (1 << tsi);
 	u32 ts_intr = 0;
@@ -326,7 +302,7 @@ static void ptp_rx_off_iba(struct ptp_info *ptp, u8 tsi)
 		data[1] = REG_TS_CTRL_STAT__4;
 		data[2] = 0;
 		data += 3;
-		func[i++] = iba_w_pre;
+		func[i++] = info->ops->w_pre;
 		ptp->cascade_rx &= ~tsi_bit;
 	}
 	if (ts_intr) {
@@ -335,16 +311,17 @@ static void ptp_rx_off_iba(struct ptp_info *ptp, u8 tsi)
 		data[1] = REG_PTP_INT_STATUS__4;
 		data[2] = ts_intr;
 		data += 3;
-		func[i++] = iba_w_pre;
+		func[i++] = info->ops->w_pre;
 	}
 
 	data_out = data;
-	data = iba_prepare_data(REG_PTP_CTRL_STAT__4, data);
-	data = iba_prepare_data(-1, data);
+	data = iba_prepare(info, REG_PTP_CTRL_STAT__4, data);
+	data = iba_prepare(info, -1, data);
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, data_out, ptp, func, iba_r_post);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, data_out, ptp, func,
+		info->ops->r_post);
 }  /* ptp_rx_off_iba */
 
 static inline void rx_intr_iba(struct ptp_info *ptp, u16 tsi_bit, u32 *ctrl)
@@ -361,41 +338,32 @@ static void *rx_on_pre(struct ksz_iba_info *info, void *in, void *obj)
 	struct ptp_info *ptp = obj;
 	u32 ctrl = 0;
 
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
 
 	/* Enable timestamp interrupt. */
 	if (intr)
 		ptp_rx_intr(ptp, (1 << tsi), &ctrl);
 
 	ctrl |= TS_ENABLE;
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_1, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		ctrl);
 	return info->fptr;
 }  /* rx_on_pre */
 
 static void *rx_restart_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TS_ENABLE;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_0, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TS_ENABLE;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_1, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_0, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TS_ENABLE);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TS_ENABLE);
 	return info->fptr;
 }  /* rx_restart_pre */
 
 static void ptp_rx_restart_iba(struct ptp_info *ptp, u8 tsi)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	int rc;
 	void *func[3];
@@ -414,8 +382,8 @@ static void ptp_rx_restart_iba(struct ptp_info *ptp, u8 tsi)
 	func[i++] = rx_restart_pre;
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, NULL, ptp, func, NULL);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, NULL, ptp, func, NULL);
 }  /* ptp_rx_restart_iba */
 
 static void *rx_event_pre(struct ksz_iba_info *info, void *in, void *obj)
@@ -427,22 +395,20 @@ static void *rx_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 	struct ptp_info *ptp = obj;
 	u32 ctrl;
 
-	info->data[0] = ptp_unit_index(ptp, PTP_TSI_INDEX_S, tsi);
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_UNIT_INDEX__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_UNIT_INDEX__4,
+		ptp_unit_index(ptp, PTP_TSI_INDEX_S, tsi));
 
 	/* Config pattern. */
 	ctrl = ts_event_gpi(gpi, event);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TS_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TS_CTRL_STAT__4,
+		ctrl);
 	return info->fptr;
 }  /* rx_event_pre */
 
 static void ptp_rx_event_iba(struct ptp_info *ptp, u8 tsi, u8 gpi, u8 event,
 	int intr)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	int rc;
 	void *func[3];
@@ -465,8 +431,8 @@ static void ptp_rx_event_iba(struct ptp_info *ptp, u8 tsi, u8 gpi, u8 event,
 	func[i++] = rx_on_pre;
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, NULL, ptp, func, NULL);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, NULL, ptp, func, NULL);
 }  /* ptp_rx_event_iba */
 
 static void *rx_cascade_event_pre(struct ksz_iba_info *info, void *in,
@@ -490,9 +456,9 @@ static void *rx_cascade_event_pre(struct ksz_iba_info *info, void *in,
 	tsi = last;
 	tail = TS_CASCADE_TAIL;
 	for (i = 1; i < total; i++) {
-		info->data[0] = ptp_unit_index(ptp, PTP_TSI_INDEX_S, tsi);
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_PTP_UNIT_INDEX__4);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_PTP_UNIT_INDEX__4,
+			ptp_unit_index(ptp, PTP_TSI_INDEX_S, tsi));
 
 		prev = tsi - 1;
 		if (prev < 0)
@@ -501,43 +467,38 @@ static void *rx_cascade_event_pre(struct ksz_iba_info *info, void *in,
 		ctrl |= ts_cascade(prev);
 		ctrl |= tail;
 		ptp->cascade_rx |= (1 << tsi);
-		info->data[0] = ctrl;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_TS_CTRL_STAT__4);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_TS_CTRL_STAT__4, ctrl);
 
 		/* Enable timestamp interrupt. */
 		if (intr) {
 			ctrl = 0;
 			ptp_rx_intr(ptp, (1 << tsi), &ctrl);
-			info->data[0] = 0;
-			info->fptr = iba_cmd_data(info, IBA_CMD_READ,
-				IBA_CMD_32, REG_PTP_CTRL_STAT__4);
-			info->data[0] = ctrl;
-			info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_1,
-				IBA_CMD_32, REG_PTP_CTRL_STAT__4);
+			iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
+				REG_PTP_CTRL_STAT__4, 0);
+			iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32,
+				REG_PTP_CTRL_STAT__4, ctrl);
 		}
 		--tsi;
 		if (tsi < 0)
 			tsi = MAX_TIMESTAMP_UNIT - 1;
 		tail = 0;
 	}
-	info->data[0] = ptp_unit_index(ptp, PTP_TSI_INDEX_S, first);
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_UNIT_INDEX__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_UNIT_INDEX__4,
+		ptp_unit_index(ptp, PTP_TSI_INDEX_S, first));
 
 	ctrl = ts_event_gpi(gpi, event);
 	ctrl |= ts_cascade(last);
 	ptp->cascade_rx |= (1 << first);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TS_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TS_CTRL_STAT__4,
+		ctrl);
 	return info->fptr;
 }  /* rx_cascade_event_pre */
 
 static void ptp_rx_cascade_event_iba(struct ptp_info *ptp, u8 first, u8 total,
 	u8 gpi, u8 event, int intr)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	int rc;
 	void *func[3];
@@ -562,8 +523,8 @@ static void ptp_rx_cascade_event_iba(struct ptp_info *ptp, u8 first, u8 total,
 	func[i++] = rx_on_pre;
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, NULL, ptp, func, NULL);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, NULL, ptp, func, NULL);
 }  /* ptp_rx_cascade_event_iba */
 
 static u32 ptp_get_event_cnt_iba(struct ptp_info *ptp, u8 tsi, void *ptr)
@@ -587,15 +548,16 @@ static u32 ptp_get_event_cnt_iba(struct ptp_info *ptp, u8 tsi, void *ptr)
 	data[0] = IBA_CMD_32;
 	data[1] = REG_TS_CTRL_STAT__4;
 	data += 3;
-	func[i++] = iba_r_pre;
+	func[i++] = info->ops->r_pre;
 
 	data_out = data;
-	data = iba_prepare_data(REG_TS_CTRL_STAT__4, data);
-	data = iba_prepare_data(-1, data);
+	data = iba_prepare(info, REG_TS_CTRL_STAT__4, data);
+	data = iba_prepare(info, -1, data);
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, data_out, ptp, func, iba_r_post);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, data_out, ptp, func,
+		info->ops->r_post);
 	return data_out[1];
 }  /* ptp_get_event_cnt_iba */
 
@@ -604,13 +566,13 @@ static void ptp_get_events_iba(struct ptp_info *ptp, u32 reg_ns, size_t len,
 {
 	struct ksz_iba_info *info = ptr;
 
-	iba_burst(info, reg_ns, len, buf, 0,
-		iba_get_pre, iba_get_post_le);
+	info->ops->burst(info, reg_ns, len, buf, 0,
+		info->ops->get_pre, info->ops->get_post_le);
 }  /* ptp_get_events_iba */
 
 static void ptp_read_event_iba(struct ptp_info *ptp, u8 tsi)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 
 	ptp_read_event_func(ptp, tsi, info, ptp_get_event_cnt_iba,
@@ -619,52 +581,37 @@ static void ptp_read_event_iba(struct ptp_info *ptp, u8 tsi)
 
 static void *tx_reset_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TRIG_RESET;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_1, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TRIG_ENABLE | TRIG_RESET;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_0, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TRIG_RESET);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_0, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TRIG_ENABLE | TRIG_RESET);
 	return info->fptr;
 }  /* tx_reset_pre */
 
 static void *tx_off_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TRIG_ENABLE;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_0, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_0, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TRIG_ENABLE);
 	return info->fptr;
 }  /* tx_off_pre */
 
 static void *tx_init_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_TRIG_CTRL__4);
-	info->data[0] = TRIG_CASCADE_ENABLE | TRIG_CASCADE_TAIL;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_0, IBA_CMD_32,
-		REG_TRIG_CTRL__4);
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_TRIG_CTRL__4);
-	info->data[0] = trig_cascade(TRIG_CASCADE_UPS_M);
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_1, IBA_CMD_32,
-		REG_TRIG_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_TRIG_CTRL__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_0, IBA_CMD_32, REG_TRIG_CTRL__4,
+		TRIG_CASCADE_ENABLE | TRIG_CASCADE_TAIL);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_TRIG_CTRL__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32, REG_TRIG_CTRL__4,
+		trig_cascade(TRIG_CASCADE_UPS_M));
 	return info->fptr;
 }  /* tx_init_pre */
 
 static void ptp_tx_off_iba(struct ptp_info *ptp, u8 tso)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	u16 tso_bit = (1 << tso);
 	int rc;
@@ -701,33 +648,29 @@ static void ptp_tx_off_iba(struct ptp_info *ptp, u8 tso)
 	}
 
 	data_out = data;
-	data = iba_prepare_data(-1, data);
+	data = iba_prepare(info, -1, data);
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, data_out, ptp, func, iba_r_post);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, data_out, ptp, func,
+		info->ops->r_post);
 }  /* ptp_tx_off_iba */
 
 static void *tx_on_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
-	info->data[0] = TRIG_ENABLE;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE_1, IBA_CMD_32,
-		REG_PTP_CTRL_STAT__4);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TRIG_ENABLE);
 	return info->fptr;
 }  /* tx_on_pre */
 
 static void *tx_trigger_time_iba(struct ksz_iba_info *info, u8 tso, u32 sec,
 	u32 nsec)
 {
-	info->data[0] = sec;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_TARGET_SEC);
-	info->data[0] = nsec;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_TARGET_NANOSEC);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_TARGET_SEC,
+		sec);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_TARGET_NANOSEC,
+		nsec);
 	return info->fptr;
 }  /* tx_trigger_time_iba */
 
@@ -761,9 +704,7 @@ static void *tx_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 	if (opt)
 		ctrl |= TRIG_EDGE;
 	ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CTRL__4, ctrl);
 
 	/* Config pulse width. */
 	if (TRIG_REG_OUTPUT == event) {
@@ -787,9 +728,8 @@ static void *tx_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 			pulse = 1;
 		else if (pulse > TRIG_PULSE_WIDTH_M)
 			pulse = TRIG_PULSE_WIDTH_M;
-		info->data[0] = pulse;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_24,
-			REG_TRIG_PULSE_WIDTH__4 + 1);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_24,
+			REG_TRIG_PULSE_WIDTH__4 + 1, pulse);
 	}
 
 	/* Config cycle width. */
@@ -799,16 +739,14 @@ static void *tx_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 		if (cycle < min_cycle)
 			cycle = min_cycle;
-		info->data[0] = cycle;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_TRIG_CYCLE_WIDTH);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_TRIG_CYCLE_WIDTH, cycle);
 
 		/* Config trigger count. */
 		data <<= TRIG_CYCLE_CNT_S;
 		pattern |= data;
-		info->data[0] = pattern;
-		info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-			REG_TRIG_CYCLE_CNT);
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+			REG_TRIG_CYCLE_CNT, pattern);
 	}
 
 	cur->len = 0;
@@ -869,7 +807,7 @@ static void ptp_tx_event_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	u32 pulse, u32 cycle, u16 cnt, u32 sec, u32 nsec, u32 iterate,
 	int intr, int now, int opt)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	struct ptp_output *cur = &ptp->outputs[tso];
 	int rc;
@@ -915,8 +853,8 @@ static void ptp_tx_event_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	}
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, NULL, ptp, func, NULL);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, NULL, ptp, func, NULL);
 }  /* ptp_tx_event_iba */
 
 static void *pps_event_pre(struct ksz_iba_info *info, void *in, void *obj)
@@ -939,33 +877,28 @@ static void *pps_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 	ctrl |= TRIG_NOTIFY;
 	ctrl |= TRIG_NOW;
 	ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CTRL__4, ctrl);
 
 	/* Config pulse width. */
 	if (pulse > TRIG_PULSE_WIDTH_M)
 		pulse = TRIG_PULSE_WIDTH_M;
-	info->data[0] = pulse;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_24,
-		REG_TRIG_PULSE_WIDTH__4 + 1);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_24,
+		REG_TRIG_PULSE_WIDTH__4 + 1, pulse);
 
 	/* Config cycle width. */
-	info->data[0] = cycle;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_CYCLE_WIDTH);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CYCLE_WIDTH,
+		cycle);
 
 	/* Config trigger count. */
 	pattern = cnt;
 	pattern <<= TRIG_CYCLE_CNT_S;
-	info->data[0] = pattern;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_CYCLE_CNT);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CYCLE_CNT,
+		pattern);
 
 	/* Config trigger time. */
-	if (ptp->pps_offset >= 0)
+	if (ptp->pps_offset >= 0) {
 		nsec = ptp->pps_offset;
-	else {
+	} else {
 		nsec = NANOSEC_IN_SEC + ptp->pps_offset;
 		sec--;
 	}
@@ -976,7 +909,7 @@ static void *pps_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 static void ptp_pps_event_iba(struct ptp_info *ptp, u8 gpo, u32 sec)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	u8 tso = ptp->pps_tso;
 	int rc;
@@ -998,8 +931,8 @@ static void ptp_pps_event_iba(struct ptp_info *ptp, u8 gpo, u32 sec)
 	func[i++] = tx_on_pre;
 
 	func[i] = NULL;
-	assert_buf(__func__, i, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, NULL, ptp, func, NULL);
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, NULL, ptp, func, NULL);
 }  /* ptp_pps_event */
 
 static void *ptp_10MHz_pre(struct ksz_iba_info *info, void *in, void *obj)
@@ -1022,28 +955,23 @@ static void *ptp_10MHz_pre(struct ksz_iba_info *info, void *in, void *obj)
 	if (1 == tso)
 		ctrl |= TRIG_EDGE;
 	ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CTRL__4, ctrl);
 
 	/* Config pulse width. */
 	if (pulse > TRIG_PULSE_WIDTH_M)
 		pulse = TRIG_PULSE_WIDTH_M;
-	info->data[0] = pulse;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_PULSE_WIDTH__4 + 0);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
+		REG_TRIG_PULSE_WIDTH__4 + 0, pulse);
 
 	/* Config cycle width. */
-	info->data[0] = cycle;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_CYCLE_WIDTH);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CYCLE_WIDTH,
+		cycle);
 
 	/* Config trigger count. */
 	pattern = cnt;
 	pattern <<= TRIG_CYCLE_CNT_S;
-	info->data[0] = pattern;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_CYCLE_CNT);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CYCLE_CNT,
+		pattern);
 
 	tx_trigger_time_iba(info, tso, sec, nsec);
 
@@ -1052,7 +980,7 @@ static void *ptp_10MHz_pre(struct ksz_iba_info *info, void *in, void *obj)
 
 static void ptp_10MHz_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	int n;
 	u32 nsec;
@@ -1065,9 +993,9 @@ static void ptp_10MHz_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec)
 	int k = 0;
 
 	/* Config trigger time. */
-	if (ptp->pps_offset >= 0)
+	if (ptp->pps_offset >= 0) {
 		nsec = ptp->pps_offset;
-	else {
+	} else {
 		nsec = NANOSEC_IN_SEC + ptp->pps_offset;
 		sec--;
 	}
@@ -1090,12 +1018,14 @@ static void ptp_10MHz_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec)
 		func[k++] = tx_on_pre;
 
 		data_out = data;
-		data = iba_prepare_data(REG_PTP_CTRL_STAT__4, data);
-		data = iba_prepare_data(-1, data);
+		data = iba_prepare(info, REG_PTP_CTRL_STAT__4, data);
+		data = iba_prepare(info, -1, data);
 
 		func[k] = NULL;
-		assert_buf(__func__, k, sizeof(func), buf, data, sizeof(buf));
-		rc = iba_reqs(info, data_in, data_out, ptp, func, iba_r_post);
+		iba_assert(info, __func__, k, sizeof(func), buf, data,
+			sizeof(buf));
+		rc = info->ops->reqs(info, data_in, data_out, ptp, func,
+			info->ops->r_post);
 
 		tso = 1;
 		nsec += 12 * 8;
@@ -1104,9 +1034,8 @@ static void ptp_10MHz_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec)
 
 static void *tx_cascade_cycle_iba(struct ksz_iba_info *info, u8 tso, u32 nsec)
 {
-	info->data[0] = nsec;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_ITERATE_TIME);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_ITERATE_TIME,
+		nsec);
 	return info->fptr;
 }  /* tx_cascade_cycle_iba */
 
@@ -1135,16 +1064,14 @@ static void *tx_cascade_on_pre(struct ksz_iba_info *info, void *in,
 		ctrl |= TRIG_CASCADE_TAIL;
 		ctrl |= repeat - 1;
 	}
-	info->data[0] = ctrl;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_TRIG_CTRL__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CTRL__4, ctrl);
 	return info->fptr;
 }  /* tx_cascade_on_pre */
 
 static int ptp_tx_cascade_iba(struct ptp_info *ptp, u8 first, u8 total,
 	u16 repeat, u32 sec, u32 nsec, int intr)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	int n;
 	u8 tso;
@@ -1162,33 +1089,35 @@ static int ptp_tx_cascade_iba(struct ptp_info *ptp, u8 first, u8 total,
 	if (last >= MAX_TRIG_UNIT)
 		return 1;
 	if (check_cascade(ptp, first, total, &repeat, sec, nsec)) {
-		dbg_msg("cascade repeat timing is not right\n");
+		dbg_msg("cascade repeat timing is not right"NL);
 		return 1;
 	}
 	tso = last;
 	for (n = 0; n < total; n++, tso--) {
 		cur = &ptp->outputs[tso];
-	data = buf;
-	k = 0;
-	data_in[k] = data;
-	data[0] = PTP_TOU_INDEX_S;
-	data[1] = tso;
-	data += 2;
-	func[k++] = ptp_unit_index_pre;
+		data = buf;
+		k = 0;
+		data_in[k] = data;
+		data[0] = PTP_TOU_INDEX_S;
+		data[1] = tso;
+		data += 2;
+		func[k++] = ptp_unit_index_pre;
 
-	data_in[k] = data;
-	data[0] = IBA_CMD_32;
-	data[1] = REG_TRIG_CTRL__4;
-	data += 3;
-	func[k++] = iba_r_pre;
+		data_in[k] = data;
+		data[0] = IBA_CMD_32;
+		data[1] = REG_TRIG_CTRL__4;
+		data += 3;
+		func[k++] = info->ops->r_pre;
 
-	data_out = data;
-	data = iba_prepare_data(REG_TRIG_CTRL__4, data);
-	data = iba_prepare_data(-1, data);
+		data_out = data;
+		data = iba_prepare(info, REG_TRIG_CTRL__4, data);
+		data = iba_prepare(info, -1, data);
 
 		func[k] = NULL;
-		assert_buf(__func__, k, sizeof(func), buf, data, sizeof(buf));
-		rc = iba_reqs(info, data_in, data_out, ptp, func, iba_r_post);
+		iba_assert(info, __func__, k, sizeof(func), buf, data,
+			sizeof(buf));
+		rc = info->ops->reqs(info, data_in, data_out, ptp, func,
+			info->ops->r_post);
 
 		data = buf;
 		k = 0;
@@ -1203,9 +1132,11 @@ static int ptp_tx_cascade_iba(struct ptp_info *ptp, u8 first, u8 total,
 		func[k++] = tx_cascade_on_pre;
 
 		func[k] = NULL;
-		assert_buf(__func__, k, sizeof(func), buf, data, sizeof(buf));
+		iba_assert(info, __func__, k, sizeof(func), buf, data,
+			sizeof(buf));
 		if (tso != first)
-			rc = iba_reqs(info, data_in, NULL, cur, func, NULL);
+			rc = info->ops->reqs(info, data_in, NULL, cur, func,
+				NULL);
 		ptp->cascade_tx |= (1 << tso);
 	}
 
@@ -1220,20 +1151,16 @@ static int ptp_tx_cascade_iba(struct ptp_info *ptp, u8 first, u8 total,
 	func[k++] = tx_on_pre;
 
 	func[k] = NULL;
-	assert_buf(__func__, k, sizeof(func), buf, data, sizeof(buf));
-	rc = iba_reqs(info, data_in, NULL, cur, func, NULL);
+	iba_assert(info, __func__, k, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, NULL, cur, func, NULL);
 	return 0;
 }  /* ptp_tx_cascade_iba */
 
 static void *start_pre_1(struct ksz_iba_info *info, void *in, void *obj)
 {
-	info->data[0] = 0;
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_16,
-		REG_PTP_MSG_CONF1);
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_16,
-		REG_PTP_MSG_CONF2);
-	info->fptr = iba_cmd_data(info, IBA_CMD_READ, IBA_CMD_16,
-		REG_PTP_DOMAIN_VERSION);
+	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_16, REG_PTP_MSG_CONF1, 0);
+	iba_cmd(info, IBA_CMD_READ, IBA_CMD_16, REG_PTP_MSG_CONF2);
+	iba_cmd(info, IBA_CMD_READ, IBA_CMD_16, REG_PTP_DOMAIN_VERSION);
 	return info->fptr;
 }  /* start_pre_1 */
 
@@ -1249,15 +1176,15 @@ static int start_post_1(struct ksz_iba_info *info, void *out, void *obj)
 
 			switch (reg) {
 			case REG_PTP_MSG_CONF1:
-				data[0] = iba_get_val(size,
+				data[0] = info->ops->get_val(size,
 					info->regs[i].data[0]);
 				break;
 			case REG_PTP_MSG_CONF2:
-				data[1] = iba_get_val(size,
+				data[1] = info->ops->get_val(size,
 					info->regs[i].data[0]);
 				break;
 			case REG_PTP_DOMAIN_VERSION:
-				data[2] = iba_get_val(size,
+				data[2] = info->ops->get_val(size,
 					info->regs[i].data[0]);
 				break;
 			}
@@ -1271,21 +1198,18 @@ static void *start_pre_2(struct ksz_iba_info *info, void *in, void *obj)
 {
 	struct ptp_info *ptp = obj;
 
-	info->data[0] = ptp->mode;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-		REG_PTP_MSG_CONF1);
-	info->data[0] = ptp->cfg;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_16,
-		REG_PTP_MSG_CONF2);
-	info->data[0] = 0xffffffff;
-	info->fptr = iba_cmd_data(info, IBA_CMD_WRITE, IBA_CMD_32,
-		REG_PTP_INT_STATUS__4);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16, REG_PTP_MSG_CONF1,
+		ptp->mode);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16, REG_PTP_MSG_CONF2,
+		ptp->cfg);
+	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_INT_STATUS__4,
+		0xffffffff);
 	return info->fptr;
 }  /* start_pre_2 */
 
 static void ptp_start_iba(struct ptp_info *ptp, int init)
 {
-	struct ksz_sw *sw = container_of(ptp, struct ksz_sw, ptp_hw);
+	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
 	u32 data[3];
 	u16 ctrl;
@@ -1298,15 +1222,16 @@ static void ptp_start_iba(struct ptp_info *ptp, int init)
 		if (ptp->test_access_time)
 			ptp->test_access_time(ptp);
 		ptp_init_hw(ptp);
-	} else
-	if (init && (sw->features & NEW_CAP))
-		ptp_hw_enable(ptp);
+	} else {
+		if (init && (sw->features & NEW_CAP))
+			ptp_hw_enable(ptp);
 
-	/* Update access time calculated with SPI. */
-	if (ptp->get_delay > 80000)
-		ptp->get_delay = 80000;
+		/* Update access time calculated with SPI. */
+		if (ptp->get_delay > 80000)
+			ptp->get_delay = 80000;
+	}
 	ptp->ops->acquire(ptp);
-	iba_req(info, data, data, NULL, start_pre_1, start_post_1);
+	info->ops->req(info, data, data, NULL, start_pre_1, start_post_1);
 	ctrl = data[0];
 	if (ctrl == ptp->mode) {
 		ptp->cfg = data[1];
@@ -1318,15 +1243,15 @@ static void ptp_start_iba(struct ptp_info *ptp, int init)
 	} else if (!init)
 		ptp->mode = ctrl;
 	if (ptp->mode != ptp->def_mode) {
-		dbg_msg("mode changed: %04x %04x; %04x %04x\n",
+		dbg_msg("mode changed: %04x %04x; %04x %04x"NL,
 			ptp->mode, ptp->def_mode, ptp->cfg, ptp->def_cfg);
 		ptp->mode = ptp->def_mode;
 		ptp->cfg = ptp->def_cfg;
 		ptp->ptp_synt = false;
 	}
-	dbg_msg("ptp_start: %04x %04x\n",
+	dbg_msg("ptp_start: %04x %04x"NL,
 		ptp->mode, ptp->cfg);
-	iba_req(info, data, NULL, ptp, start_pre_2, NULL);
+	info->ops->req(info, data, NULL, ptp, start_pre_2, NULL);
 	ptp->tx_intr = PTP_PORT_XDELAY_REQ_INT;
 	ptp_tx_intr_enable(ptp);
 	ptp->ops->release(ptp);
@@ -1342,7 +1267,6 @@ static void ptp_start_iba(struct ptp_info *ptp, int init)
 	prepare_pps(ptp);
 	ptp->started = true;
 }  /* ptp_start_iba */
-
 
 static struct ptp_reg_ops ptp_iba_ops = {
 	.get_time		= get_ptp_time_iba,

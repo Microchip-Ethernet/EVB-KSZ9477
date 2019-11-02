@@ -1454,8 +1454,11 @@ dbgPriority(root_Priority, &root_PortId);
 	COPY(rootPortId, best_path.port_id);
 
 	if (root_Priority) {
-		u8 num = root_PortId.num - 1;
+		struct ksz_stp_info *stp = br->parent;
+		struct ksz_sw *sw = stp->sw_dev;
+		uint num;
 
+		num = get_phy_port(sw, root_PortId.num);
 		p = &br->ports[num];
 		COPY(rootTimes, portTimes);
 		rootTimes.message_age += 1;

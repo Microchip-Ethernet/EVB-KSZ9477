@@ -6185,39 +6185,6 @@ static void sw_set_addr(struct ksz_sw *sw, u8 *mac_addr)
 #endif
 }  /* sw_set_addr */
 
-#ifdef SWITCH_PORT_PHY_ADDR_MASK
-/**
- * sw_init_phy_addr - initialize switch PHY address
- * @sw:		The switch instance.
- *
- * This function initializes the PHY address of the switch.
- */
-static void sw_init_phy_addr(struct ksz_sw *sw)
-{
-	u8 addr;
-
-	addr = sw->reg->r8(sw, REG_SWITCH_CTRL_13);
-	addr >>= SWITCH_PORT_PHY_ADDR_SHIFT;
-	addr &= SWITCH_PORT_PHY_ADDR_MASK;
-	sw->info->phy_addr = addr;
-}
-
-/**
- * sw_set_phy_addr - configure switch PHY address
- * @sw:		The switch instance.
- * @addr:	The PHY address.
- *
- * This function configures the PHY address of the switch.
- */
-static void sw_set_phy_addr(struct ksz_sw *sw, u8 addr)
-{
-	sw->info->phy_addr = addr;
-	addr &= SWITCH_PORT_PHY_ADDR_MASK;
-	addr <<= SWITCH_PORT_PHY_ADDR_SHIFT;
-	sw->reg->w8(sw, REG_SWITCH_CTRL_13, addr);
-}
-#endif
-
 static void sw_setup_reserved_multicast(struct ksz_sw *sw)
 {
 	struct ksz_mac_table table[8];
@@ -8744,10 +8711,6 @@ static void sw_init(struct ksz_sw *sw)
 	sw_init_cached_regs(sw);
 	sw->open_ports = sw->PORT_MASK & ~sw->HOST_MASK;
 	sw->mtu = sw->reg->r16(sw, REG_SW_MTU__2);
-
-#ifdef SWITCH_PORT_PHY_ADDR_MASK
-	sw_init_phy_addr(sw);
-#endif
 
 	sw_init_broad_storm(sw);
 
@@ -15756,13 +15719,15 @@ static void link_update_work(struct work_struct *work)
 
 	/* The switch is always linked; speed and duplex are also fixed. */
 	phydev = NULL;
-	dev = sw->netdev[0];
-	if (dev)
+
+	/* netdev[0] may be set but not netport[0]. */
+	port = sw->netport[0];
+	if (port) {
+		dev = sw->netdev[0];
 		phydev = dev->phydev;
+	}
 	if (phydev) {
 		int phy_link = 0;
-
-		port = sw->netport[0];
 
 		/* phydev settings may be changed by ethtool. */
 		info = get_port_info(sw, sw->HOST_PORT);
@@ -15779,7 +15744,7 @@ static void link_update_work(struct work_struct *work)
 					dev->name,
 					phy_link ? "on" : "off");
 		}
-#ifndef CONFIGKSZ_IBA_ONLY
+#ifndef CONFIG KSZ_IBA_ONLY
 		if (phydev->adjust_link && phydev->attached_dev &&
 		    info->report) {
 			phydev->adjust_link(phydev->attached_dev);
@@ -16281,10 +16246,6 @@ static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
 	sw->phy_offset = 0;
 	dbg_msg("%s s:%x m:%d f:%d"NL, __func__,
 		sw->stp, sw->multi_dev, sw->fast_aging);
-#ifdef CONFIG_KSZ_IBA_
-	if (iba)
-		sw->features |= IBA_SUPPORT;
-#endif
 
 	/* Multiple network device interfaces are required. */
 	if (1 == sw->multi_dev) {
@@ -16876,7 +16837,9 @@ dbg_msg("port irq: %08x; %08x"NL, status, sw->port_intr_mask);
 		}
 		status >>= 1;
 	}
-	if (sw->phy_intr)
+
+	/* Do it once when interrupt happens. */
+	if (cnt && sw->phy_intr)
 		schedule_delayed_work(sw->link_read, 0);
 	if (intr_mask != sw->port_intr_mask)
 		sw->reg->w32(sw, REG_SW_PORT_INT_MASK__4,
@@ -18154,11 +18117,6 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 	/* Ignore user specified host port if not correct. */
 	if (sw_host_port < 0 || sw_host_port > port_count)
 		sw_host_port = 0;
-
-#ifdef CONFIG_KSZ_IBA_ONLY_
-	if (!sw_host_port)
-		sw_host_port = port_count;
-#endif
 
 	/* Select the host port. */
 	if (sw_host_port > 0 && sw_host_port <= port_count) {

@@ -292,6 +292,9 @@ int main(int argc, char *argv[])
 			else if (!strncmp(argv[i], "spi", 3))
 				snprintf(device, sizeof(device),
 					"/sys/bus/spi/devices/%s", argv[i]);
+			else if (!strncmp(argv[i], "smi", 3))
+				snprintf(device, sizeof(device),
+					"/sys/bus/platform/devices/%s", argv[i]);
 			else
 				snprintf(device, sizeof(device),
 					"/sys/bus/i2c/devices/%s", argv[i]);

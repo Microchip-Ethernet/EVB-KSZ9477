@@ -419,7 +419,7 @@ void *tlv_msg(void *msg, int *size, u16 tlvType, int ext)
 
 struct ptp_msg *signaling_msg(int type, int message, u8 period, u32 duration)
 {
-	static char payload[(sizeof(struct ptp_msg) + 2000) & ~3];
+	static char payload[(sizeof(struct ptp_msg) + 4000) & ~3];
 	struct ptp_msg* msg = (struct ptp_msg *) payload;
 	int len;
 	int logInterval;
@@ -504,7 +504,7 @@ struct ptp_msg *signaling_msg(int type, int message, u8 period, u32 duration)
 
 struct ptp_msg *management_msg(int id, int error_id, int n)
 {
-	static char payload[(sizeof(struct ptp_msg) + 2000) & ~3];
+	static char payload[(sizeof(struct ptp_msg) + 4000) & ~3];
 	struct ptp_msg* msg = (struct ptp_msg *) payload;
 	int len;
 	int logInterval;
@@ -1607,7 +1607,7 @@ int get_cmd(FILE *fp)
 	int cont = 1;
 	char cmd[80];
 	char line[80];
-	char payload[(sizeof(struct ptp_msg) + 2000) & ~3];
+	char payload[(sizeof(struct ptp_msg) + 4000) & ~3];
 	struct ptp_msg* msg = (struct ptp_msg *) payload;
 
 	do {
@@ -1713,6 +1713,8 @@ int get_cmd(FILE *fp)
 		switch (line[0]) {
 		case 'l':
 			if (count >= 2) {
+				if (len > 4000)
+					len = 4000;
 				len = num[0];
 				msg_len = len;
 			} else
@@ -3062,8 +3064,8 @@ static SOCKET create_raw(struct ip_info *info, char *dest)
 	eth_others_addr.sll_addr[6] = 0x00;
 	eth_others_addr.sll_addr[7] = 0x00;
 
-	eth_pdelay_buf = malloc(1518);
-	eth_others_buf = malloc(1518);
+	eth_pdelay_buf = malloc(4018);
+	eth_others_buf = malloc(4018);
 	memcpy(eth_pdelay_buf, eth_pdelay_addr.sll_addr, ETH_ALEN);
 	memcpy(&eth_pdelay_buf[ETH_ALEN], info->hwaddr, ETH_ALEN);
 	eh = (struct ethhdr *) eth_pdelay_buf;

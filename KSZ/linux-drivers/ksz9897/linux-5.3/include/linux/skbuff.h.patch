@@ -1,0 +1,14 @@
+--- skbuff.h.orig	2019-10-17 13:47:33.000000000 -0700
++++ skbuff.h	2019-10-31 17:06:57.522059759 -0700
+@@ -1148,6 +1148,11 @@
+ }
+ #define dev_kfree_skb(a)	consume_skb(a)
+ 
++int skb_append_datato_frags(struct sock *sk, struct sk_buff *skb,
++			    int getfrag(void *from, char *to, int offset,
++					int len, int odd, struct sk_buff *skb),
++			    void *from, int length);
++
+ int skb_append_pagefrags(struct sk_buff *skb, struct page *page,
+ 			 int offset, size_t size);
+ 

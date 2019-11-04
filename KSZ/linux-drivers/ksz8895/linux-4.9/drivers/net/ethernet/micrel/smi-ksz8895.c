@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 SMI driver
  *
- * Copyright (c) 2018 Microchip Technology Inc.
+ * Copyright (c) 2018-2019 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -36,8 +36,8 @@
 #include "ksz_common.c"
 #include "ksz_req.c"
 
-#define SW_DRV_RELDATE			"Nov 27, 2018"
-#define SW_DRV_VERSION			"1.2.0"
+#define SW_DRV_RELDATE			"Sep 23, 2019"
+#define SW_DRV_VERSION			"1.2.1"
 
 /* -------------------------------------------------------------------------- */
 
@@ -55,30 +55,30 @@ static void smi_addr(unsigned reg, int *phyid, int *regnum)
 	*phyid |= phy_hi;
 }
 
-static u8 mdio_r8(struct sw_priv *ks, unsigned reg)
+static u8 mdio_r8(struct sw_priv *priv, unsigned reg)
 {
-	struct smi_hw_priv *hw_priv = ks->hw_dev;
+	struct smi_hw_priv *smi = priv->hw_dev;
 	int phyid;
 	int regnum;
 	int ret;
 
 	smi_addr(reg, &phyid, &regnum);
-	ret = hw_priv->smi_read(hw_priv->bus, phyid, regnum);
+	ret = smi->read(smi->bus, phyid, regnum);
 	return (u8)ret;
 }
 
-static void mdio_w8(struct sw_priv *ks, unsigned reg, unsigned val)
+static void mdio_w8(struct sw_priv *priv, unsigned reg, unsigned val)
 {
-	struct smi_hw_priv *hw_priv = ks->hw_dev;
+	struct smi_hw_priv *smi = priv->hw_dev;
 	int phyid;
 	int regnum;
 	int ret;
 
 	smi_addr(reg, &phyid, &regnum);
-	ret = hw_priv->smi_write(hw_priv->bus, phyid, regnum, val & 0xff);
+	ret = smi->write(smi->bus, phyid, regnum, val & 0xff);
 }
 
-static uint mdio_r_c(struct sw_priv *ks, unsigned reg, int cnt)
+static uint mdio_r_c(struct sw_priv *priv, unsigned reg, int cnt)
 {
 	int i;
 	int ret;
@@ -86,71 +86,71 @@ static uint mdio_r_c(struct sw_priv *ks, unsigned reg, int cnt)
 
 	val = 0;
 	for (i = 0; i < cnt; i++) {
-		ret = mdio_r8(ks, reg++);
+		ret = mdio_r8(priv, reg++);
 		val <<= 8;
 		val |= ret;
 	}
 	return val;
 }
 
-static void mdio_w_c(struct sw_priv *ks, unsigned reg, unsigned val, int cnt)
+static void mdio_w_c(struct sw_priv *priv, unsigned reg, unsigned val, int cnt)
 {
 	int i;
 
 	for (i = 0; i < cnt; i++) {
-		mdio_w8(ks, reg++, val);
+		mdio_w8(priv, reg++, val);
 		val >>= 8;
 	}
 }
 
-static u16 mdio_r16(struct sw_priv *ks, unsigned reg)
+static u16 mdio_r16(struct sw_priv *priv, unsigned reg)
 {
 	uint val;
 
-	val = mdio_r_c(ks, reg, 2);
+	val = mdio_r_c(priv, reg, 2);
 	return (u16)val;
 }
 
-static u32 mdio_r32(struct sw_priv *ks, unsigned reg)
+static u32 mdio_r32(struct sw_priv *priv, unsigned reg)
 {
 	uint val;
 
-	val = mdio_r_c(ks, reg, 4);
+	val = mdio_r_c(priv, reg, 4);
 	return (u32)val;
 }
 
-static void mdio_w16(struct sw_priv *ks, unsigned reg, unsigned val)
+static void mdio_w16(struct sw_priv *priv, unsigned reg, unsigned val)
 {
 	val = cpu_to_be16(val);
-	mdio_w_c(ks, reg, val, 2);
+	mdio_w_c(priv, reg, val, 2);
 }
 
-static void mdio_w32(struct sw_priv *ks, unsigned reg, unsigned val)
+static void mdio_w32(struct sw_priv *priv, unsigned reg, unsigned val)
 {
 	val = cpu_to_be32(val);
-	mdio_w_c(ks, reg, val, 4);
+	mdio_w_c(priv, reg, val, 4);
 }
 
-static int mdio_r(struct sw_priv *ks, u32 reg, void *buf, unsigned len)
+static int mdio_r(struct sw_priv *priv, u32 reg, void *buf, unsigned len)
 {
 	int i;
 	int ret;
 	u8 *data = (u8 *)buf;
 
 	for (i = 0; i < len; i++) {
-		ret = mdio_r8(ks, reg++);
+		ret = mdio_r8(priv, reg++);
 		data[i] = ret & 0xff;
 	}
 	return 0;
 }
 
-static int mdio_w(struct sw_priv *ks, u32 reg, void *buf, unsigned len)
+static int mdio_w(struct sw_priv *priv, u32 reg, void *buf, unsigned len)
 {
 	int i;
 	u8 *data = (u8 *)buf;
 
 	for (i = 0; i < len; i++) {
-		mdio_w8(ks, reg++, data[i]);
+		mdio_w8(priv, reg++, data[i]);
 	}
 	return 0;
 }
@@ -185,14 +185,14 @@ static void smi_w32(struct ksz_sw *sw, unsigned reg, unsigned val)
 	mdio_w32(sw->dev, reg, val);
 }
 
-static int smi_r(struct ksz_sw *sw, u32 reg, void *buf, unsigned len)
+static void smi_r(struct ksz_sw *sw, unsigned reg, void *buf, size_t cnt)
 {
-	return mdio_r(sw->dev, reg, buf, len);
+	mdio_r(sw->dev, reg, buf, cnt);
 }
 
-static int smi_w(struct ksz_sw *sw, u32 reg, void *buf, unsigned len)
+static void smi_w(struct ksz_sw *sw, unsigned reg, void *buf, size_t cnt)
 {
-	return mdio_w(sw->dev, reg, buf, len);
+	mdio_w(sw->dev, reg, buf, cnt);
 }
 
 #include "ksz_sw_8895.c"
@@ -217,43 +217,57 @@ static struct ksz_sw_reg_ops smi_reg_ops = {
 static int smi_read(struct mii_bus *bus, int phy_id, int regnum);
 static int smi_write(struct mii_bus *bus, int phy_id, int regnum, u16 val);
 
-static int smi_probe(struct platform_device *pdev, struct mii_bus *bus, int irq)
+static int smi_probe(struct platform_device **pdev, struct mii_bus *bus,
+		     int irq)
 {
-	struct smi_hw_priv *hw_priv;
-	struct sw_priv *ks;
+	struct smi_hw_priv *smi;
+	struct sw_priv *priv = NULL;
 	int ret = -ENOMEM;
+
+	*pdev = platform_device_register_data(NULL, "smi", 0, NULL, 0);
+	if (IS_ERR(*pdev))
+		return PTR_ERR(*pdev);
 
 #ifdef DEBUG_MSG
 	if (init_dbg())
-		return -ENOMEM;
+		goto probe_err;
 #endif
 
-	ks = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
-	if (!ks)
+	priv = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
+	if (!priv)
 		goto probe_err;
 
-	ks->hw_dev = kzalloc(sizeof(struct smi_hw_priv), GFP_KERNEL);
-	if (!ks->hw_dev) {
-		kfree(ks);
+	priv->hw_dev = kzalloc(sizeof(struct smi_hw_priv), GFP_KERNEL);
+	if (!priv->hw_dev)
 		goto probe_err;
-	}
-	hw_priv = ks->hw_dev;
 
-	hw_priv->bus = bus;
-	hw_priv->smi_read = smi_read;
-	hw_priv->smi_write = smi_write;
+	smi = priv->hw_dev;
 
-	ks->dev = &pdev->dev;
+	smi->bus = bus;
+	smi->read = smi_read;
+	smi->write = smi_write;
 
-	ks->sw.reg = &smi_reg_ops;
+	priv->dev = &(*pdev)->dev;
 
-	ks->irq = irq;
+	priv->sw.reg = &smi_reg_ops;
 
-	ret = ksz_probe(ks);
+	priv->irq = irq;
+
+	ret = ksz_probe(priv);
+
+	/* It will be deleted when probing fails. */
+	priv = NULL;
 	if (!ret)
 		return 0;
 
 probe_err:
+	if (priv) {
+		if (priv->hw_dev)
+			kfree(priv->hw_dev);
+		kfree(priv);
+	}
+	if (*pdev)
+		platform_device_unregister(*pdev);
 
 #ifdef DEBUG_MSG
 	exit_dbg();
@@ -263,10 +277,11 @@ probe_err:
 
 static int smi_remove(struct platform_device *pdev)
 {
-	struct sw_priv *ks = dev_get_drvdata(&pdev->dev);
+	struct sw_priv *priv = platform_get_drvdata(pdev);
 	int ret;
 
-	ret = ksz_remove(ks);
+	ret = ksz_remove(priv);
+	platform_device_unregister(pdev);
 
 #ifdef DEBUG_MSG
 	exit_dbg();

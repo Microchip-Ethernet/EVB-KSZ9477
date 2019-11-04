@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2010 OMICRON electronics GmbH
  * Copyright (C) 2013-2015 Micrel, Inc.
- * Copyright (C) 2015-2018 Microchip Technology Inc.
+ * Copyright (C) 2015-2019 Microchip Technology Inc.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -259,7 +259,7 @@ static int micrel_ptp_probe(struct ptp_info *ptp)
 	ptp_settime(&info->caps, &now);
 #endif
 
-	info->clock = ptp_clock_register(&info->caps, ptp->parent);
+	info->clock = ptp_clock_register(&info->caps, ptp->dev_parent);
 	if (IS_ERR(info->clock)) {
 		err = PTR_ERR(info->clock);
 		goto no_clock;

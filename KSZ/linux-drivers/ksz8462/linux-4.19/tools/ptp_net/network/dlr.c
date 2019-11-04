@@ -52,7 +52,7 @@ typedef int64_t s64;
 typedef uint64_t u64;
 
 #include <packon.h>
-#define __packed;
+#define __packed
 #endif
 
 #if defined(__GNUC__)

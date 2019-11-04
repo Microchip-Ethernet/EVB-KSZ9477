@@ -33,8 +33,30 @@
 #include <linux/of_mdio.h>
 #include <linux/of_net.h>
 
+#if defined(CONFIG_LAN937X_SWITCH)
+#define CONFIG_KSZ_SWITCH
+
+#if defined(CONFIG_LAN937X_SWITCH_EMBEDDED)
+#define CONFIG_KSZ_SWITCH_EMBEDDED
+#endif
+
+#if defined(CONFIG_SMI_LAN937X)
+#define CONFIG_KSZ_SMI
+#endif
+#if defined(CONFIG_LAN937X_MRP)
+#define CONFIG_KSZ_MRP
+#endif
+#if defined(CONFIG_LAN937X_NO_MDIO_BUS)
+#define CONFIG_KSZ_NO_MDIO_BUS
+#endif
+#endif
+
 #if defined(CONFIG_KSZ_SWITCH)
 #define HAVE_KSZ_SWITCH
+#endif
+
+#if defined(CONFIG_IBA_KSZ9897) || defined(CONFIG_IBA_LAN937X)
+#define CONFIG_KSZ_IBA_ONLY
 #endif
 
 #ifdef HAVE_KSZ_SWITCH
@@ -42,6 +64,7 @@
 #endif
 
 #if defined(CONFIG_KSZ_SWITCH_EMBEDDED)
+#include <linux/of_irq.h>
 #include <linux/spi/spi.h>
 #include <linux/crc32.h>
 #include <linux/ip.h>
@@ -62,7 +85,9 @@ static void get_sysfs_data_(struct net_device *dev,
 static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #define DO_NOT_USE_COPY_SKB
 
-#if defined(CONFIG_HAVE_KSZ9897)
+#if defined(CONFIG_IBA_KSZ9897)
+#include "../micrel/iba-ksz9897.c"
+#elif defined(CONFIG_HAVE_KSZ9897)
 #include "../micrel/spi-ksz9897.c"
 #elif defined(CONFIG_HAVE_KSZ8795)
 #include "../micrel/spi-ksz8795.c"
@@ -70,10 +95,16 @@ static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #include "../micrel/smi-ksz8895.c"
 #elif defined(CONFIG_HAVE_KSZ8895)
 #include "../micrel/spi-ksz8895.c"
+#elif defined(CONFIG_SMI_KSZ8863)
+#include "../micrel/smi-ksz8863.c"
 #elif defined(CONFIG_HAVE_KSZ8863)
 #include "../micrel/spi-ksz8863.c"
-#elif defined(CONFIG_HAVE_KSZ8463)
-#include "../micrel/spi-ksz8463.c"
+#elif defined(CONFIG_IBA_LAN937X)
+#include "../microchip/iba-lan937x.c"
+#elif defined(CONFIG_SMI_LAN937X)
+#include "../microchip/smi-lan937x.c"
+#elif defined(CONFIG_HAVE_LAN937X)
+#include "../microchip/spi-lan937x.c"
 #endif
 #elif defined(CONFIG_HAVE_KSZ9897)
 #include "../micrel/ksz_cfg_9897.h"
@@ -85,10 +116,16 @@ static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #include "../micrel/ksz_cfg_8863.h"
 #elif defined(CONFIG_HAVE_KSZ8463)
 #include "../micrel/ksz_cfg_8463.h"
+#elif defined(CONFIG_HAVE_LAN937X)
+#include "../microchip/lan937x_cfg.h"
 #endif
 
 #if defined(HAVE_KSZ_SWITCH) && !defined(CONFIG_KSZ_SWITCH_EMBEDDED)
+#ifdef CONFIG_HAVE_LAN937X
+#include "../microchip/lan937x_dev.h"
+#else
 #include "../micrel/ksz_spi_net.h"
+#endif
 #endif
 
 #include "macb.h"
@@ -126,10 +163,16 @@ static void get_sysfs_data_(struct net_device *dev,
 #include "../micrel/ksz_sw_sysfs.c"
 #elif defined(CONFIG_HAVE_KSZ8463)
 #include "../micrel/ksz_sw_sysfs.c"
+#elif defined(CONFIG_HAVE_LAN937X)
+#include "../microchip/lan937x_sw_sysfs.c"
 #endif
 
 #ifdef CONFIG_1588_PTP
+#ifdef CONFIG_HAVE_LAN937X
+#include "../microchip/lan937x_ptp_sysfs.c"
+#else
 #include "../micrel/ksz_ptp_sysfs.c"
+#endif
 #endif
 #ifdef CONFIG_KSZ_DLR
 #include "../micrel/ksz_dlr_sysfs.c"
@@ -175,6 +218,73 @@ static int macb_kill_vid(struct net_device *dev, __be16 proto, u16 vid)
 		sw->net_ops->kill_vid(sw, vid);
 	return 0;
 }
+
+#if !defined(CONFIG_KSZ_IBA_ONLY)
+static struct ksz_sw *check_avail_switch(struct net_device *netdev, int id)
+{
+	int phy_mode;
+	char phy_id[MII_BUS_ID_SIZE];
+	char bus_id[MII_BUS_ID_SIZE];
+	struct ksz_sw *sw = NULL;
+	struct phy_device *phydev = NULL;
+
+	/* Check whether MII switch exists. */
+	phy_mode = PHY_INTERFACE_MODE_MII;
+	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", id);
+	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, 0);
+	phydev = phy_attach(netdev, phy_id, phy_mode);
+	if (!IS_ERR(phydev)) {
+		struct phy_priv *phydata = phydev->priv;
+
+		sw = phydata->port->sw;
+
+		/*
+		 * In case multiple devices mode is used and this phydev is not
+		 * attached again.
+		 */
+		if (sw)
+			phydev->interface = sw->interface;
+		phy_detach(phydev);
+	}
+	return sw;
+}  /* check_avail_switch */
+
+static int macb_sw_chk(struct macb *bp)
+{
+	struct ksz_sw *sw;
+
+	sw = bp->port.sw;
+	if (!sw) {
+		sw = check_avail_switch(bp->dev, 0);
+		if (!sw_is_switch(sw))
+			return -ENXIO;
+	}
+	bp->port.sw = sw;
+	return 0;
+}
+#endif
+
+#if defined(CONFIG_KSZ_IBA_ONLY) || defined(CONFIG_KSZ_SMI)
+static int get_sw_irq(struct macb *bp)
+{
+	struct device *dev;
+	int spi_bus;
+	int spi_select;
+	char name[20];
+
+	spi_select = 0;
+	for (spi_bus = 0; spi_bus < 2; spi_bus++) {
+		sprintf(name, "spi%d.%d\n", spi_bus, spi_select);
+		dev = bus_find_device_by_name(&spi_bus_type, NULL, name);
+		if (dev && dev->of_node) {
+			int irq = of_irq_get(dev->of_node, 0);
+
+			return irq;
+		}
+	}
+	return -1;
+}  /* get_sw_irq */
+#endif
 #endif
 
 #define MACB_RX_BUFFER_SIZE	128
@@ -513,7 +623,10 @@ static void macb_handle_link_change(struct net_device *dev)
 			macb_set_tx_clk(bp->tx_clk, phydev->speed, dev);
 
 /* The switch driver will update the link notification. */
-#ifndef HAVE_KSZ_SWITCH
+#if !defined(CONFIG_KSZ_IBA_ONLY)
+#ifdef HAVE_KSZ_SWITCH
+			if (!sw_is_switch(bp->port.sw))
+#endif
 			netif_carrier_on(dev);
 #endif
 			netdev_info(dev, "link up (%d/%s)\n",
@@ -536,11 +649,6 @@ static int macb_mii_probe(struct net_device *dev)
 	int phy_irq;
 	int ret;
 
-#if defined(CONFIG_KSZ_SMI) || defined(CONFIG_HAVE_KSZ8895)
-	/* Can detect PHYs in KSZ8895 switch. */
-	if (dev)
-		return -ENXIO;
-#endif
 	phydev = phy_find_first(bp->mii_bus);
 	if (!phydev) {
 		netdev_err(dev, "no PHY found\n");
@@ -609,10 +717,6 @@ static int macb_mii_init(struct macb *bp)
 
 	dev_set_drvdata(&bp->dev->dev, bp->mii_bus);
 
-#ifdef CONFIG_KSZ_SMI
-	bp->mii_bus->phy_mask = ~((1 << 6) - 1);
-#endif
-
 	np = bp->pdev->dev.of_node;
 
 	/* Below code assumes a regular PHY is specified. */
@@ -644,26 +748,31 @@ static int macb_mii_init(struct macb *bp)
 		if (pdata)
 			bp->mii_bus->phy_mask = pdata->phy_mask;
 
-#ifdef CONFIG_KSZ_SMI
-		bp->mii_bus->phy_mask = ~((1 << 6) - 1);
-#endif
 		err = mdiobus_register(bp->mii_bus);
 	}
 
 	if (err)
 		goto err_out_free_mdiobus;
 
-	err = macb_mii_probe(bp->dev);
-
 #ifdef CONFIG_KSZ_SMI
 	if (err) {
-		err = smi_probe(bp->pdev, bp->mii_bus, 0);
+		int irq = get_sw_irq(bp);
+
+		err = smi_probe(&bp->sw_pdev, bp->mii_bus, irq);
 
 		/* Return an error so that switch driver is connected. */
 		if (!err)
 			return -ENXIO;
 	}
 #endif
+#if defined(HAVE_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
+	/* Return an error so that switch driver is connected. */
+	err = macb_sw_chk(bp);
+	if (!err)
+		return -ENODEV;
+#endif
+
+	err = macb_mii_probe(bp->dev);
 	if (err)
 		goto err_out_unregister_bus;
 
@@ -679,6 +788,286 @@ err_out_free_mdiobus:
 err_out:
 	return err;
 }
+
+#if !defined(CONFIG_KSZ_IBA_ONLY) && !defined(CONFIG_KSZ_SMI)
+#if 1
+#define MACB_REGS_SIZE		0x20000
+#endif
+#endif
+
+#ifdef MACB_REGS_SIZE
+
+#if 1
+#define SW_CSR_CMD		0x1B0
+#define SW_CSR_CMD_CSR_BUSY	0x80000000
+#define SW_CSR_CMD_R_NOT_W	0x40000000
+#define SW_CSR_CMD_BYTE_EN	0x000f0000
+
+#define SW_CSR_DATA		0x1AC
+#endif
+
+#ifdef SW_CSR_CMD
+static u32 smi_reg(u32 offset, u32 *phy_id)
+{
+	offset &= 0x3ff;
+	offset >>= 1;
+	offset &= ~1;
+	offset |= 0x200;
+	*phy_id = (offset & 0x3e0) >> 5;
+	offset &= 0x1f;
+	offset <<= 1;
+	return offset;
+}
+
+static u32 csr_r(struct mii_bus *bus, u32 phy_id, u32 reg)
+{
+	int err;
+	u32 val;
+
+	err = bus->read(bus, phy_id, (reg / 2) + 1);
+	val = (u16) err;
+	val <<= 16;
+	err = bus->read(bus, phy_id, reg / 2);
+	val |= (u16) err;
+	return val;
+}
+
+static void csr_w(struct mii_bus *bus, u32 phy_id, u32 reg, u32 val)
+{
+	int err;
+
+	err = bus->write(bus, phy_id, reg / 2, (u16) val);
+	err = bus->write(bus, phy_id, (reg / 2) + 1, (u16)(val >> 16));
+}
+
+static u32 ind_r(struct mii_bus *bus, u32 phy_id_cmd, u32 cmd,
+	u32 phy_id_data, u32 data, u32 reg)
+{
+	u32 val;
+	int timeout = 10;
+
+	do {
+		val = csr_r(bus, phy_id_cmd, cmd);
+	} while ((val & SW_CSR_CMD_CSR_BUSY) && timeout--);
+
+	val = SW_CSR_CMD_CSR_BUSY | SW_CSR_CMD_R_NOT_W | reg;
+	csr_w(bus, phy_id_cmd, cmd, val);
+	timeout = 10;
+	do {
+		val = csr_r(bus, phy_id_data, cmd);
+	} while ((val & SW_CSR_CMD_CSR_BUSY) && timeout--);
+	val = csr_r(bus, phy_id_data, data);
+	return val;
+}
+
+static void ind_w(struct mii_bus *bus, u32 phy_id_cmd, u32 cmd,
+	u32 phy_id_data, u32 data, u32 reg, u32 val)
+{
+	u32 busy;
+	int timeout = 10;
+
+	do {
+		busy = csr_r(bus, phy_id_cmd, cmd);
+	} while ((busy & SW_CSR_CMD_CSR_BUSY) && timeout--);
+
+	csr_w(bus, phy_id_data, data, val);
+	busy = SW_CSR_CMD_CSR_BUSY | SW_CSR_CMD_BYTE_EN | reg;
+	csr_w(bus, phy_id_cmd, cmd, busy);
+	timeout = 10;
+	do {
+		busy = csr_r(bus, phy_id_cmd, cmd);
+	} while ((busy & SW_CSR_CMD_CSR_BUSY) && timeout--);
+}
+#endif
+
+static ssize_t macb_registers_read(struct file *filp, struct kobject *kobj,
+	struct bin_attribute *bin_attr, char *buf, loff_t off, size_t count)
+{
+	size_t i;
+	u32 *addr;
+	u16 *addr_16;
+	u8 *addr_8;
+	u32 reg;
+	u32 val;
+	struct device *dev;
+	struct net_device *netdev;
+	struct macb *bp;
+
+	if (unlikely(off >= MACB_REGS_SIZE))
+		return 0;
+
+	if ((off + count) >= MACB_REGS_SIZE)
+		count = MACB_REGS_SIZE - off;
+
+	if (unlikely(!count))
+		return count;
+
+	dev = container_of(kobj, struct device, kobj);
+	netdev = to_net_dev(dev);
+	bp = netdev_priv(netdev);
+
+	reg = off;
+	addr = (u32 *) buf;
+	addr_16 = (u16 *) buf;
+	addr_8 = (u8 *) buf;
+	if (4 == count && (reg & 3))
+		return 0;
+	*addr = 0;
+
+#ifdef SW_CSR_CMD
+	if (reg >= 0x10000) {
+		u32 cmd;
+		u32 data;
+		u32 phy_id_cmd;
+		u32 phy_id_data;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg &= 0xffff;
+		cmd = smi_reg(SW_CSR_CMD, &phy_id_cmd);
+		data = smi_reg(SW_CSR_DATA, &phy_id_data);
+		for (i = 0; i < count; i += 4, reg += 4, addr++)
+			*addr = ind_r(bp->mii_bus, phy_id_cmd, cmd,
+				phy_id_data, data, reg);
+		return i;
+	} else if (reg >= 0x1000) {
+		u32 phy_id;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg = smi_reg(reg, &phy_id);
+		for (i = 0; i < count; i += 4, reg += 4, addr++)
+			*addr = csr_r(bp->mii_bus, phy_id, reg);
+		return i;
+	}
+#endif
+	if (reg >= 0x800) {
+		int err;
+		u32 phy_id = reg >> 6;
+		struct mii_bus *bus = bp->mii_bus;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg &= (1 << 6) - 1;
+		for (i = 0; i < count; i += 2, reg += 2, addr_16++) {
+			err = bus->read(bus, phy_id, reg / 2);
+			if (err >= 0)
+				*addr_16 = (u16) err;
+			else
+				*addr_16 = 0;
+		}
+	} else {
+		for (i = 0; i < count; i += 4, reg += 4, addr++) {
+			val = __raw_readl(bp->regs + reg);
+			if (count >= 4)
+				*addr = val;
+			else if (count >= 2)
+				*addr_16 = (u16) val;
+			else
+				*addr_8 = (u8) val;
+		}
+	}
+	return i;
+}
+
+static ssize_t macb_registers_write(struct file *filp, struct kobject *kobj,
+	struct bin_attribute *bin_attr, char *buf, loff_t off, size_t count)
+{
+	size_t i;
+	u32 *addr;
+	u16 *addr_16;
+	u8 *addr_8;
+	u32 reg;
+	struct device *dev;
+	struct net_device *netdev;
+	struct macb *bp;
+
+	if (unlikely(off >= MACB_REGS_SIZE))
+		return -EFBIG;
+
+	if ((off + count) >= MACB_REGS_SIZE)
+		count = MACB_REGS_SIZE - off;
+
+	if (unlikely(!count))
+		return count;
+
+	dev = container_of(kobj, struct device, kobj);
+	netdev = to_net_dev(dev);
+	bp = netdev_priv(netdev);
+
+	reg = off;
+	addr = (u32 *) buf;
+	addr_16 = (u16 *) buf;
+	addr_8 = (u8 *) buf;
+
+#ifdef SW_CSR_CMD
+	if (reg >= 0x10000) {
+		u32 cmd;
+		u32 data;
+		u32 phy_id_cmd;
+		u32 phy_id_data;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg &= 0xffff;
+		cmd = smi_reg(SW_CSR_CMD, &phy_id_cmd);
+		data = smi_reg(SW_CSR_DATA, &phy_id_data);
+		for (i = 0; i < count; i += 4, reg += 4, addr++)
+			ind_w(bp->mii_bus, phy_id_cmd, cmd,
+				phy_id_data, data, reg, *addr);
+		return i;
+	} else if (reg >= 0x1000) {
+		u32 phy_id;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg = smi_reg(reg, &phy_id);
+		for (i = 0; i < count; i += 4, reg += 4, addr++)
+			csr_w(bp->mii_bus, phy_id, reg, *addr);
+		return i;
+	}
+#endif
+	if (reg >= 0x800) {
+		int err;
+		u32 phy_id = reg >> 6;
+		struct mii_bus *bus = bp->mii_bus;
+
+		if (!bp->mii_bus)
+			return 0;
+		reg &= (1 << 6) - 1;
+		for (i = 0; i < count; i += 2, reg += 2, addr_16++)
+			err = bus->write(bus, phy_id, reg / 2, *addr_16);
+	} else {
+		for (i = 0; i < count; i += 4, reg += 4, addr++) {
+			if (count >= 4)
+				__raw_writel(*addr, bp->regs + reg);
+			else {
+				u32 val = __raw_readl(bp->regs + reg);
+
+				if (count >= 2) {
+					val &= ~0xffff;
+					val |= *addr_16;
+				} else {
+					val &= ~0xff;
+					val |= *addr_8;
+				}
+				__raw_writel(val, bp->regs + reg);
+			}
+		}
+	}
+	return i;
+}
+
+static struct bin_attribute macb_registers_attr = {
+	.attr = {
+		.name	= "registers",
+		.mode	= S_IRUSR | S_IWUSR,
+	},
+	.size	= MACB_REGS_SIZE,
+	.read	= macb_registers_read,
+	.write	= macb_registers_write,
+};
+#endif
 
 static void macb_update_stats(struct macb *bp)
 {
@@ -1065,7 +1454,7 @@ static void discard_partial_frame(struct macb *bp, unsigned int begin,
 }
 
 #ifdef HAVE_KSZ_SWITCH
-#if defined(CONFIG_HAVE_KSZ9897)
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 static int priv_multi(void *ptr)
 {
 	struct macb *priv = ptr;
@@ -1081,7 +1470,7 @@ static int priv_promisc(void *ptr)
 	return priv->promisc;
 }  /* priv_promisc */
 
-#if !defined(CONFIG_HAVE_KSZ9897)
+#if !defined(CONFIG_HAVE_KSZ9897) && !defined(CONFIG_HAVE_LAN937X)
 static int priv_match_multi(void *ptr, u8 *data)
 {
 	struct netdev_hw_addr *ha;
@@ -1148,7 +1537,7 @@ static struct macb *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	}
 
 	if (!sw->net_ops->match_pkt(sw, &dev, (void **) &bp, priv_promisc,
-#if defined(CONFIG_HAVE_KSZ9897)
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 	    priv_multi,
 #else
 	    priv_match_multi,
@@ -1896,7 +2285,9 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			&header);
 
 	/* Hardware cannot handle scatter/gather mode. */
-	if (skb_shinfo(skb)->nr_frags || header > VLAN_HLEN) {
+	/* Hardware cannot generate checksum correctly for HSR frame. */
+	if (skb_shinfo(skb)->nr_frags ||
+	    (skb->ip_summed && header > VLAN_HLEN)) {
 		struct sk_buff *nskb;
 
 		nskb = dev_alloc_skb(len);
@@ -2209,6 +2600,25 @@ static u32 gem_mdc_clk_div(struct macb *bp)
 	u32 config;
 	unsigned long pclk_hz = clk_get_rate(bp->pclk);
 
+#if defined(CONFIG_HAVE_LAN937X)
+#if 0
+printk(" pclk: %lu\n", pclk_hz);
+#endif
+	/* Reduce the clock a little bit for stable operation. */
+	pclk_hz = 160000000;
+#if 1
+	/* Need the lowest speed to read KSZ9031 PHY! */
+	pclk_hz = 161000000;
+#if 1
+	/* Work for SMI. */
+	pclk_hz = 80000000;
+#endif
+#if 0
+	/* Work for regular KSZ9031! */
+	pclk_hz = 40000000;
+#endif
+#endif
+#endif
 	if (pclk_hz <= 20000000)
 		config = GEM_BF(CLK, GEM_CLK_DIV8);
 	else if (pclk_hz <= 40000000)
@@ -2325,6 +2735,15 @@ static void macb_init_hw(struct macb *bp)
 		config |= MACB_BIT(JFRAME);	/* Enable jumbo frames */
 	else
 		config |= MACB_BIT(BIG);	/* Receive oversized frames */
+
+#ifdef HAVE_KSZ_SWITCH
+	do {
+		struct ksz_sw *sw = bp->port.sw;
+
+		if (sw_is_switch(sw))
+			config |= MACB_BIT(JFRAME);
+	} while (0);
+#endif
 	if (bp->dev->flags & IFF_PROMISC)
 		config |= MACB_BIT(CAF);	/* Copy All Frames */
 	else if (macb_is_gem(bp) && bp->dev->features & NETIF_F_RXCSUM)
@@ -2643,33 +3062,37 @@ static void macb_set_rx_mode(struct net_device *dev)
 	macb_writel(bp, NCFGR, cfg);
 }
 
+#if defined(CONFIG_KSZ_IBA_ONLY)
+static int create_sw_dev(struct net_device *dev, struct macb *bp);
+#endif
+
 static int macb_open(struct net_device *dev)
 {
 	struct macb *bp = netdev_priv(dev);
 	size_t bufsz = dev->mtu + ETH_HLEN + ETH_FCS_LEN + NET_IP_ALIGN;
 	int err;
-	struct macb *hbp = bp;
 
 #ifdef HAVE_KSZ_SWITCH
+	struct macb *dbp = bp;
 	int rx_mode = 0;
 	struct ksz_sw *sw = bp->port.sw;
 
 	if (sw_is_switch(sw)) {
-		hbp = bp->hw_priv;
-		bp->multi = false;
-		bp->promisc = false;
-		if (hbp->opened > 0) {
+		bp = dbp->hw_priv;
+		dbp->multi = false;
+		dbp->promisc = false;
+		if (bp->opened > 0) {
 			netif_carrier_off(dev);
 			goto skip_hw;
 		}
-		if (0 == hbp->opened) {
-			struct net_device *main_dev = hbp->dev;
+		if (0 == bp->opened) {
+			struct net_device *main_dev = bp->dev;
 
 			/* Need to wait for adjust_link to start operation. */
-			hbp->ready = false;
-			hbp->hw_multi = 0;
-			hbp->hw_promisc = 0;
-			memset(&hbp->ethtool_stats, 0,
+			bp->ready = false;
+			bp->hw_multi = 0;
+			bp->hw_promisc = 0;
+			memset(&bp->ethtool_stats, 0,
 				sizeof(u64) * GEM_STATS_LEN);
 			bufsz += sw->net_ops->get_mtu(sw);
 			rx_mode = sw->net_ops->open_dev(sw, main_dev,
@@ -2677,7 +3100,7 @@ static int macb_open(struct net_device *dev)
 		}
 	} else
 #endif
-	memset(&hbp->ethtool_stats, 0, sizeof(u64) * GEM_STATS_LEN);
+	memset(&bp->ethtool_stats, 0, sizeof(u64) * GEM_STATS_LEN);
 
 	netdev_dbg(bp->dev, "open\n");
 
@@ -2689,37 +3112,37 @@ static int macb_open(struct net_device *dev)
 		return -EAGAIN;
 
 	/* RX buffers initialization */
-	macb_init_rx_buffer_size(hbp, bufsz);
+	macb_init_rx_buffer_size(bp, bufsz);
 
-	err = macb_alloc_consistent(hbp);
+	err = macb_alloc_consistent(bp);
 	if (err) {
 		netdev_err(dev, "Unable to allocate DMA memory (error %d)\n",
 			   err);
 		return err;
 	}
 
-	napi_enable(&hbp->napi);
+	napi_enable(&bp->napi);
 
-	hbp->macbgem_ops.mog_init_rings(hbp);
-	macb_init_hw(hbp);
+	bp->macbgem_ops.mog_init_rings(bp);
+	macb_init_hw(bp);
 
 #ifdef HAVE_KSZ_SWITCH
 	if (sw_is_switch(sw)) {
-		if (0 == hbp->opened) {
+		if (0 == bp->opened) {
 			if (rx_mode & 1) {
-				hbp->hw_multi = 1;
-				hw_set_multicast(hbp, hbp->hw_multi);
+				bp->hw_multi = 1;
+				hw_set_multicast(bp, bp->hw_multi);
 			}
 			if (rx_mode & 2) {
-				hbp->hw_promisc = 1;
-				hw_set_promisc(hbp, hbp->hw_promisc);
+				bp->hw_promisc = 1;
+				hw_set_promisc(bp, bp->hw_promisc);
 			}
 			sw->net_ops->open(sw);
 		}
 
 skip_hw:
-		sw->net_ops->open_port(sw, dev, &bp->port, &bp->state);
-		hbp->opened++;
+		sw->net_ops->open_port(sw, dev, &dbp->port, &dbp->state);
+		bp->opened++;
 	}
 #endif
 
@@ -2731,6 +3154,11 @@ skip_hw:
 
 	netif_tx_start_all_queues(dev);
 
+#if defined(CONFIG_KSZ_IBA_ONLY)
+	if (!sw_is_switch(sw))
+		create_sw_dev(dev, bp);
+#endif
+
 	return 0;
 }
 
@@ -2738,22 +3166,38 @@ static int macb_close(struct net_device *dev)
 {
 	struct macb *bp = netdev_priv(dev);
 	unsigned long flags;
-	struct macb *hbp = bp;
 
 #ifdef HAVE_KSZ_SWITCH
-	do {
-		struct ksz_sw *sw = bp->port.sw;
+	struct macb *dbp = bp;
+	struct ksz_sw *sw = bp->port.sw;
 
+	do {
+#if defined(CONFIG_KSZ_IBA_ONLY)
 		if (sw_is_switch(sw)) {
-			hbp = bp->hw_priv;
-			dev_set_multicast(bp, false);
-			dev_set_promisc(bp, false);
-			hbp->opened--;
-			if (!hbp->opened) {
+
+			/* Still under initialization in IBA-only mode. */
+			if (2 == sw->info->iba.use_iba) {
+				cancel_delayed_work_sync(&sw->set_ops);
+
+				/* May not started yet. */
+				if (2 == sw->info->iba.use_iba) {
+					kfree(sw->dev);
+					bp->port.sw = NULL;
+					sw = NULL;
+				}
+			}
+		}
+#endif
+		if (sw_is_switch(sw)) {
+			bp = dbp->hw_priv;
+			dev_set_multicast(dbp, false);
+			dev_set_promisc(dbp, false);
+			sw->net_ops->close_port(sw, dev, &dbp->port);
+			bp->opened--;
+			if (!bp->opened) {
 				sw->net_ops->close(sw);
 			}
-			sw->net_ops->close_port(sw, dev, &bp->port);
-			if (!hbp->opened) {
+			if (!bp->opened) {
 				sw->net_ops->stop(sw, true);
 			}
 		}
@@ -2762,38 +3206,53 @@ static int macb_close(struct net_device *dev)
 
 	netif_tx_stop_all_queues(dev);
 #ifdef HAVE_KSZ_SWITCH
-	if (!hbp->opened)
+	if (!bp->opened)
 #endif
-	napi_disable(&hbp->napi);
+	napi_disable(&bp->napi);
 
 #ifdef HAVE_KSZ_SWITCH
-	if (dev->phydev && !sw_is_switch(bp->port.sw))
+	if (dev->phydev && !sw_is_switch(sw))
 #else
 	if (dev->phydev)
 #endif
 		phy_stop(dev->phydev);
 
 #ifdef HAVE_KSZ_SWITCH
-	do {
-		struct ksz_sw *sw = bp->port.sw;
-
-		if (sw_is_switch(sw)) {
-			if (hbp->opened > 0) {
-				netif_carrier_off(dev);
-				return 0;
-			}
+	if (sw_is_switch(sw)) {
+		if (bp->opened > 0) {
+			netif_carrier_off(dev);
+			return 0;
 		}
-	} while (0);
+
+#if defined(CONFIG_KSZ_IBA_ONLY)
+		sw->net_ops->leave_dev(sw);
+		ksz_remove(sw->dev);
+		bp->port.sw = NULL;
+#endif
+	}
 
 	/* Reset ready indication. */
 	bp->ready = false;
 #endif
-	spin_lock_irqsave(&hbp->lock, flags);
-	macb_reset_hw(hbp);
+	spin_lock_irqsave(&bp->lock, flags);
+	macb_reset_hw(bp);
 	netif_carrier_off(dev);
-	spin_unlock_irqrestore(&hbp->lock, flags);
+	spin_unlock_irqrestore(&bp->lock, flags);
 
-	macb_free_consistent(hbp);
+	macb_free_consistent(bp);
+
+#ifdef CONFIG_KSZ_SMI
+	if (sw_is_switch(sw)) {
+		u32 config;
+
+		config = macb_mdc_clk_div(bp);
+		config |= macb_dbw(bp);
+		macb_writel(bp, NCFGR, config);
+
+		/* Enable management port */
+		macb_writel(bp, NCR, MACB_BIT(MPE));
+	}
+#endif
 
 	return 0;
 }
@@ -2809,6 +3268,36 @@ static int macb_change_mtu(struct net_device *dev, int new_mtu)
 	max_mtu = ETH_DATA_LEN;
 	if (bp->caps & MACB_CAPS_JUMBO)
 		max_mtu = gem_readl(bp, JML) - ETH_HLEN - ETH_FCS_LEN;
+
+#ifdef HAVE_KSZ_SWITCH
+#if defined(CONFIG_HAVE_KSZ9897)
+	do {
+		struct ksz_sw *sw = bp->port.sw;
+
+		/* 3906 bytes seems to be the transmit limit of the MAC.
+		 * So the MTU is about 3906 - 5 = 3901 - 18 = 3883.
+		 * 1536 bytes seems to be the receive limit of the MAC.
+		 * Up to 1527 bytes can be received although the receive
+		 * oversize counter is increased for frames more than that.
+		 * Enable jumbo frame does allow receive up to 3902 bytes.
+		 * The maximum ping size is 3854 between KSZ9897 and KSZ9563.
+		 * 3854 + 42 + 1 = 3897
+		 * With PTP off the size can be increased by 4 bytes.
+		 * The effective MTU is 3882.
+		 * However, receive sometimes has overrun issue and it seems
+		 * the maximum size is 0xC00 = 3072, so the MTU is 3072 - 18 -
+		 * 2 - 6 = 3046.
+		 */
+		if (sw_is_switch(sw)) {
+			int mtu = sw->mtu - ETH_HLEN - ETH_FCS_LEN;
+
+			mtu -= sw->net_ops->get_mtu(sw);
+			if (max_mtu < mtu)
+				max_mtu = mtu;
+		}
+	} while (0);
+#endif
+#endif
 
 	if ((new_mtu > max_mtu) || (new_mtu < GEM_MTU_MIN_SIZE))
 		return -EINVAL;
@@ -3167,8 +3656,7 @@ static int macb_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	case SIOCDEVPRIVATE + 15:
 		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
 			ptp = &sw->ptp_hw;
-			result = ptp->ops->dev_req(ptp, bp->port.first_port,
-				rq->ifr_data, NULL);
+			result = ptp->ops->dev_req(ptp, rq->ifr_data, NULL);
 		}
 		break;
 #endif
@@ -3177,15 +3665,13 @@ static int macb_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
 			struct mrp_info *mrp = &sw->mrp;
 
-			result = mrp->ops->dev_req(mrp, bp->port.first_port,
-				rq->ifr_data);
+			result = mrp->ops->dev_req(mrp, rq->ifr_data);
 		}
 		break;
 #endif
 	case SIOCDEVPRIVATE + 13:
 		if (sw_is_switch(sw)) {
-			result = sw->ops->dev_req(sw, bp->port.first_port,
-				rq->ifr_data, NULL);
+			result = sw->ops->dev_req(sw, rq->ifr_data, NULL);
 		}
 		break;
 	default:
@@ -3919,35 +4405,6 @@ MODULE_DEVICE_TABLE(of, macb_dt_ids);
 #endif /* CONFIG_OF */
 
 #ifdef HAVE_KSZ_SWITCH
-static struct ksz_sw *check_avail_switch(struct net_device *netdev, int id)
-{
-	int phy_mode;
-	char phy_id[MII_BUS_ID_SIZE];
-	char bus_id[MII_BUS_ID_SIZE];
-	struct ksz_sw *sw = NULL;
-	struct phy_device *phydev = NULL;
-
-	/* Check whether MII switch exists. */
-	phy_mode = PHY_INTERFACE_MODE_MII;
-	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", id);
-	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, 0);
-	phydev = phy_attach(netdev, phy_id, phy_mode);
-	if (!IS_ERR(phydev)) {
-		struct phy_priv *phydata = phydev->priv;
-
-		sw = phydata->port->sw;
-
-		/*
-		 * In case multiple devices mode is used and this phydev is not
-		 * attached again.
-		 */
-		if (sw)
-			phydev->interface = sw->interface;
-		phy_detach(phydev);
-	}
-	return sw;
-}  /* check_avail_switch */
-
 #ifndef CONFIG_KSZ_NO_MDIO_BUS
 static int mdio_read(struct net_device *dev, int phy_id, int reg_num)
 {
@@ -3998,7 +4455,7 @@ static struct ksz_port *get_priv_port(struct net_device *dev)
 	return &priv->port;
 }  /* get_priv_port */
 
-#if defined(CONFIG_HAVE_KSZ9897)
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 static int get_net_ready(struct net_device *dev)
 {
 	struct macb *priv = netdev_priv(dev);
@@ -4017,7 +4474,7 @@ static void prep_sw_first(struct ksz_sw *sw, int *port_count,
 	sw->net_ops->get_state = get_priv_state;
 	sw->net_ops->set_state = set_priv_state;
 	sw->net_ops->get_priv_port = get_priv_port;
-#if defined(CONFIG_HAVE_KSZ9897)
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 	sw->net_ops->get_ready = get_net_ready;
 #endif
 	sw->net_ops->setup_special(sw, port_count, mib_port_count, dev_count);
@@ -4056,20 +4513,6 @@ static void prep_sw_dev(struct ksz_sw *sw, struct macb *bp, int i,
 #endif
 }  /* prep_sw_dev */
 
-static int macb_sw_chk(struct macb *bp)
-{
-	struct ksz_sw *sw;
-
-	sw = bp->port.sw;
-	if (!sw) {
-		sw = check_avail_switch(bp->dev, 0);
-		if (!sw_is_switch(sw))
-			return -ENXIO;
-	}
-	bp->port.sw = sw;
-	return 0;
-}
-
 static int macb_sw_init(struct macb *bp)
 {
 	struct ksz_sw *sw;
@@ -4106,6 +4549,10 @@ static int macb_sw_init(struct macb *bp)
 	/* Save the base device name. */
 	strlcpy(dev_label, hw_priv->dev->name, IFNAMSIZ);
 
+#ifndef CONFIG_KSZ_SMI
+	if (sw->net_ops->setup_mdiobus)
+		sw->net_ops->setup_mdiobus(sw, bp->mii_bus);
+#endif
 	prep_sw_dev(sw, bp, 0, port_count, mib_port_count, dev_label);
 
 	/* Only the main one needs to set adjust_link for configuration. */
@@ -4134,6 +4581,7 @@ static int macb_sw_init(struct macb *bp)
 		dev->phydev = &bp->dummy_phy;
 		dev->phydev->duplex = 1;
 		dev->phydev->speed = SPEED_1000;
+		dev->phydev->autoneg = 1;
 
 		spin_lock_init(&bp->lock);
 
@@ -4165,6 +4613,7 @@ static int macb_sw_init(struct macb *bp)
 		netif_carrier_off(dev);
 	}
 
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 	/*
 	 * Adding sysfs support is optional for network device.  It is more
 	 * convenient to locate eth0 more or less than spi<bus>.<select>,
@@ -4181,9 +4630,140 @@ static int macb_sw_init(struct macb *bp)
 	if (sw->features & DLR_HW)
 		err = init_dlr_sysfs(&main_dev->dev);
 #endif
+#endif
+
+#if defined(CONFIG_KSZ_IBA_ONLY)
+	if (bp->dev->phydev->mdio.bus) {
+		struct phy_device *phydev = bp->dev->phydev;
+
+		phy_attached_info(phydev);
+	}
+#endif
 
 	return 0;
 }
+
+#if defined(CONFIG_KSZ_IBA_ONLY)
+static int not_ready;
+
+/**
+ * netdev_start_iba - Start using IBA for register access
+ *
+ * This routine starts using IBA for register access.
+ */
+static void netdev_start_iba(struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct ksz_sw *sw = container_of(dwork, struct ksz_sw, set_ops);
+	struct ksz_iba_info *iba = &sw->info->iba;
+	struct net_device *dev;
+	struct macb *bp;
+	int rx_mode;
+
+	if (2 != iba->use_iba)
+		return;
+
+	/* Communication is not ready if a cable connection is used. */
+	if (sw->net_ops->get_ready && !sw->net_ops->get_ready(iba->dev)) {
+		not_ready = true;
+		schedule_delayed_work(&sw->set_ops, 1);
+		return;
+	}
+
+	/* Need some time after link is established. */
+	if (not_ready) {
+		not_ready = false;
+		schedule_delayed_work(&sw->set_ops, 10);
+		return;
+	}
+
+	dev = sw->netdev[0];
+	bp = netdev_priv(dev);
+
+	sw->reg = &sw_iba_ops;
+	iba->cnt = 0;
+	if (ksz_probe_next(sw->dev)) {
+		bp->parent = NULL;
+		bp->port.sw = NULL;
+		return;
+	}
+
+#ifdef CONFIG_1588_PTP
+	sw->ptp_hw.reg = &ptp_iba_ops;
+#endif
+
+	macb_sw_init(bp);
+
+	bp->multi = false;
+	bp->promisc = false;
+
+	bp->hw_multi = 0;
+	bp->hw_promisc = 0;
+	memset(&bp->ethtool_stats, 0, sizeof(u64) * GEM_STATS_LEN);
+	rx_mode = sw->net_ops->open_dev(sw, dev, dev->dev_addr);
+	if (rx_mode & 1) {
+		bp->hw_multi = 1;
+		hw_set_multicast(bp, bp->hw_multi);
+	}
+	if (rx_mode & 2) {
+		bp->hw_promisc = 1;
+		hw_set_promisc(bp, bp->hw_promisc);
+	}
+	sw->net_ops->open(sw);
+
+	sw->net_ops->open_port(sw, dev, &bp->port, &bp->state);
+	bp->opened++;
+
+	/* Signal IBA initialization is complete. */
+	sw->info->iba.use_iba = 3;
+}  /* netdev_start_iba */
+
+static int create_sw_dev(struct net_device *dev, struct macb *bp)
+{
+	struct sw_priv *ks;
+	struct ksz_sw *sw;
+
+	/*
+	 * Stop normal traffic from going out until the switch is
+	 * configured to block looping frames.
+	 */
+	netif_carrier_off(dev);
+
+	ks = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
+	ks->hw_dev = dev;
+	ks->dev = &dev->dev;
+
+	ks->irq = get_sw_irq(bp);
+	if (ks->irq == bp->dev->phydev->irq)
+		ks->irq = 0;
+
+	intr_mode = 1;
+	sw_device_present = 0;
+	sw = &ks->sw;
+	ksz_probe_prep(ks, dev);
+
+	sw->net_ops->get_state = get_priv_state;
+	sw->net_ops->set_state = set_priv_state;
+	sw->net_ops->get_priv_port = get_priv_port;
+	sw->net_ops->get_ready = get_net_ready;
+	sw->netdev[0] = dev;
+	sw->dev_count = 1;
+
+	INIT_DELAYED_WORK(&sw->set_ops, netdev_start_iba);
+
+	sw_set_dev(sw, dev, dev->dev_addr);
+
+	bp->parent = sw->dev;
+	bp->port.sw = sw;
+
+	not_ready = false;
+
+#ifdef DEBUG_MSG
+	init_dbg();
+#endif
+	return 0;
+}  /* create_sw_dev */
+#endif
 
 static void macb_sw_exit(struct macb *bp)
 {
@@ -4191,6 +4771,7 @@ static void macb_sw_exit(struct macb *bp)
 	struct ksz_sw *sw = bp->port.sw;
 	int i;
 
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 #ifdef CONFIG_KSZ_DLR
 	if (sw->features & DLR_HW)
 		exit_dlr_sysfs(&dev->dev);
@@ -4200,6 +4781,7 @@ static void macb_sw_exit(struct macb *bp)
 		exit_ptp_sysfs(&bp->ptp_sysfs, &dev->dev);
 #endif
 	exit_sw_sysfs(sw, &bp->sysfs, &dev->dev);
+#endif
 	for (i = 1; i < sw->dev_count + sw->dev_offset; i++) {
 		dev = sw->netdev[i];
 		if (!dev)
@@ -4227,7 +4809,9 @@ static int macb_probe(struct platform_device *pdev)
 	unsigned int queue_mask, num_queues;
 	struct macb_platform_data *pdata;
 	bool native_io;
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 	struct phy_device *phydev;
+#endif
 	struct net_device *dev;
 	struct resource *regs;
 	void __iomem *mem;
@@ -4357,18 +4941,24 @@ static int macb_probe(struct platform_device *pdev)
 #ifdef CONFIG_KSZ9897_EMBEDDED
 	ksz9897_init();
 #endif
+#ifdef CONFIG_LAN937X_EMBEDDED
+	lan937x_init();
+#endif
 
 	err = macb_mii_init(bp);
 
 #ifdef HAVE_KSZ_SWITCH
 	bp->hw_priv = bp;
+
+#ifndef CONFIG_KSZ_IBA_ONLY
 	if (err)
 		err = macb_sw_chk(bp);
+#endif
 #endif
 
 #ifdef CONFIG_FIXED_PHY
 	if (err) {
-		if (of_phy_is_fixed_link(np)) {
+		if (!bp->phy_node && of_phy_is_fixed_link(np)) {
 			err = of_phy_register_fixed_link(np);
 			if (!err)
 				bp->phy_node = of_node_get(np);
@@ -4390,7 +4980,9 @@ static int macb_probe(struct platform_device *pdev)
 	if (err)
 		goto err_out_free_netdev;
 
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 	phydev = dev->phydev;
+#endif
 
 	netif_carrier_off(dev);
 
@@ -4401,12 +4993,21 @@ static int macb_probe(struct platform_device *pdev)
 	}
 
 #ifdef HAVE_KSZ_SWITCH
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 	if (bp->port.sw)
 		err = macb_sw_init(bp);
 	phydev = dev->phydev;
 #endif
+#endif
 
+#ifdef MACB_REGS_SIZE
+	err = sysfs_create_bin_file(&dev->dev.kobj,
+				    &macb_registers_attr);
+#endif
+
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 	phy_attached_info(phydev);
+#endif
 
 	netdev_info(dev, "Cadence %s rev 0x%08x at 0x%08lx irq %d (%pM)\n",
 		    macb_is_gem(bp) ? "GEM" : "MACB", macb_readl(bp, MID),
@@ -4479,6 +5080,21 @@ static int macb_remove(struct platform_device *pdev)
 
 #ifdef HAVE_KSZ_SWITCH
 		if (sw_is_switch(bp->port.sw)) {
+
+#if defined(CONFIG_KSZ_IBA_ONLY)
+			struct ksz_sw *sw = bp->port.sw;
+
+			/* Still under initialization in IBA-only mode. */
+			if (2 == sw->info->iba.use_iba) {
+				cancel_delayed_work_sync(&sw->set_ops);
+
+				/* May not started yet. */
+				if (2 == sw->info->iba.use_iba) {
+					kfree(sw->dev);
+					bp->port.sw = NULL;
+				}
+			} else
+#endif
 			macb_sw_exit(bp);
 
 			/* No mii_bus in bp. */
@@ -4491,7 +5107,7 @@ static int macb_remove(struct platform_device *pdev)
 		if (bp->mii_bus) {
 
 #ifdef CONFIG_KSZ_SMI
-			smi_remove(pdev);
+			smi_remove(bp->sw_pdev);
 #endif
 #endif
 		mdiobus_unregister(bp->mii_bus);
@@ -4500,6 +5116,10 @@ static int macb_remove(struct platform_device *pdev)
 #ifdef HAVE_KSZ_SWITCH
 		}
 next:
+#endif
+
+#ifdef MACB_REGS_SIZE
+		sysfs_remove_bin_file(&dev->dev.kobj, &macb_registers_attr);
 #endif
 
 		/* Shutdown the PHY if there is a GPIO reset */
@@ -4521,6 +5141,9 @@ next:
 					phy_detach(dev->phydev);
 				dev->phydev = NULL;
 			}
+#if defined(CONFIG_KSZ_IBA_ONLY) && defined(DEBUG_MSG)
+			exit_dbg();
+#endif
 		}
 #ifdef CONFIG_KSZ8795_EMBEDDED
 		ksz8795_exit();
@@ -4530,6 +5153,9 @@ next:
 #endif
 #ifdef CONFIG_KSZ9897_EMBEDDED
 		ksz9897_exit();
+#endif
+#ifdef CONFIG_LAN937X_EMBEDDED
+		lan937x_exit();
 #endif
 #endif
 		clk_disable_unprepare(bp->tx_clk);

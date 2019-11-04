@@ -888,6 +888,7 @@ struct macb {
 	u32			wol;
 
 #ifdef HAVE_KSZ_SWITCH
+	struct platform_device	*sw_pdev;
 	struct macb		*hw_priv;
 	struct phy_device	dummy_phy;
 	struct ksz_port		port;

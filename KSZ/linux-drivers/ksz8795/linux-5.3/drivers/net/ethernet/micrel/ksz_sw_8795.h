@@ -558,6 +558,7 @@ struct phy_priv {
 /* Software overrides. */
 #define PAUSE_FLOW_CTRL			(1 << 0)
 #define FAST_AGING			(1 << 1)
+#define UPDATE_CSUM			(1 << 2)
 #define HAVE_MORE_THAN_2_PORTS		(1 << 3)
 
 #define ACL_INTR_MONITOR		(1 << 17)
@@ -736,6 +737,11 @@ struct ksz_port {
 	struct ksz_sw *sw;
 	struct work_struct link_update;
 };
+
+static inline void sw_update_csum(struct ksz_sw *sw)
+{
+	sw->overrides |= UPDATE_CSUM;
+}
 
 struct lan_attributes {
 	int info;

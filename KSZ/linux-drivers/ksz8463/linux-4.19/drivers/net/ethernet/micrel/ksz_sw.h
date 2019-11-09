@@ -497,6 +497,7 @@ struct ksz_sw_cached_regs {
 /* Software overrides. */
 #define PAUSE_FLOW_CTRL			(1 << 0)
 #define FAST_AGING			(1 << 1)
+#define UPDATE_CSUM			(1 << 2)
 
 #define TAIL_PRP_0			(1 << 24)
 #define TAIL_PRP_1			(1 << 25)
@@ -672,6 +673,11 @@ struct ksz_port {
 	struct ksz_sw *sw;
 	struct work_struct link_update;
 };
+
+static inline void sw_update_csum(struct ksz_sw *sw)
+{
+	sw->overrides |= UPDATE_CSUM;
+}
 
 struct lan_attributes {
 	int info;

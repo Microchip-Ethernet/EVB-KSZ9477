@@ -873,7 +873,6 @@ static int iba_reqs(struct ksz_iba_info *info, void **in, void *out, void *obj,
 	void *(*prepare)(struct ksz_iba_info *info, void *in, void *obj);
 
 	if (5 == info->use_iba) {
-dbg_msg(" %s"NL, __func__);
 		return 0;
 	}
 	do {
@@ -907,6 +906,9 @@ printk("  !! %x"NL, rc);
 #endif
 		return 0;
 	}
+	if (info->use_iba & 0x40)
+		wait = 1;
+	else
 	wait = wait_for_completion_timeout(&info->done, info->delay_ticks);
 	if (!wait) {
 if (dbg_iba)

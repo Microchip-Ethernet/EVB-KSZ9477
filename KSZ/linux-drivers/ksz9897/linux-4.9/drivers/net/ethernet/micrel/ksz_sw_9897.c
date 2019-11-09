@@ -8738,6 +8738,8 @@ static void sw_setup(struct ksz_sw *sw)
 {
 	uint n;
 	uint port;
+	u16 val;
+	u32 data;
 	struct ksz_port_cfg *cfg;
 
 	/* Starting from stopped state will flush the ACL table. */
@@ -8790,9 +8792,7 @@ static void sw_setup(struct ksz_sw *sw)
 		sw->reg->r16(sw, REG_SW_EEE_TXQ_WAIT_TIME__2));
 	sw->reg->w16(sw, REG_SW_EEE_TXQ_WAIT_TIME__2, 0x0040);
 
-	for (n = 0; n <= sw->mib_port_cnt; n++) {
-		u16 val = 0;
-
+	for (n = 1; n <= sw->mib_port_cnt; n++) {
 		port = get_phy_port(sw, n);
 		if (port >= sw->phy_port_cnt)
 			continue;
@@ -8822,7 +8822,11 @@ static void sw_setup(struct ksz_sw *sw)
 		port_r16(sw, port, P_PHY_CTRL, &val);
 		val &= ~PORT_FULL_DUPLEX;
 		port_w16(sw, port, P_PHY_CTRL, val);
-
+	}
+	for (n = 0; n <= sw->mib_port_cnt; n++) {
+		port = get_phy_port(sw, n);
+		if (port >= sw->phy_port_cnt)
+			continue;
 /*
  * THa  2015/10/07
  * The S2 chip has a bug that writing to the 0xN13E register will cause the
@@ -8843,14 +8847,10 @@ static void sw_setup(struct ksz_sw *sw)
 		if (!(sw->features & NEW_CAP))
 			val = 0;
 #endif
-		do {
-			u32 data;
-
-			port_r32(sw, port, REG_PORT_PHY_INT_ENABLE & ~3, &data);
-			data &= 0xffff00ff;
-			data |= val << 8;
-			port_w32(sw, port, REG_PORT_PHY_INT_ENABLE & ~3, data);
-		} while (0);
+		port_r32(sw, port, REG_PORT_PHY_INT_ENABLE & ~3, &data);
+		data &= 0xffff00ff;
+		data |= val << 8;
+		port_w32(sw, port, REG_PORT_PHY_INT_ENABLE & ~3, data);
 	}
 	port = 6;
 	if (PHY_INTERFACE_MODE_SGMII == sw->port_info[port].interface) {
@@ -8888,7 +8888,8 @@ static void sw_setup(struct ksz_sw *sw)
 	sw_setup_stp(sw);
 #endif
 #ifdef CONFIG_1588_PTP
-	sw_setup_ptp(sw);
+	if (sw->features & PTP_HW)
+		sw_setup_ptp(sw);
 #endif
 #ifdef CONFIG_KSZ_IBA
 	if ((sw->features & IBA_SUPPORT) && !sw->info->iba.use_iba)
@@ -13908,6 +13909,7 @@ static int append_tag(u16 shift, u8 *pad, u8 *tag, int len, int ptp_len,
 	/* Only one byte for the tag. */
 	if (shift != 7) {
 		pad[len + ptp_len] = pad[len + ptp_len + 1];
+		pad[len + ptp_len + 1] = 0;
 		addlen--;
 	}
 	return addlen;
@@ -14037,6 +14039,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	uint port;
 	struct sk_buff *org_skb;
 	struct ksz_sw_tx_tag tx_tag;
+	u16 *tag_data = NULL;
 	u8 *tag;
 	int update_dst = (sw->overrides & TAIL_TAGGING);
 	int ptp_len = 0;
@@ -14263,6 +14266,10 @@ add_tag:
 		len = append_tag(sw->TAIL_TAG_SHIFT, skb->data, tag, len,
 			ptp_len, ptp_len + 2);
 		skb_put(skb, len);
+
+		/* Need to compensate checksum. */
+		if (skb->ip_summed == CHECKSUM_PARTIAL)
+			tag_data = (u16 *) &tx_tag;
 	} else {
 		struct sock dummy;
 		struct sock *sk;
@@ -14285,6 +14292,30 @@ add_tag:
 		len = append_tag(sw->TAIL_TAG_SHIFT, sw->tx_pad, tag,
 			sw->tx_start, ptp_len, len);
 		skb_append_datato_frags(sk, skb, add_frag, sw->tx_pad, len);
+
+		/* Need to compensate checksum. */
+		if (skb->ip_summed == CHECKSUM_PARTIAL)
+			tag_data = (u16 *) &sw->tx_pad[sw->tx_start];
+	}
+
+	/* Need to compensate checksum for some devices. */
+	if (tag_data && (sw->overrides & UPDATE_CSUM)) {
+		__sum16 *csum_loc = (__sum16 *)
+			(skb->head + skb->csum_start + skb->csum_offset);
+
+		/* Checksum is cleared by driver to be filled by hardware. */
+		if (!*csum_loc) {
+			__sum16 new_csum;
+			int csum = 0;
+			int i;
+
+			for (i = 0; i < len / 2; i++)
+				csum += ntohs(tag_data[i]);
+			csum = (csum >> 16) + (csum & 0xffff);
+			csum += (csum >> 16);
+			new_csum = (__sum16) csum;
+			*csum_loc = ~htons(new_csum);
+		}
 	}
 	return skb;
 }  /* sw_check_skb */
@@ -14505,7 +14536,10 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 	if (2 <= sw->info->iba.use_iba) {
 		if (sw->info->iba.use_iba < 4) {
 			sw->ops->acquire(sw);
-			sw_cfg(sw, REG_SW_OPERATION, SW_RESET, 1);
+
+			/* Indicate no wait as there is no IBA response. */
+			sw->info->iba.use_iba |= 0x40;
+			sw->reg->w8(sw, REG_SW_OPERATION, SW_RESET);
 			sw->ops->release(sw);
 
 			/* Indicate no more hardware access. */
@@ -15744,7 +15778,7 @@ static void link_update_work(struct work_struct *work)
 					dev->name,
 					phy_link ? "on" : "off");
 		}
-#ifndef CONFIG KSZ_IBA_ONLY
+#ifndef CONFIG_KSZ_IBA_ONLY
 		if (phydev->adjust_link && phydev->attached_dev &&
 		    info->report) {
 			phydev->adjust_link(phydev->attached_dev);
@@ -15817,19 +15851,6 @@ static int multi_dev = 1;
 static int multi_dev = -1;
 #endif
 
-/*
- * As most users select multiple network device mode to use Spanning Tree
- * Protocol, this enables a feature in which most unicast and multicast packets
- * are forwarded inside the switch and not passed to the host.  Only packets
- * that need the host's attention are passed to it.  This prevents the host
- * wasting CPU time to examine each and every incoming packets and do the
- * forwarding itself.
- *
- * As the hack requires the private bridge header, the driver cannot compile
- * with just the kernel headers.
- *
- * Enabling STP support also turns on multiple network device mode.
- */
 static int stp = -1;
 
 /*
@@ -15843,11 +15864,7 @@ static int sgmii = -1;
 
 static int authen;
 
-#if defined(USE_DLR) || defined(USE_HSR)
 static int avb;
-#else
-static int avb = -1;
-#endif
 #ifdef CONFIG_KSZ_MRP
 static int mrp;
 #endif
@@ -16236,11 +16253,10 @@ static int phy_offset;
 static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
 	int *mib_port_cnt, int *dev_cnt)
 {
-#if 1
 	*port_cnt = 1;
 	*mib_port_cnt = 1;
 	*dev_cnt = 1;
-#endif
+
 	phy_offset = 0;
 	sw->dev_offset = 0;
 	sw->phy_offset = 0;
@@ -17641,7 +17657,7 @@ static void ksz9897_dev_monitor(unsigned long ptr)
 
 static int intr_mode;
 static int sw_host_port;
-static int sysfs_sw = 1;
+static int sysfs_sw;
 static int ports;
 
 
@@ -18190,6 +18206,10 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 	}
 	sw->sgmii_mode = sgmii;
 
+#ifdef DEBUG_MSG
+	flush_work(&db.dbg_print);
+#endif
+
 	for (pi = 0; pi < phy_port_count; pi++) {
 		/*
 		 * Initialize to invalid value so that link detection
@@ -18434,6 +18454,11 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	if (sw->features & HSR_HW)
 		ksz_hsr_init(&sw->info->hsr, sw);
 #endif
+
+#ifdef DEBUG_MSG
+	flush_work(&db.dbg_print);
+#endif
+
 	sw->ops->acquire(sw);
 
 	/* Turn off PTP in case the feature is not enabled. */
@@ -18518,6 +18543,10 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 		mrp->parent = sw;
 		mrp->ops->init(mrp);
 	}
+#endif
+
+#ifdef DEBUG_MSG
+	flush_work(&db.dbg_print);
 #endif
 
 #ifdef CONFIG_KSZ_IBA_ONLY

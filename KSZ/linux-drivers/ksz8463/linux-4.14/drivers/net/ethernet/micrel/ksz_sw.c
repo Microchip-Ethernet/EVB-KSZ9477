@@ -1,7 +1,7 @@
 /**
  * Microchip switch common code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2019 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -7070,6 +7070,22 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		sw->tx_pad[sw->tx_start] = dest;
 		skb_append_datato_frags(sk, skb, add_frag, sw->tx_pad, len);
 	}
+
+	/* Need to compensate checksum for some devices. */
+	if (skb->ip_summed != CHECKSUM_PARTIAL)
+		dest = 0;
+	if (dest && (sw->overrides & UPDATE_CSUM)) {
+		__sum16 *csum_loc = (__sum16 *)
+			(skb->head + skb->csum_start + skb->csum_offset);
+
+		/* Checksum is cleared by driver to be filled by hardware. */
+		if (!*csum_loc) {
+			__sum16 new_csum;
+
+			new_csum = dest << 8;
+			*csum_loc = ~htons(new_csum);
+		}
+	}
 	return skb;
 }  /* sw_check_skb */
 
@@ -8219,19 +8235,6 @@ static void link_update_work(struct work_struct *work)
  */
 static int multi_dev;
 
-/*
- * As most users select multiple network device mode to use Spanning Tree
- * Protocol, this enables a feature in which most unicast and multicast packets
- * are forwarded inside the switch and not passed to the host.  Only packets
- * that need the host's attention are passed to it.  This prevents the host
- * wasting CPU time to examine each and every incoming packets and do the
- * forwarding itself.
- *
- * As the hack requires the private bridge header, the driver cannot compile
- * with just the kernel headers.
- *
- * Enabling STP support also turns on multiple network device mode.
- */
 static int stp;
 
 /*

@@ -40,7 +40,9 @@
 #if 0
 #define MRP_BASIC
 #endif
+#ifdef CONFIG_KSZ_MRP
 #include "mrp.h"
+#endif
 
 
 struct mrp_node {

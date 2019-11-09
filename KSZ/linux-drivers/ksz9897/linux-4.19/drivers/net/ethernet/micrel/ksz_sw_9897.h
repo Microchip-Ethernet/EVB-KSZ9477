@@ -764,8 +764,8 @@ struct phy_priv {
 #define HAVE_MORE_THAN_2_PORTS		BIT(3)
 #define DLR_FORWARD			BIT(4)
 #define UNK_MCAST_BLOCK			BIT(5)
+#define UPDATE_CSUM			BIT(6)
 
-#define BAD_SPI				IBIT(15)
 #define IBA_TEST			BIT(16)
 #define ACL_INTR_MONITOR		BIT(17)
 #define SYSFS_PHY_PORT			BIT(18)
@@ -1000,6 +1000,11 @@ struct ksz_port {
 	struct ksz_sw *sw;
 	struct work_struct link_update;
 };
+
+static inline void sw_update_csum(struct ksz_sw *sw)
+{
+	sw->overrides |= UPDATE_CSUM;
+}
 
 static inline uint get_rx_tag_ports(struct ksz_sw_tx_tag *tag)
 {

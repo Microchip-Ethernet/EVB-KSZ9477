@@ -4429,10 +4429,10 @@ static void mdio_write(struct net_device *dev, int phy_id, int reg_num, int val)
 	bus->write(bus, phy_id, reg_num, (u16) val);
 	mutex_unlock(&bus->mdio_lock);
 }  /* mdio_write */
+#endif
 
 static void macb_adjust_link(struct net_device *dev)
 {}
-#endif
 
 static u8 get_priv_state(struct net_device *dev)
 {
@@ -4556,15 +4556,15 @@ static int macb_sw_init(struct macb *bp)
 	prep_sw_dev(sw, bp, 0, port_count, mib_port_count, dev_label);
 
 	/* Only the main one needs to set adjust_link for configuration. */
-	if (bp->dev->phydev->mdio.bus)
+	if (bp->dev->phydev->mdio.bus &&
+	    !bp->dev->phydev->adjust_link) {
 		bp->dev->phydev->adjust_link = macb_handle_link_change;
 
-	bp->link = 0;
-	bp->speed = 0;
-	bp->duplex = -1;
+		bp->link = 0;
+		bp->speed = 0;
+		bp->duplex = -1;
+	}
 
-	/* Point to real private structure holding hardware information. */
-	bp->hw_priv = hw_priv;
 	INIT_DELAYED_WORK(&hw_priv->promisc_reset, promisc_reset_work);
 
 	for (i = 1; i < dev_count; i++) {
@@ -4948,6 +4948,8 @@ static int macb_probe(struct platform_device *pdev)
 	err = macb_mii_init(bp);
 
 #ifdef HAVE_KSZ_SWITCH
+
+	/* Point to real private structure holding hardware information. */
 	bp->hw_priv = bp;
 
 #ifndef CONFIG_KSZ_IBA_ONLY
@@ -5061,8 +5063,8 @@ static void macb_shutdown(struct platform_device *pdev)
 				continue;
 		}
 		if (netif_running(dev)) {
-			netif_device_detach(dev);
 			macb_close(dev);
+			netif_device_detach(dev);
 		}
 	}
 }

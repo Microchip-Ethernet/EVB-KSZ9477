@@ -260,9 +260,10 @@ static void dbg_print_work(struct work_struct *work)
 	}
 }  /* dbg_print_work */
 
-static void dbg_monitor(unsigned long ptr)
+static void dbg_monitor(struct timer_list *t)
 {
-	struct dbg_print *dbp = (struct dbg_print *) ptr;
+	struct ksz_timer_info *info = from_timer(info, t, timer);
+	struct dbg_print *dbp = info->dev;
 
 	dbg_print_work(&dbp->dbg_print);
 	ksz_update_timer(&dbp->dbg_timer_info);

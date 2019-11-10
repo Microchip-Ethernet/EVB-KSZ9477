@@ -428,6 +428,9 @@ static inline void delay_milli(uint millisec)
 #ifndef DO_NOT_USE_COPY_SKB
 static inline void copy_old_skb(struct sk_buff *old, struct sk_buff *skb)
 {
+	int offset = old->head - old->data;
+
+	skb->head = skb->data + offset;
 	skb->dev = old->dev;
 	skb->sk = old->sk;
 	skb->protocol = old->protocol;

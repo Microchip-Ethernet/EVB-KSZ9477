@@ -1,0 +1,31 @@
+--- fec.h.orig	2018-05-01 12:58:27.000000000 -0700
++++ fec.h	2019-11-09 12:36:28.191936099 -0800
+@@ -580,6 +580,28 @@
+ 	int pps_enable;
+ 	unsigned int next_counter;
+ 
++#ifdef HAVE_KSZ_SWITCH
++	struct platform_device	*sw_pdev;
++	struct fec_enet_private	*hw_priv;
++	struct phy_device	dummy_phy;
++	spinlock_t		tx_lock;
++	struct ksz_port		port;
++	int			phy_addr;
++	u8			state;
++	u32			ready:1;
++	u32			multi:1;
++	u32			promisc:1;
++	u8			opened;
++	u8			hw_multi;
++	u8			hw_promisc;
++	void			*parent;
++	struct delayed_work	promisc_reset;
++	struct ksz_sw_sysfs	sysfs;
++#ifdef CONFIG_1588_PTP
++	struct ksz_ptp_sysfs	ptp_sysfs;
++#endif
++#endif
++
+ 	u64 ethtool_stats[0];
+ };
+ 

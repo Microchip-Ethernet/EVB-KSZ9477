@@ -14,6 +14,9 @@ HOST_FAKEROOT_CONF_ENV = \
 	ac_cv_header_sys_capability_h=no \
 	ac_cv_func_capset=no
 
+HOST_FAKEROOT_CONF_OPTS = \
+	--with-ipc=tcp
+
 FAKEROOT_LICENSE = GPLv3+
 FAKEROOT_LICENSE_FILES = COPYING
 

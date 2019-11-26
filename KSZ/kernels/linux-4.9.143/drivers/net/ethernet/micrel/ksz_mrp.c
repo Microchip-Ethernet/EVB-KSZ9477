@@ -5972,9 +5972,10 @@ static int mrp_dev_req(struct mrp_info *mrp, char *arg)
 	int subcmd;
 	int output;
 	u8 data[PARAM_DATA_SIZE];
+	u8 cmd_data[4];
 	int err = 0;
 	int result = 0;
-	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) &req->param;
+	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) cmd_data;
 	size_t param_size = 0;
 
 	/* Assume success. */
@@ -5993,6 +5994,10 @@ static int mrp_dev_req(struct mrp_info *mrp, char *arg)
 	len = req_size - SIZEOF_ksz_request;
 
 	if (DEV_MRP_ATTRIBUTE == subcmd) {
+		if (chk_ioctl_size(len, 4, SIZEOF_ksz_request, &req_size,
+				&result, &req->param, cmd_data))
+			goto dev_ioctl_resp;
+
 		switch (cmd->type) {
 		case MRP_TYPE_PORT:
 			param_size = 4;
@@ -6808,6 +6813,10 @@ static void mrp_stop_port_app(struct mrp_port *port,
 	struct mrp_applicant *app;
 
 	app = rcu_dereference(port->applicants[appl->type]);
+	if (!app)
+printk(" %s!!\n", __func__);
+	if (!app)
+		return;
 	for (node = rb_first(&app->mad);
 	     next = node ? rb_next(node) : NULL, node != NULL;
 	     node = next) {

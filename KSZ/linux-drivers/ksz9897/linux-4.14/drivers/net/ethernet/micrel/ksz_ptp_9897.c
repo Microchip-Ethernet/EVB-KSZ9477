@@ -2004,8 +2004,9 @@ static void check_expired_msg(struct ptp_info *ptp, struct ptp_msg_info info[],
 	struct ptp_msg_info *prev;
 	int msg_type;
 	int diff;
+	unsigned long flags;
 
-	spin_lock(lock);
+	spin_lock_irqsave(lock, flags);
 	for (msg_type = SYNC_MSG; msg_type <= MANAGEMENT_MSG; msg_type++) {
 		prev = &info[msg_type];
 		msg = prev->next;
@@ -2022,7 +2023,7 @@ static void check_expired_msg(struct ptp_info *ptp, struct ptp_msg_info info[],
 			msg = msg->next;
 		}
 	}
-	spin_unlock(lock);
+	spin_unlock_irqrestore(lock, flags);
 }  /* check_expired_msg */
 
 static int find_msg_info(struct ptp_msg_info *msg_info, spinlock_t *lock,
@@ -2033,8 +2034,9 @@ static int find_msg_info(struct ptp_msg_info *msg_info, spinlock_t *lock,
 	struct ptp_msg_info *prev;
 	struct ptp_msg_options *data;
 	int ret = false;
+	unsigned long flags;
 
-	spin_lock(lock);
+	spin_lock_irqsave(lock, flags);
 	prev = rx_msg;
 	rx_msg = rx_msg->next;
 	while (rx_msg) {
@@ -2054,7 +2056,7 @@ static int find_msg_info(struct ptp_msg_info *msg_info, spinlock_t *lock,
 		prev = rx_msg;
 		rx_msg = rx_msg->next;
 	}
-	spin_unlock(lock);
+	spin_unlock_irqrestore(lock, flags);
 	return ret;
 }  /* find_msg_info */
 
@@ -2622,13 +2624,15 @@ static void set_msg_info(struct ptp_info *ptp, struct ptp_msg_hdr *hdr,
 	tx_msg = &ptp->tx_msg_info[hdr->messageType];
 	info = kzalloc(sizeof(struct ptp_msg_info), GFP_KERNEL);
 	if (info) {
-		spin_lock(&ptp->tx_msg_lock);
+		unsigned long flags;
+
+		spin_lock_irqsave(&ptp->tx_msg_lock, flags);
 		save_msg_info(ptp, info, hdr, port, timestamp);
 		info->next = tx_msg->next;
 		tx_msg->next = info;
 		if (ptp->tx_msg_cnt >= 0)
 			ptp->tx_msg_cnt++;
-		spin_unlock(&ptp->tx_msg_lock);
+		spin_unlock_irqrestore(&ptp->tx_msg_lock, flags);
 	}
 }  /* set_msg_info */
 
@@ -3000,11 +3004,13 @@ rx_msg->data.ts.t.sec, rx_msg->data.ts.t.nsec);
 		break;
 	}
 	if (info) {
-		spin_lock(&ptp->rx_msg_lock);
+		unsigned long flags;
+
+		spin_lock_irqsave(&ptp->rx_msg_lock, flags);
 		save_msg_info(ptp, info, &msg->hdr, port, timestamp);
 		info->next = rx_msg->next;
 		rx_msg->next = info;
-		spin_unlock(&ptp->rx_msg_lock);
+		spin_unlock_irqrestore(&ptp->rx_msg_lock, flags);
 	}
 }  /* ptp_get_rx_info */
 

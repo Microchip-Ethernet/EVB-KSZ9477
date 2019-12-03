@@ -1,5 +1,5 @@
 --- fec_main.c.orig	2018-05-01 12:58:27.000000000 -0700
-+++ fec_main.c	2019-11-26 13:47:14.776899899 -0800
++++ fec_main.c	2019-12-02 18:00:18.120713032 -0800
 @@ -64,8 +64,259 @@
  
  #include <asm/cacheflush.h>
@@ -301,7 +301,6 @@
 +				skb_set_tail_pointer(skb, skb->len);
 +			}
 +		}
-+		fep = fep->hw_priv;
 +	}
 +#endif
 +
@@ -317,6 +316,7 @@
 +		if (!skb)
 +			return NETDEV_TX_OK;
 +		nr_frags = skb_shinfo(skb)->nr_frags;
++		fep = fep->hw_priv;
 +	}
 +#endif
 +

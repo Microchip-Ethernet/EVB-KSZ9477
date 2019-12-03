@@ -1,5 +1,5 @@
 diff --git a/drivers/net/ethernet/freescale/fec_main.c b/drivers/net/ethernet/freescale/fec_main.c
-index e5610a4..5f3622d 100644
+index e5610a4..6ee77b1 100644
 --- a/drivers/net/ethernet/freescale/fec_main.c
 +++ b/drivers/net/ethernet/freescale/fec_main.c
 @@ -66,8 +66,259 @@
@@ -303,7 +303,6 @@ index e5610a4..5f3622d 100644
 +				skb_set_tail_pointer(skb, skb->len);
 +			}
 +		}
-+		fep = fep->hw_priv;
 +	}
 +#endif
 +
@@ -319,6 +318,7 @@ index e5610a4..5f3622d 100644
 +		if (!skb)
 +			return NETDEV_TX_OK;
 +		nr_frags = skb_shinfo(skb)->nr_frags;
++		fep = fep->hw_priv;
 +	}
 +#endif
 +

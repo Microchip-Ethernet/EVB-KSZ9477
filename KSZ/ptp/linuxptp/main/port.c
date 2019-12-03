@@ -94,6 +94,10 @@ struct nrate_estimator {
 	double ratio;
 	tmv_t origin1;
 	tmv_t ingress1;
+#ifdef KSZ_1588_PTP
+	tmv_t origin2;
+	tmv_t ingress2;
+#endif
 	unsigned int max_count;
 	unsigned int count;
 	int ratio_valid;
@@ -1817,8 +1821,31 @@ static void port_nrate_calculate(struct port *p, tmv_t origin, tmv_t ingress)
 	if (!n->ingress1) {
 		n->ingress1 = ingress;
 		n->origin1 = origin;
+#ifdef KSZ_1588_PTP
+		n->ingress2 = ingress;
+		n->origin2 = origin;
+#endif
 		return;
 	}
+#ifdef KSZ_1588_PTP
+	do {
+		tmv_t diff;
+		tmv_t other_interval;
+		tmv_t own_interval;
+
+		own_interval = tmv_sub(ingress, n->ingress2);
+		other_interval = tmv_sub(origin, n->origin2);
+		diff = tmv_sub(own_interval, other_interval);
+		if (diff < 0)
+			diff = -diff;
+		n->ingress2 = ingress;
+		n->origin2 = origin;
+
+		/* Should not be bigger than 6,250,000 ns. */
+		if (diff > NS_PER_SEC / 16)
+			goto nrate_exit;
+	} while (0);
+#endif
 	n->count++;
 	if (n->count < n->max_count) {
 		return;
@@ -1832,11 +1859,13 @@ static void port_nrate_calculate(struct port *p, tmv_t origin, tmv_t ingress)
 		tmv_dbl(tmv_sub(ingress, n->ingress1));
 #ifdef KSZ_1588_PTP
 #if 1
-	if (n->ratio > 1.5 || n->ratio < 0.5)
+	if (n->ratio > 1.01 || n->ratio < 0.99)
 printf("ratio: %lf\n", n->ratio);
 #endif
-	if (n->ratio > 1.5 || n->ratio < 0.5)
+	if (n->ratio > 1.01 || n->ratio < 0.99)
 		n->ratio = 1.0;
+
+nrate_exit:
 #endif
 	n->ingress1 = ingress;
 	n->origin1 = origin;
@@ -3788,11 +3817,12 @@ printf(" pdelay_req %d=%04x %04x\n", portnum(p),
 		pr_err("port %hu: send peer delay response failed", portnum(p));
 		goto out;
 	}
+#ifdef KSZ_1588_PTP
+	if (!clock_two_step_pdelay(p->clock))
+		goto out;
+#endif
 	if (msg_sots_missing(rsp)) {
 #ifdef KSZ_1588_PTP
-		err = 0;
-		if (!clock_two_step_pdelay(p->clock))
-			goto out;
 		msg_get(rsp);
 		if (p->pdelay_resp)
 			msg_put(p->pdelay_resp);
@@ -4114,17 +4144,23 @@ printf(" sync %d=%04x %04x\n", portnum(p),
 	case PS_MASTER:
 	case PS_GRAND_MASTER:
 	case PS_PASSIVE:
+#ifdef KSZ_1588_PTP
 		if (p->rx_sync_timeout &&
 		    (p->state == PS_MASTER || p->state == PS_GRAND_MASTER)) {
 			p->rx_sync_timeout = 0;
 #if 1
 			port_tx_announce(p);
 #endif
+#ifdef KSZ_DBG_MISS
+			p->prev_announce->header.sequenceId = p->ann_seqid;
+			p->ann_seqid--;
+#endif
 			if (process_announce(p, p->prev_announce)) {
 				clock_update_state(p->clock);
 				break;
 			}
 		}
+#endif
 		return;
 	case PS_UNCALIBRATED:
 	case PS_SLAVE:
@@ -5318,7 +5354,7 @@ printf("%ld.%9ld %ld.%9ld ", fup_ts.tv_sec, fup_ts.tv_nsec, now.tv_sec, now.tv_n
 printf(" %lu ", now.tv_nsec);
 		} while (0);
 #endif
-#ifdef KSZ_DBG_MISS
+#if defined(KSZ_DBG_TIMEOUT) && defined(KSZ_DBG_MISS)
 		fup_to_id = p->fup_seqid;
 printf(" fup to: %x\n", p->fup_seqid);
 #endif

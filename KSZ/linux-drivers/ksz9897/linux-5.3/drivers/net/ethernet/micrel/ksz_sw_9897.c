@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -15752,6 +15752,22 @@ static void link_update_work(struct work_struct *work)
 	}
 	port->link_ports = 0;
 
+#ifdef CONFIG_KSZ_HSR
+	if (sw->features & HSR_HW) {
+		struct ksz_hsr_info *hsr = &sw->info->hsr;
+
+		p = get_phy_port(sw, port->first_port);
+		if (hsr->ports[0] == p) {
+			hsr->ops->link_change(hsr,
+				sw->port_info[hsr->ports[0]].state ==
+				media_connected,
+				sw->port_info[hsr->ports[1]].state ==
+				media_connected);
+			hsr->ops->check_announce(hsr);
+		}
+	}
+#endif
+
 	/* The switch is always linked; speed and duplex are also fixed. */
 	phydev = NULL;
 
@@ -15796,22 +15812,6 @@ static void link_update_work(struct work_struct *work)
 				netif_carrier_off(dev);
 		}
 	}
-
-#ifdef CONFIG_KSZ_HSR
-	if (sw->features & HSR_HW) {
-		struct ksz_hsr_info *hsr = &sw->info->hsr;
-
-		p = get_phy_port(sw, port->first_port);
-		if (hsr->ports[0] == p) {
-			hsr->ops->link_change(hsr,
-				sw->port_info[hsr->ports[0]].state ==
-				media_connected,
-				sw->port_info[hsr->ports[1]].state ==
-				media_connected);
-			hsr->ops->check_announce(hsr);
-		}
-	}
-#endif
 }  /* link_update_work */
 
 static void set_phy_support(struct ksz_port *port, struct phy_device *phydev)
@@ -16259,7 +16259,7 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 		m = left;
 		c = 0;
 		f = -1;
-		for (q = 0; q < sw->mib_port_cnt - 1; q++) {
+		for (q = 0; q < sw->mib_port_cnt; q++) {
 			if (m & (1 << q)) {
 				if (f < 0)
 					f = last_log_port;
@@ -17260,7 +17260,7 @@ static void sw_r_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 *val)
 	u16 ret = 0;
 	uint p;
 
-	p = get_phy_port(sw, phy);
+	p = phy - 1;
 	if (p < sw->phy_port_cnt) {
 		u16 data;
 

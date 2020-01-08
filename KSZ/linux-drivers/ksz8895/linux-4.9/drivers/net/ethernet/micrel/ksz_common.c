@@ -1,7 +1,7 @@
 /**
  * Microchip Ethernet driver common code
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2011 Micrel, Inc.
@@ -428,9 +428,11 @@ static inline void delay_milli(uint millisec)
 #ifndef DO_NOT_USE_COPY_SKB
 static inline void copy_old_skb(struct sk_buff *old, struct sk_buff *skb)
 {
-	int offset = old->head - old->data;
+	if (old->ip_summed) {
+		int offset = old->head - old->data;
 
-	skb->head = skb->data + offset;
+		skb->head = skb->data + offset;
+	}
 	skb->dev = old->dev;
 	skb->sk = old->sk;
 	skb->protocol = old->protocol;

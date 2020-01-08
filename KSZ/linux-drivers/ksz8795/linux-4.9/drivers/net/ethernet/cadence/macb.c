@@ -186,9 +186,11 @@ static inline int sw_is_switch(struct ksz_sw *sw)
 
 static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb)
 {
-	int offset = old->head - old->data;
+	if (old->ip_summed) {
+		int offset = old->head - old->data;
 
-	skb->head = skb->data + offset;
+		skb->head = skb->data + offset;
+	}
 	skb->dev = old->dev;
 	skb->sk = old->sk;
 	skb->protocol = old->protocol;

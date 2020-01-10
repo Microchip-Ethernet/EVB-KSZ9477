@@ -16229,6 +16229,8 @@ setup_next:
 		sw->features &= ~HSR_HW;
 #endif
 	if ((sw->features & (DLR_HW | HSR_HW)) || sw->eth_cnt > 1) {
+		if (multi_dev < 0)
+			multi_dev = 0;
 		if (stp <= 1)
 			stp = 0;
 		avb = 0;
@@ -18515,6 +18517,7 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	sw_device_present++;
 
 #ifdef CONFIG_1588_PTP
+	sw->ptp_hw.parent = sw;
 	if (sw->features & PTP_HW) {
 		struct ptp_info *ptp = &sw->ptp_hw;
 
@@ -18525,7 +18528,6 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 #endif
 		ptp->reg = &ptp_reg_ops;
 		ptp->ops = &ptp_ops;
-		ptp->parent = sw;
 		ptp->dev_parent = ks->dev;
 		ptp->ops->init(ptp, sw->info->mac_addr);
 #if !defined(CONFIG_KSZ9897_EMBEDDED)
@@ -18534,6 +18536,7 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	}
 #endif
 #if defined(CONFIG_KSZ_AVB) || defined(CONFIG_KSZ_MRP)
+	sw->mrp.parent = sw;
 	if (sw->features & (AVB_SUPPORT | MRP_SUPPORT)) {
 		struct mrp_info *mrp = &sw->mrp;
 
@@ -18541,7 +18544,6 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 		INIT_DELAYED_WORK(&sw->set_mrp, sw_set_mrp);
 #endif
 		mrp->ops = &mrp_ops;
-		mrp->parent = sw;
 		mrp->ops->init(mrp);
 	}
 #endif

@@ -1,5 +1,5 @@
 diff --git a/drivers/net/ethernet/freescale/fec_main.c b/drivers/net/ethernet/freescale/fec_main.c
-index e5610a4..4fcf935 100644
+index e5610a4..d990925 100644
 --- a/drivers/net/ethernet/freescale/fec_main.c
 +++ b/drivers/net/ethernet/freescale/fec_main.c
 @@ -66,8 +66,261 @@
@@ -1268,7 +1268,7 @@ index e5610a4..4fcf935 100644
  	ndev->hw_features = ndev->features;
  
  	fec_restart(ndev);
-@@ -3331,6 +4305,337 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
+@@ -3331,6 +4305,338 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
  	return irq_cnt;
  }
  
@@ -1341,7 +1341,7 @@ index e5610a4..4fcf935 100644
 +	prep_sw_first(sw, &port_count, &mib_port_count, &dev_count, dev_label);
 +
 +	/* The main switch phydev will not be attached. */
-+	if (sw->dev_offset) {
++	if (dev_count > 1) {
 +		struct phy_device *phydev = sw->phy[0];
 +
 +		phydev->interface = fep->phy_interface;
@@ -1384,6 +1384,7 @@ index e5610a4..4fcf935 100644
 +		fep->hwp = hw_priv->hwp;
 +
 +		fep->hw_priv = hw_priv;
++		fep->phy_interface = hw_priv->phy_interface;
 +		dev->phydev = &fep->dummy_phy;
 +		dev->phydev->duplex = 1;
 +		dev->phydev->speed = SPEED_1000;
@@ -1606,7 +1607,7 @@ index e5610a4..4fcf935 100644
  static int
  fec_probe(struct platform_device *pdev)
  {
-@@ -3522,6 +4827,39 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
+@@ -3522,6 +4828,39 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
  	if (ret)
  		goto failed_mii_init;
  
@@ -1646,7 +1647,7 @@ index e5610a4..4fcf935 100644
  	/* Carrier starts down, phylib will bring it up */
  	netif_carrier_off(ndev);
  	fec_enet_clk_enable(ndev, false);
-@@ -3540,6 +4878,13 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
+@@ -3540,6 +4879,13 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
  	fep->rx_copybreak = COPYBREAK_DEFAULT;
  	INIT_WORK(&fep->tx_timeout_work, fec_enet_timeout_work);
  
@@ -1660,7 +1661,7 @@ index e5610a4..4fcf935 100644
  	pm_runtime_mark_last_busy(&pdev->dev);
  	pm_runtime_put_autosuspend(&pdev->dev);
  
-@@ -3574,6 +4919,32 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
+@@ -3574,6 +4920,32 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
  	return ret;
  }
  
@@ -1693,7 +1694,7 @@ index e5610a4..4fcf935 100644
  static int
  fec_drv_remove(struct platform_device *pdev)
  {
-@@ -3581,6 +4952,63 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
+@@ -3581,6 +4953,63 @@ static int fec_enet_get_irq_cnt(struct platform_device *pdev)
  	struct fec_enet_private *fep = netdev_priv(ndev);
  	struct device_node *np = pdev->dev.of_node;
  
@@ -1757,7 +1758,7 @@ index e5610a4..4fcf935 100644
  	cancel_work_sync(&fep->tx_timeout_work);
  	fec_ptp_stop(pdev);
  	unregister_netdev(ndev);
-@@ -3723,6 +5151,9 @@ static int __maybe_unused fec_runtime_resume(struct device *dev)
+@@ -3723,6 +5152,9 @@ static int __maybe_unused fec_runtime_resume(struct device *dev)
  	.id_table = fec_devtype,
  	.probe	= fec_probe,
  	.remove	= fec_drv_remove,

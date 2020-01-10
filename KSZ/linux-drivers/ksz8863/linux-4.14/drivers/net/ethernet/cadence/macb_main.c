@@ -5615,7 +5615,7 @@ static int macb_sw_init(struct macb *bp)
 	prep_sw_first(sw, &port_count, &mib_port_count, &dev_count, dev_label);
 
 	/* The main switch phydev will not be attached. */
-	if (sw->dev_offset) {
+	if (dev_count > 1) {
 		struct phy_device *phydev = sw->phy[0];
 
 		phydev->interface = bp->phy_interface;
@@ -5653,6 +5653,7 @@ static int macb_sw_init(struct macb *bp)
 		bp->num_queues = hw_priv->num_queues;
 
 		bp->hw_priv = hw_priv;
+		bp->phy_interface = hw_priv->phy_interface;
 		dev->phydev = &bp->dummy_phy;
 		dev->phydev->duplex = 1;
 		dev->phydev->speed = SPEED_1000;

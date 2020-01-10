@@ -1,5 +1,5 @@
 --- fec_main.c.orig	2019-10-29 01:20:09.000000000 -0700
-+++ fec_main.c	2020-01-08 12:44:36.258607473 -0800
++++ fec_main.c	2020-01-09 16:51:42.592356513 -0800
 @@ -66,8 +66,261 @@
  
  #include <asm/cacheflush.h>
@@ -1266,7 +1266,7 @@
  	ndev->hw_features = ndev->features;
  
  	fec_restart(ndev);
-@@ -3347,6 +4321,337 @@ static int fec_enet_get_irq_cnt(struct p
+@@ -3347,6 +4321,338 @@ static int fec_enet_get_irq_cnt(struct p
  	return irq_cnt;
  }
  
@@ -1339,7 +1339,7 @@
 +	prep_sw_first(sw, &port_count, &mib_port_count, &dev_count, dev_label);
 +
 +	/* The main switch phydev will not be attached. */
-+	if (sw->dev_offset) {
++	if (dev_count > 1) {
 +		struct phy_device *phydev = sw->phy[0];
 +
 +		phydev->interface = fep->phy_interface;
@@ -1382,6 +1382,7 @@
 +		fep->hwp = hw_priv->hwp;
 +
 +		fep->hw_priv = hw_priv;
++		fep->phy_interface = hw_priv->phy_interface;
 +		dev->phydev = &fep->dummy_phy;
 +		dev->phydev->duplex = 1;
 +		dev->phydev->speed = SPEED_1000;
@@ -1604,7 +1605,7 @@
  static int
  fec_probe(struct platform_device *pdev)
  {
-@@ -3539,6 +4844,39 @@ fec_probe(struct platform_device *pdev)
+@@ -3539,6 +4845,39 @@ fec_probe(struct platform_device *pdev)
  	if (ret)
  		goto failed_mii_init;
  
@@ -1644,7 +1645,7 @@
  	/* Carrier starts down, phylib will bring it up */
  	netif_carrier_off(ndev);
  	fec_enet_clk_enable(ndev, false);
-@@ -3557,6 +4895,13 @@ fec_probe(struct platform_device *pdev)
+@@ -3557,6 +4896,13 @@ fec_probe(struct platform_device *pdev)
  	fep->rx_copybreak = COPYBREAK_DEFAULT;
  	INIT_WORK(&fep->tx_timeout_work, fec_enet_timeout_work);
  
@@ -1658,7 +1659,7 @@
  	pm_runtime_mark_last_busy(&pdev->dev);
  	pm_runtime_put_autosuspend(&pdev->dev);
  
-@@ -3591,6 +4936,32 @@ failed_ioremap:
+@@ -3591,6 +4937,32 @@ failed_ioremap:
  	return ret;
  }
  
@@ -1691,7 +1692,7 @@
  static int
  fec_drv_remove(struct platform_device *pdev)
  {
-@@ -3598,6 +4969,63 @@ fec_drv_remove(struct platform_device *p
+@@ -3598,6 +4970,63 @@ fec_drv_remove(struct platform_device *p
  	struct fec_enet_private *fep = netdev_priv(ndev);
  	struct device_node *np = pdev->dev.of_node;
  
@@ -1755,7 +1756,7 @@
  	cancel_work_sync(&fep->tx_timeout_work);
  	fec_ptp_stop(pdev);
  	unregister_netdev(ndev);
-@@ -3740,6 +5168,9 @@ static struct platform_driver fec_driver
+@@ -3740,6 +5169,9 @@ static struct platform_driver fec_driver
  	.id_table = fec_devtype,
  	.probe	= fec_probe,
  	.remove	= fec_drv_remove,

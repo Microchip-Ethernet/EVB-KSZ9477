@@ -1,7 +1,7 @@
 /**
  * Microchip HSR code
  *
- * Copyright (c) 2016-2019 Microchip Technology Inc.
+ * Copyright (c) 2016-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright 2011-2014 Autronica Fire and Security AS
@@ -52,7 +52,7 @@ static void proc_hsr_cfg(struct ksz_hsr_info *info, u8 *addr, u16 member)
 {
 	struct hsr_cfg_work *cfg_work;
 
-	cfg_work = kzalloc(sizeof(struct hsr_cfg_work), GFP_KERNEL);
+	cfg_work = kzalloc(sizeof(struct hsr_cfg_work), GFP_ATOMIC);
 	if (!cfg_work)
 		return;
 	INIT_WORK(&cfg_work->work, proc_hsr_cfg_work);
@@ -636,7 +636,6 @@ static void hsr_chk_ring(struct work_struct *work)
 	memset(start_seq, 0, sizeof(start_seq));
 	memset(exp_seq, 0, sizeof(exp_seq));
 
-	rcu_read_lock();
 	list_for_each_entry_rcu(node, &hsr->node_db, mac_list) {
 		if (!memcmp(node->MacAddressA, info->src_addr, ETH_ALEN))
 			continue;
@@ -668,7 +667,6 @@ static void hsr_chk_ring(struct work_struct *work)
 				break;
 		}
 	}
-	rcu_read_unlock();
 
 	if (info->ring && !no_drop_win) {
 		if (info->center) {

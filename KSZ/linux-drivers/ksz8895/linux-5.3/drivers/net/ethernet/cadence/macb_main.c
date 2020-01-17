@@ -2640,6 +2640,10 @@ static netdev_tx_t macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	int header = 0;
 	int len = skb->len;
 
+	/* May be called from switch driver. */
+	if (__netif_subqueue_stopped(dev, queue_index))
+		return NETDEV_TX_BUSY;
+
 	if (sw_is_switch(sw))
 		len = sw->net_ops->get_tx_len(sw, skb, port->first_port,
 			&header);
@@ -6234,7 +6238,9 @@ static void macb_shutdown(struct platform_device *pdev)
 	sw = bp->port.sw;
 	if (sw_is_switch(sw))
 		dev_count = sw->dev_count + sw->dev_offset;
-	for (i = 0; i < dev_count; i++) {
+
+	/* Reverse order as the first network device may be needed. */
+	for (i = dev_count - 1; i >= 0; i--) {
 		if (sw_is_switch(sw)) {
 			dev = sw->netdev[i];
 			if (!dev)
@@ -6242,6 +6248,8 @@ static void macb_shutdown(struct platform_device *pdev)
 		}
 		if (netif_running(dev)) {
 			macb_close(dev);
+
+			/* This call turns off the transmit queue. */
 			netif_device_detach(dev);
 		}
 	}

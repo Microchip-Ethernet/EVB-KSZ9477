@@ -13915,6 +13915,22 @@ static int append_tag(u16 shift, u8 *pad, u8 *tag, int len, int ptp_len,
 	return addlen;
 }
 
+static int adjust_tag(u8 *tag_data, u8 *tag, int skb_len, int len, int ptp_len)
+{
+	int tag_start = 0;
+
+	/* length is odd. */
+	if (skb_len & 1) {
+		tag_data[0] = 0;
+		tag_start = 1;
+	}
+	memcpy(&tag_data[tag_start], &tag[4 - ptp_len], len);
+	tag_start += len;
+	if (tag_start & 1)
+		tag_data[tag_start] = 0;
+	return tag_start;
+}
+
 static int add_frag(void *from, char *to, int offset, int len, int odd,
 	struct sk_buff *skb)
 {
@@ -14039,7 +14055,8 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	uint port;
 	struct sk_buff *org_skb;
 	struct ksz_sw_tx_tag tx_tag;
-	u16 *tag_data = NULL;
+	int tag_start = 0;
+	u8 tag_data[8];
 	u8 *tag;
 	int update_dst = (sw->overrides & TAIL_TAGGING);
 	int ptp_len = 0;
@@ -14266,11 +14283,12 @@ add_tag:
 	if (!skb_shinfo(skb)->nr_frags) {
 		len = append_tag(sw->TAIL_TAG_SHIFT, skb->data, tag, len,
 			ptp_len, ptp_len + 2);
-		skb_put(skb, len);
 
 		/* Need to compensate checksum. */
 		if (skb->ip_summed == CHECKSUM_PARTIAL)
-			tag_data = (u16 *) &tx_tag;
+			tag_start = adjust_tag(tag_data, tag, skb->len, len,
+					       ptp_len);
+		skb_put(skb, len);
 	} else {
 		struct sock dummy;
 		struct sock *sk;
@@ -14292,26 +14310,30 @@ add_tag:
 		}
 		len = append_tag(sw->TAIL_TAG_SHIFT, sw->tx_pad, tag,
 			sw->tx_start, ptp_len, len);
-		skb_append_datato_frags(sk, skb, add_frag, sw->tx_pad, len);
 
 		/* Need to compensate checksum. */
 		if (skb->ip_summed == CHECKSUM_PARTIAL)
-			tag_data = (u16 *) &sw->tx_pad[sw->tx_start];
+			tag_start = adjust_tag(tag_data, tag, skb->len, len,
+					       ptp_len);
+		skb_append_datato_frags(sk, skb, add_frag, sw->tx_pad, len);
 	}
 
 	/* Need to compensate checksum for some devices. */
-	if (tag_data && (sw->overrides & UPDATE_CSUM)) {
+	if (tag_start && (sw->overrides & UPDATE_CSUM)) {
 		__sum16 *csum_loc = (__sum16 *)
 			(skb->head + skb->csum_start + skb->csum_offset);
 
 		/* Checksum is cleared by driver to be filled by hardware. */
 		if (!*csum_loc) {
+			u16 *tag_csum = (u16 *) &tag_data;
 			__sum16 new_csum;
 			int csum = 0;
 			int i;
 
-			for (i = 0; i < len / 2; i++)
-				csum += ntohs(tag_data[i]);
+			/* Length may be odd. */
+			tag_start++;
+			for (i = 0; i < tag_start / 2; i++)
+				csum += ntohs(tag_csum[i]);
 			csum = (csum >> 16) + (csum & 0xffff);
 			csum += (csum >> 16);
 			new_csum = (__sum16) csum;
@@ -17745,7 +17767,7 @@ enum {
 
 static struct ksz_port_mapping port_mappings[] = {
 	{ KSZ9897_SKU,   7, INTF_RGMII, { 1, 2, 3, 4, 5, 6, 7, 0 }},
-	{ KSZ9477_SKU,   7, INTF_SGMII, { 1, 2, 3, 4, 5, 7, 6, 0 }},
+	{ KSZ9477_SKU,   7, INTF_SGMII, { 1, 2, 3, 4, 5, 6, 7, 0 }},
 	{ KSZ9896_SKU,   6, INTF_RGMII, { 1, 2, 3, 4, 5, 6, 0, 0 }},
 	{ KSZ9893_SKU,   3, INTF_RGMII, { 1, 2, 3, 0, 0, 0, 0, 0 }},
 	{ KSZ8565_SKU,   5, INTF_RGMII, { 1, 2, 3, 4, 7, 0, 0, 0 }},
@@ -17764,7 +17786,6 @@ static int ksz_setup_port_mappings(struct ksz_sw *sw, u8 id)
 	struct ksz_port_info *info;
 	uint i;
 	uint n;
-	uint p;
 	int cnt = 0;
 
 	for (i = 0; i < ARRAY_SIZE(port_mappings); i++) {
@@ -17786,25 +17807,39 @@ static int ksz_setup_port_mappings(struct ksz_sw *sw, u8 id)
 			break;
 		}
 	}
-	for (n = 0; n < cnt; n++) {
+	return cnt;
+}  /* ksz_setup_port_mappings */
+
+static void ksz_update_port_mappings(struct ksz_sw *sw, u8 id, int *host_port)
+{
+	struct ksz_port_mapping *map;
+	uint i;
+	uint n;
+	uint p;
+	int cnt = 0;
+	bool not_end = false;
+
+	for (i = 0; i < ARRAY_SIZE(port_mappings); i++) {
+		map = &port_mappings[i];
+		if (id == map->id) {
+			cnt = map->cnt;
+			break;
+		}
+	}
+	for (n = 0; n < cnt - 1; n++) {
 		p = map->map[n];
 		if (!p)
 			break;
-		--p;
-		info = &sw->port_info[p];
-		if (p == sw->HOST_PORT) {
-			i = 0;
-		} else {
-			i = p + 1;
-			if (p > sw->HOST_PORT)
-				--i;
-		}
-		info->log_p = i;
-		info->log_m = 0;
-		info->phy_id = p + 1;
+		if (p == *host_port)
+			not_end = true;
+		if (not_end)
+			map->map[n] = map->map[n + 1];
 	}
-	return cnt;
-}  /* ksz_setup_port_mappings */
+	if (*host_port)
+		map->map[n] = *host_port;
+	else
+		*host_port = map->map[n];
+}  /* ksz_update_port_mappings */
 
 static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 {
@@ -17841,6 +17876,7 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info = &sw->port_info[i];
 		info->phy_p = p;
 		info->phy_m = BIT(p);
+		info->phy_id = p + 1;
 		info = &sw->port_info[p];
 		info->log_p = i;
 		info->log_m = BIT(l);
@@ -17858,8 +17894,8 @@ dbg_msg("ports: %x"NL, ports);
 	for (n = 0; n <= i; n++) {
 		info = &sw->port_info[n];
 		pinfo = &sw->port_info[info->phy_p];
-dbg_msg("%d= %d:%02x %d:%02x %d:%02x %d"NL, n,
-info->phy_p, info->phy_m, info->log_p, info->log_m,
+dbg_msg("%d= %d:%02x %d:%02x %d; %d:%02x %d"NL, n,
+info->phy_p, info->phy_m, info->log_p, info->log_m, info->phy_id,
 pinfo->log_p, pinfo->log_m, pinfo->intf);
 	}
 #if 1
@@ -18138,14 +18174,8 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 	/* Ignore user specified host port if not correct. */
 	if (sw_host_port < 0 || sw_host_port > port_count)
 		sw_host_port = 0;
-
-	/* Select the host port. */
-	if (sw_host_port > 0 && sw_host_port <= port_count) {
-		sw->HOST_PORT = sw_host_port - 1;
-	} else {
-		sw->HOST_PORT = port_count - 1;
-		sw_host_port = 0;
-	}
+	ksz_update_port_mappings(sw, sku, &sw_host_port);
+	sw->HOST_PORT = sw_host_port - 1;
 
 	/* No specific ports are specified. */
 	if (!ports)

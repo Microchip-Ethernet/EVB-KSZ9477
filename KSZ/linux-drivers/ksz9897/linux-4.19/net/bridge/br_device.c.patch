@@ -1,8 +1,6 @@
-diff --git a/net/bridge/br_device.c b/net/bridge/br_device.c
-index 681b728..e9186ca 100644
---- a/net/bridge/br_device.c
-+++ b/net/bridge/br_device.c
-@@ -429,6 +429,9 @@ void br_dev_setup(struct net_device *dev)
+--- br_device.c.orig	2019-10-29 01:20:09.000000000 -0700
++++ br_device.c	2020-01-24 18:08:01.881885626 -0800
+@@ -421,6 +421,9 @@ void br_dev_setup(struct net_device *dev
  	dev->hw_features = COMMON_FEATURES | NETIF_F_HW_VLAN_CTAG_TX |
  			   NETIF_F_HW_VLAN_STAG_TX;
  	dev->vlan_features = COMMON_FEATURES;

@@ -1,7 +1,7 @@
 /**
  * Microchip Ethernet driver common header
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2011 Micrel, Inc.
@@ -81,6 +81,11 @@ struct ksz_counter_info {
 struct ksz_dev_attr {
 	struct device_attribute dev_attr;
 	char dev_name[DEV_NAME_SIZE];
+};
+
+struct ksz_dev_major {
+	void *dev;
+	int major;
 };
 
 struct file_dev_info {

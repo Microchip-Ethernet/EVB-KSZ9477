@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -4972,6 +4972,7 @@ skip:
 			parent->output = *data;
 			break;
 		case DEV_PTP_CLK:
+			parent->option &= 0xffff;
 			if (parent->option)
 				result = proc_ptp_adj_clk(ptp, data,
 					parent->option);
@@ -5049,6 +5050,7 @@ skip:
 		case DEV_PTP_TOUT:
 			break;
 		case DEV_PTP_CLK:
+			parent->option &= 0xffff;
 			if ((ptp->op_mode > 0 || ptp->cap) && parent->option) {
 				parent->output = ptp->drift;
 				break;
@@ -6494,15 +6496,15 @@ dev_write_done:
 	return result;
 }  /* ptp_dev_write */
 
-static struct ptp_info *ptp_priv;
+static struct ksz_dev_major ptp_majors[MAX_SW_DEVICES];
 
-static struct file_dev_info *alloc_dev_info(uint minor)
+static struct file_dev_info *alloc_dev_info(struct ptp_info *ptp, uint minor)
 {
 	struct file_dev_info *info;
 
 	info = kzalloc(sizeof(struct file_dev_info), GFP_KERNEL);
 	if (info) {
-		info->dev = ptp_priv;
+		info->dev = ptp;
 		sema_init(&info->sem, 1);
 		mutex_init(&info->lock);
 		init_waitqueue_head(&info->wait_msg);
@@ -6515,8 +6517,8 @@ static struct file_dev_info *alloc_dev_info(uint minor)
 		info->write_buf = kzalloc(info->write_len, GFP_KERNEL);
 
 		info->minor = minor;
-		info->next = ptp_priv->dev[minor];
-		ptp_priv->dev[minor] = info;
+		info->next = ptp->dev[minor];
+		ptp->dev[minor] = info;
 	}
 	return info;
 }  /* alloc_dev_info */
@@ -6551,11 +6553,22 @@ static int ptp_dev_open(struct inode *inode, struct file *filp)
 	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 	uint minor = MINOR(inode->i_rdev);
+	uint major = MAJOR(inode->i_rdev);
+	struct ptp_info *ptp = NULL;
+	int i;
 
 	if (minor > 1)
 		return -ENODEV;
+	for (i = 0; i < MAX_SW_DEVICES; i++) {
+		if (ptp_majors[i].major == major) {
+			ptp = ptp_majors[i].dev;
+			break;
+		}
+	}
+	if (!ptp)
+		return -ENODEV;
 	if (!info) {
-		info = alloc_dev_info(minor);
+		info = alloc_dev_info(ptp, minor);
 		if (info)
 			filp->private_data = info;
 		else
@@ -6586,9 +6599,10 @@ static const struct file_operations ptp_dev_fops = {
 	.release	= ptp_dev_release,
 };
 
-static struct class *ptp_class;
+static struct class *ptp_class[MAX_SW_DEVICES];
 
-static int init_ptp_device(int dev_major, char *dev_name, char *minor_name)
+static int init_ptp_device(int id, int dev_major, char *dev_name,
+			   char *minor_name)
 {
 	int result;
 
@@ -6600,21 +6614,23 @@ static int init_ptp_device(int dev_major, char *dev_name, char *minor_name)
 	}
 	if (0 == dev_major)
 		dev_major = result;
-	ptp_class = class_create(THIS_MODULE, dev_name);
-	if (IS_ERR(ptp_class)) {
+	ptp_class[id] = class_create(THIS_MODULE, dev_name);
+	if (IS_ERR(ptp_class[id])) {
 		unregister_chrdev(dev_major, dev_name);
 		return -ENODEV;
 	}
-	device_create(ptp_class, NULL, MKDEV(dev_major, 0), NULL, dev_name);
-	device_create(ptp_class, NULL, MKDEV(dev_major, 1), NULL, minor_name);
+	device_create(ptp_class[id], NULL, MKDEV(dev_major, 0), NULL,
+		      dev_name);
+	device_create(ptp_class[id], NULL, MKDEV(dev_major, 1), NULL,
+		      minor_name);
 	return dev_major;
 }  /* init_ptp_device */
 
-static void exit_ptp_device(int dev_major, char *dev_name)
+static void exit_ptp_device(int id, int dev_major, char *dev_name)
 {
-	device_destroy(ptp_class, MKDEV(dev_major, 1));
-	device_destroy(ptp_class, MKDEV(dev_major, 0));
-	class_destroy(ptp_class);
+	device_destroy(ptp_class[id], MKDEV(dev_major, 1));
+	device_destroy(ptp_class[id], MKDEV(dev_major, 0));
+	class_destroy(ptp_class[id]);
 	unregister_chrdev(dev_major, dev_name);
 }  /* exit_ptp_device */
 
@@ -6743,11 +6759,16 @@ static void ptp_init(struct ptp_info *ptp, u8 *mac_addr)
 	init_msg_info(ptp->rx_msg_info, &ptp->rx_msg_lock);
 	init_msg_info(ptp->tx_msg_info, &ptp->tx_msg_lock);
 
-	ptp_priv = ptp;
 	sprintf(ptp->dev_name[0], "ptp_dev");
 	sprintf(ptp->dev_name[1], "ptp_event");
-	ptp->dev_major = init_ptp_device(0, ptp->dev_name[0],
+	if (sw->id) {
+		sprintf(ptp->dev_name[0], "ptp_dev_%u", sw->id);
+		sprintf(ptp->dev_name[1], "ptp_event_%u", sw->id);
+	}
+	ptp->dev_major = init_ptp_device(sw->id, 0, ptp->dev_name[0],
 		ptp->dev_name[1]);
+	ptp_majors[sw->id].dev = ptp;
+	ptp_majors[sw->id].major = ptp->dev_major;
 
 #ifdef CONFIG_PTP_1588_CLOCK_
 /* THa  05/30/2018
@@ -6759,6 +6780,8 @@ static void ptp_init(struct ptp_info *ptp, u8 *mac_addr)
 
 static void ptp_exit(struct ptp_info *ptp)
 {
+	struct ksz_sw *sw = ptp->parent;
+
 	exit_ptp_work(ptp);
 	flush_work(&ptp->adj_clk);
 	flush_work(&ptp->set_latency);
@@ -6769,7 +6792,7 @@ static void ptp_exit(struct ptp_info *ptp)
 		ptp->access = NULL;
 	}
 	if (ptp->dev_major >= 0)
-		exit_ptp_device(ptp->dev_major, ptp->dev_name[0]);
+		exit_ptp_device(sw->id, ptp->dev_major, ptp->dev_name[0]);
 
 #ifdef CONFIG_PTP_1588_CLOCK
 	if (ptp->clock_info)

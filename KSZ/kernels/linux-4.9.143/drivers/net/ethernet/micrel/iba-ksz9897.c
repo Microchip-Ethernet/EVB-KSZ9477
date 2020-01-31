@@ -92,8 +92,8 @@
 
 #define KS9897MLI_DEV0			"ksz9897"
 
-#define SW_DRV_RELDATE			"Jan 7, 2020"
-#define SW_DRV_VERSION			"1.2.2"
+#define SW_DRV_RELDATE			"Jan 30, 2020"
+#define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */
 

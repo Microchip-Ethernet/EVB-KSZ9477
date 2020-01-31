@@ -31,17 +31,21 @@ static u8 ptp_tsi_units;
 static u8 ptp_tsi_events;
 static u8 ptp_tsi_extra;
 
-int tsm_init(void)
+int tsm_init(int id)
 {
 	char device[20];
 
 	sprintf(device, "/dev/ptp_dev");
+	if (id > 0)
+		sprintf(device, "/dev/ptp_dev_%u", id);
 	dev[0].fd = open(device, O_RDWR);
 	if (dev[0].fd < 0) {
 		printf("cannot open ptp device\n");
 		return -1;
 	}
 	sprintf(device, "/dev/ptp_event");
+	if (id > 0)
+		sprintf(device, "/dev/ptp_event_%u", id);
 	dev[1].fd = open(device, O_RDWR);
 	dev[0].udp_len = DATA_BUFFER_SIZE;
 	dev[0].udp_buf = malloc(dev[0].udp_len);
@@ -1377,6 +1381,7 @@ void get_cmd(FILE *fp)
 	u32 stop[10];
 	u32 iterate[10];
 	int *fd = &dev[1].fd;
+	int ptp_clk_id = 0;
 
 	get_global_cfg(fd, &ptp_master, &ptp_2step, &ptp_p2p,
 		&ptp_as, &ptp_unicast, &ptp_alternate, &ptp_csum, &ptp_check,
@@ -1516,9 +1521,11 @@ void get_cmd(FILE *fp)
 		} else if ('c' == line[1]) {
 			switch (line[0]) {
 			case 'g':
-				rc = get_clock(fd, &num[0], &num[1]);
+				if (count < 2)
+					num[0] = ptp_clk_id;
+				rc = get_clock(fd, &num[1], &num[2], num[0]);
 				if (!rc)
-					printf("%x:%9u\n", num[0], num[1]);
+					printf("%x:%9u\n", num[1], num[2]);
 				else
 					print_err(rc);
 				break;
@@ -1527,7 +1534,9 @@ void get_cmd(FILE *fp)
 					break;
 				if (count < 3)
 					num[1] = 0;
-				rc = set_clock(fd, num[0], num[1]);
+				if (count < 4)
+					num[2] = ptp_clk_id;
+				rc = set_clock(fd, num[0], num[1], num[2]);
 				print_err(rc);
 				break;
 			case 'i':
@@ -1535,31 +1544,46 @@ void get_cmd(FILE *fp)
 					break;
 				if (count < 3)
 					num[1] = 0;
+				if (count < 4)
+					num[2] = ptp_clk_id;
 				if (900000000 <= num[0] && count >= 4)
 					rc = set_clock(fd,
-						0xffffffff, 100000000);
-				rc = get_clock(fd, &num[2], &num[3]);
-				rc = adj_freq(fd, num[1], num[0], 0, 0);
-				rc = get_clock(fd, &num[4], &num[5]);
-				printf("%x:%9u\n", num[2], num[3]);
-				printf("%x:%9u\n", num[4], num[5]);
+						0xffffffff, 100000000, num[2]);
+				rc = get_clock(fd, &num[3], &num[4], num[2]);
+				rc = adj_freq(fd, num[1], num[0], 0, 0,
+					num[2]);
+				rc = get_clock(fd, &num[5], &num[6], num[2]);
+				if (rc) {
+					print_err(rc);
+					break;
+				}
+				printf("%x:%9u\n", num[3], num[4]);
+				printf("%x:%9u\n", num[5], num[6]);
 				break;
 			case 'd':
 				if (count < 2)
 					break;
 				if (count < 3)
 					num[1] = 0;
+				if (count < 4)
+					num[2] = ptp_clk_id;
 				if (900000000 <= num[0] && count >= 4)
-					rc = set_clock(fd, 1, 0);
-				rc = get_clock(fd, &num[2], &num[3]);
-				rc = adj_freq(fd, -num[1], -num[0], 0, 0);
-				rc = get_clock(fd, &num[4], &num[5]);
-				printf("%x:%9u\n", num[2], num[3]);
-				printf("%x:%9u\n", num[4], num[5]);
+					rc = set_clock(fd, 1, 0, num[2]);
+				rc = get_clock(fd, &num[3], &num[4], num[2]);
+				rc = adj_freq(fd, -num[1], -num[0], 0, 0,
+					num[2]);
+				rc = get_clock(fd, &num[5], &num[6], num[2]);
+				if (rc) {
+					print_err(rc);
+					break;
+				}
+				printf("%x:%9u\n", num[3], num[4]);
+				printf("%x:%9u\n", num[5], num[6]);
 				break;
 			case 'a':
 				if (count < 2) {
-					rc = get_freq(fd, &ptp_drift);
+					num[0] = ptp_clk_id;
+					rc = get_freq(fd, &ptp_drift, num[0]);
 					if (!rc)
 						printf("drift = %d\n",
 							ptp_drift);
@@ -1573,8 +1597,16 @@ void get_cmd(FILE *fp)
 					num[1] = 1000000000;
 					printf("%u]\n", num[1]);
 				}
-				rc = adj_freq(fd, 0, 0, num[0], num[1]);
+				num[2] = ptp_clk_id;
+				rc = adj_freq(fd, 0, 0, num[0], num[1],
+					num[2]);
 				print_err(rc);
+				break;
+			case 'z':
+				if (count < 2)
+					printf("%d\n", ptp_clk_id);
+				else if (num[0] >= 0 && num[0] <= 9)
+					ptp_clk_id = num[0];
 				break;
 			}
 		} else if ('d' == line[1]) {
@@ -2375,17 +2407,29 @@ void *tsm_task(void *param)
 	return NULL;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
 	pthread_t tid[2];
 	void *status;
 	struct task_param param[2];
-	int id;
+	int id = 0;
 	pthread_cond_t req_cond = PTHREAD_COND_INITIALIZER;
 	pthread_cond_t resp_cond = PTHREAD_COND_INITIALIZER;
 	pthread_mutex_t resp_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-	if (tsm_init()) {
+	if (argc > 1) {
+		int i = 1;
+
+		while (i < argc) {
+			if ('-' == argv[i][0]) {
+				if ('0' <= argv[i][1] &&
+				    argv[i][1] <= '9')
+					id = argv[i][1] - '0';
+			}
+			++i;
+		}
+	}
+	if (tsm_init(id)) {
 		printf("Cannot access device\n");
 		return 1;
 	}

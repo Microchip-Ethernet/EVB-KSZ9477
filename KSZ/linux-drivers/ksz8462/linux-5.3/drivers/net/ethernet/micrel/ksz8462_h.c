@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8462 HLI Ethernet driver
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -114,7 +114,7 @@
 #define DRV_NAME			"ksz8462_hli"
 #define DRV_VERSION			"1.1.0"
 #define SW_DRV_VERSION			"1.2.2"
-#define SW_DRV_RELDATE			"Nov 2, 2019"
+#define SW_DRV_RELDATE			"Jan 30, 2020"
 
 #define MAX_RECV_FRAMES			180 /* 32 */
 #define MAX_BUF_SIZE			2048

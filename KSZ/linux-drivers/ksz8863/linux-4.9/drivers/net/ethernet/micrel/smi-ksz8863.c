@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8863 SMI driver
  *
- * Copyright (c) 2018-2019 Microchip Technology Inc.
+ * Copyright (c) 2018-2020 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -37,8 +37,8 @@
 #include "ksz_common.c"
 #include "ksz_req.c"
 
-#define SW_DRV_RELDATE			"Sep 23, 2019"
-#define SW_DRV_VERSION			"1.2.1"
+#define SW_DRV_RELDATE			"Jan 30, 2020"
+#define SW_DRV_VERSION			"1.2.2"
 
 /* -------------------------------------------------------------------------- */
 
@@ -186,7 +186,8 @@ static int smi_probe(struct platform_device **pdev, struct mii_bus *bus,
 	struct sw_priv *priv = NULL;
 	int ret = -ENOMEM;
 
-	*pdev = platform_device_register_data(NULL, "smi", 0, NULL, 0);
+	*pdev = platform_device_register_data(NULL, "smi", sw_device_present,
+					      NULL, 0);
 	if (IS_ERR(*pdev))
 		return PTR_ERR(*pdev);
 

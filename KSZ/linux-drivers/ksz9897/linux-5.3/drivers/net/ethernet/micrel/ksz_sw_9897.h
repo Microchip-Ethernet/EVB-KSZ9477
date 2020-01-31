@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 switch common header
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -44,6 +44,8 @@
 
 /* Host port can be any one of them. */
 #define SWITCH_PORT_NUM			(TOTAL_PORT_NUM)
+
+#define MAX_SW_DEVICES			2
 
 
 struct ksz_vlan_table;

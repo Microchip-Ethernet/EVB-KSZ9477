@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8795 switch common code
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -9031,15 +9031,15 @@ static u8 sw_set_mac_addr(struct ksz_sw *sw, struct net_device *dev,
 	return promiscuous;
 }  /* sw_set_mac_addr */
 
-static struct ksz_sw *sw_priv;
+static struct ksz_dev_major sw_majors[MAX_SW_DEVICES];
 
-static struct file_dev_info *alloc_sw_dev_info(uint minor)
+static struct file_dev_info *alloc_sw_dev_info(struct ksz_sw *sw, uint minor)
 {
 	struct file_dev_info *info;
 
 	info = kzalloc(sizeof(struct file_dev_info), GFP_KERNEL);
 	if (info) {
-		info->dev = sw_priv;
+		info->dev = sw;
 		sema_init(&info->sem, 1);
 		mutex_init(&info->lock);
 		init_waitqueue_head(&info->wait_msg);
@@ -9052,8 +9052,8 @@ static struct file_dev_info *alloc_sw_dev_info(uint minor)
 		info->write_buf = kzalloc(info->write_len, GFP_KERNEL);
 
 		info->minor = minor;
-		info->next = sw_priv->dev_list[minor];
-		sw_priv->dev_list[minor] = info;
+		info->next = sw->dev_list[minor];
+		sw->dev_list[minor] = info;
 	}
 	return info;
 }  /* alloc_sw_dev_info */
@@ -9075,11 +9075,22 @@ static int sw_dev_open(struct inode *inode, struct file *filp)
 	struct file_dev_info *info = (struct file_dev_info *)
 		filp->private_data;
 	uint minor = MINOR(inode->i_rdev);
+	uint major = MAJOR(inode->i_rdev);
+	struct ksz_sw *sw = NULL;
+	int i;
 
 	if (minor > 1)
 		return -ENODEV;
+	for (i = 0; i < MAX_SW_DEVICES; i++) {
+		if (sw_majors[i].major == major) {
+			sw = sw_majors[i].dev;
+			break;
+		}
+	}
+	if (!sw)
+		return -ENODEV;
 	if (!info) {
-		info = alloc_sw_dev_info(minor);
+		info = alloc_sw_dev_info(sw, minor);
 		if (info)
 			filp->private_data = info;
 		else
@@ -9583,9 +9594,9 @@ static const struct file_operations sw_dev_fops = {
 	.release	= sw_dev_release,
 };
 
-static struct class *sw_class;
+static struct class *sw_class[MAX_SW_DEVICES];
 
-static int init_sw_dev(int dev_major, char *dev_name)
+static int init_sw_dev(int id, int dev_major, char *dev_name)
 {
 	int result;
 
@@ -9597,35 +9608,38 @@ static int init_sw_dev(int dev_major, char *dev_name)
 	}
 	if (0 == dev_major)
 		dev_major = result;
-	sw_class = class_create(THIS_MODULE, dev_name);
-	if (IS_ERR(sw_class)) {
+	sw_class[id] = class_create(THIS_MODULE, dev_name);
+	if (IS_ERR(sw_class[id])) {
 		unregister_chrdev(dev_major, dev_name);
 		return -ENODEV;
 	}
-	device_create(sw_class, NULL, MKDEV(dev_major, 0), NULL, dev_name);
+	device_create(sw_class[id], NULL, MKDEV(dev_major, 0), NULL, dev_name);
 	return dev_major;
 }  /* init_sw_dev */
 
-static void exit_sw_dev(int dev_major, char *dev_name)
+static void exit_sw_dev(int id, int dev_major, char *dev_name)
 {
-	device_destroy(sw_class, MKDEV(dev_major, 0));
-	class_destroy(sw_class);
+	device_destroy(sw_class[id], MKDEV(dev_major, 0));
+	class_destroy(sw_class[id]);
 	unregister_chrdev(dev_major, dev_name);
 }  /* exit_sw_dev */
 
 static void sw_init_dev(struct ksz_sw *sw)
 {
-	sw_priv = sw;
 	sprintf(sw->dev_name, "sw_dev");
-	sw->dev_major = init_sw_dev(0, sw->dev_name);
+	if (sw->id)
+		sprintf(sw->dev_name, "sw_dev_%u", sw->id);
+	sw->dev_major = init_sw_dev(sw->id, 0, sw->dev_name);
 	sw->msg_buf = kzalloc(MAX_SW_LEN, GFP_KERNEL);
+	sw_majors[sw->id].dev = sw;
+	sw_majors[sw->id].major = sw->dev_major;
 }  /* sw_init_dev */
 
 static void sw_exit_dev(struct ksz_sw *sw)
 {
 	kfree(sw->msg_buf);
 	if (sw->dev_major >= 0)
-		exit_sw_dev(sw->dev_major, sw->dev_name);
+		exit_sw_dev(sw->id, sw->dev_major, sw->dev_name);
 }  /* sw_exit_dev */
 
 static void link_update_work(struct work_struct *work)
@@ -11429,6 +11443,9 @@ static int ksz_probe(struct sw_priv *ks)
 	uint pi;
 	uint port_count;
 	int ret;
+
+	if (sw_device_present >= MAX_SW_DEVICES)
+		return -ENODEV;
 
 	ks->intr_mode = intr_mode ? IRQF_TRIGGER_FALLING :
 		IRQF_TRIGGER_LOW;

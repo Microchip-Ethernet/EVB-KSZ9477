@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 I2C driver
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -108,7 +108,7 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Nov 2, 2019"
+#define SW_DRV_RELDATE			"Jan 30, 2020"
 #define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */
@@ -173,10 +173,10 @@ static void i2c_wrreg(struct sw_priv *priv, u32 addr, void *txb, size_t txl)
 
 	if (i2c_transfer(adapter, &msg, 1) != 1)
 		pr_alert("i2c_transfer() failed\n");
-	sw->ops->chk_regs(sw, addr, txb, txl);
+	sw->ops->chk_regs(sw, addr, &hw_priv->txd[I2C_CMD_LEN], txl);
 }
 
-static void i2c_wrreg_size(struct sw_priv *priv, u8 reg, unsigned val,
+static void i2c_wrreg_size(struct sw_priv *priv, u32 reg, unsigned val,
 			   size_t size)
 {
 	struct i2c_hw_priv *hw_priv = priv->hw_dev;

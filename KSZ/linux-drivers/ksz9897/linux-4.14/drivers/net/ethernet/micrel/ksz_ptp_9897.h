@@ -761,10 +761,8 @@ struct ptp_ops {
 		struct file_dev_info *info);
 	void (*proc_intr)(struct ptp_info *ptp);
 	void (*proc_tx_intr)(struct ptp_info *ptp, uint port);
-#ifdef ETHTOOL_GET_TS_INFO
 	int (*get_ts_info)(struct ptp_info *ptp, struct net_device *dev,
 		struct ethtool_ts_info *info);
-#endif
 
 	ssize_t (*sysfs_read)(struct ptp_info *ptp, int proc_num, ssize_t len,
 		char *buf);

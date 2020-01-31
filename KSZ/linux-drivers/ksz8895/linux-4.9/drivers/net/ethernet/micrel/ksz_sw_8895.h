@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common header
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -46,6 +46,8 @@
 
 /* Host port can only be last of them. */
 #define SWITCH_PORT_NUM			(TOTAL_PORT_NUM - 1)
+
+#define MAX_SW_DEVICES			2
 
 
 #include "ksz_sw_api.h"

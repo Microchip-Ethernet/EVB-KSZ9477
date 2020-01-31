@@ -241,6 +241,8 @@ static int macb_kill_vid(struct net_device *dev, __be16 proto, u16 vid)
 	return 0;
 }
 
+static int sw_device_seen;
+
 #if !defined(CONFIG_KSZ_IBA_ONLY)
 static struct ksz_sw *check_avail_switch(struct net_device *netdev, int id)
 {
@@ -277,7 +279,7 @@ static int macb_sw_chk(struct macb *bp)
 
 	sw = bp->port.sw;
 	if (!sw) {
-		sw = check_avail_switch(bp->dev, 0);
+		sw = check_avail_switch(bp->dev, sw_device_seen);
 		if (!sw_is_switch(sw))
 			return -ENXIO;
 	}
@@ -5646,7 +5648,7 @@ static void prep_sw_dev(struct ksz_sw *sw, struct macb *bp, int i,
 
 #ifndef CONFIG_KSZ_NO_MDIO_BUS
 	phy_mode = bp->phy_interface;
-	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", 0);
+	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", sw->id);
 	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, bp->phy_addr);
 	phydev = phy_attach(bp->dev, phy_id, phy_mode);
 	if (!IS_ERR(phydev)) {
@@ -5781,6 +5783,7 @@ static int macb_sw_init(struct macb *bp)
 		phy_attached_info(phydev);
 	}
 #endif
+	sw_device_seen++;
 
 	return 0;
 }

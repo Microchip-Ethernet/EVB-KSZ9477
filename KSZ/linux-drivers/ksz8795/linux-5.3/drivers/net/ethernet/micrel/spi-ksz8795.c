@@ -83,7 +83,7 @@
 
 #define KS8795_DEV			"ksz8795"
 
-#define SW_DRV_RELDATE			"Jan 30, 2020"
+#define SW_DRV_RELDATE			"Feb 7, 2020"
 #define SW_DRV_VERSION			"1.2.2"
 
 /* -------------------------------------------------------------------------- */
@@ -392,7 +392,7 @@ static void sw_unlock(struct ksz_sw *sw)
 
 static void sw_r(struct ksz_sw *sw, unsigned reg, void *buf, size_t cnt)
 {
-	if (cnt - SPI_CMD_LEN > 128)
+	if (cnt + SPI_CMD_LEN > 128)
 		cnt = 128 - SPI_CMD_LEN;
 	spi_rdreg(sw->dev, reg, buf, NULL, cnt);
 }

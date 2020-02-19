@@ -11,6 +11,10 @@ create_br_dev() {
         ETH=$1
     fi
 
+    ETHDEV=eth
+    PORTS=2
+    START=$ETH
+
     VLAN=0
     if [ -e "/sys/class/net/eth$ETH/sw/two_dev" ]; then
         VLAN=$(cat /sys/class/net/eth$ETH/sw/two_dev)
@@ -19,10 +23,17 @@ create_br_dev() {
             VLAN=0
         fi
     fi
+    if [ -e "/sys/class/net/lan1" ]; then
+        ETHDEV=lan
+        START=1
+        p=2
+        while [ -e "sys/class/net/lan$p" ]; do
+            let p=$p+1
+        done
+        PORTS=$p
+        VLAN=2
+    fi
     [ $VLAN -eq 0 ] && exit 0
-
-    ETHDEV=eth
-    PORTS=2
 
     IP=$(ifconfig eth$ETH | grep "inet addr" | cut -d":" -f2 | cut -d" " -f1)
     SUBNET1=$(echo "$IP" | cut -d"." -f1)
@@ -38,7 +49,7 @@ create_br_dev() {
     MAC_5=$(echo $MAC | cut -d":" -f5)
     MAC_6=$(echo $MAC | cut -d":" -f6)
 
-    p=$ETH
+    p=$START
     while [ $p -lt $PORTS ]; do
         ifconfig $ETHDEV$p hw ether $MAC
         ifconfig $ETHDEV$p 0.0.0.0
@@ -46,8 +57,14 @@ create_br_dev() {
     done
 
     brctl addbr br0
+    if [ $VLAN -eq 2 ]; then
+        ifconfig eth$ETH 0.0.0.0
+        if [ -e /sys/class/net/br0/bridge/vlan_filtering ]; then
+            echo "write 1 to vlan_filtering to enable VLAN filtering"
+        fi
+    fi
 
-    p=$ETH
+    p=$START
     while [ $p -lt $PORTS ]; do
         brctl addif br0 $ETHDEV$p
         let p=$p+1

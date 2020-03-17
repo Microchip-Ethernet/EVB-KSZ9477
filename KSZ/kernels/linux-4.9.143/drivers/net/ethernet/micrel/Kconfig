@@ -203,6 +203,14 @@ config SPI_KSZ9897
 	---help---
 	  Supports the Microchip KSZ9897 switch in SPI mode.
 
+config KSZ9897_EMBEDDED
+	bool "Microchip KSZ9897 switch support in network controller"
+	depends on I2C_KSZ9897 = n && SPI_KSZ9897 = n
+	select KSZ_SWITCH_EMBEDDED
+	select HAVE_KSZ9897
+	---help---
+	  Supports the Microchip KSZ9897 switch used within a network controller.
+
 config IBA_KSZ9897
 	bool "IBA driver for Microchip KSZ9897 switch"
 	depends on I2C_KSZ9897 = n && SPI_KSZ9897 = n

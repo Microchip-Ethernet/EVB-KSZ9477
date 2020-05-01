@@ -19,6 +19,7 @@
 #include <linux/mii.h>
 #include <linux/ethtool.h>
 #include <linux/phy.h>
+#include <linux//delay.h>
 #include <linux/microchipphy.h>
 
 #define DRIVER_AUTHOR	"WOOJUNG HUH <woojung.huh@microchip.com>"
@@ -34,6 +35,146 @@ struct lan87xx_priv {
 	int	chip_id;
 	int	chip_rev;
 };
+
+struct access_ereg_val {
+	u8  mode;
+	u8  bank;
+	u8  offset;
+	u16 val;
+	u16 mask;
+};
+
+static int access_ereg(struct phy_device *phydev, u8 mode, u8 bank,
+		       u8 offset, u16 val)
+{
+	u16 ereg = 0;
+	int rc = 0;
+
+	if (mode > 1 || bank > 7)
+		return -EINVAL;
+
+	if (bank == PHYACC_ATTR_BANK_SMI) {
+		if (mode == PHYACC_ATTR_MODE_WRITE)
+			rc = phy_write(phydev, offset, val);
+		else
+			rc = phy_read(phydev, offset);
+		return rc;
+	}
+
+	if (mode == PHYACC_ATTR_MODE_WRITE) {
+		ereg = LAN87XX_MASK_WRITE_CONTROL;
+		rc = phy_write(phydev, LAN87XX_EXT_REG_WR_DATA, val);
+		if (rc < 0)
+			return rc;
+	} else {
+		ereg = LAN87XX_MASK_READ_CONTROL;
+	}
+
+	ereg |= (bank << 8) | offset;
+
+	rc = phy_write(phydev, LAN87XX_EXT_REG_CTL, ereg);
+	if (rc < 0)
+		return rc;
+
+	if (mode == PHYACC_ATTR_MODE_READ)
+		rc = phy_read(phydev, LAN87XX_EXT_REG_RD_DATA);
+
+	return rc;
+}
+
+static int access_ereg_modify_changed(struct phy_device *phydev,
+				      u8 bank, u8 offset, u16 val, u16 mask)
+{
+	int new = 0, rc = 0;
+
+	if (bank > 7)
+		return -EINVAL;
+
+	rc = access_ereg(phydev, PHYACC_ATTR_MODE_READ, bank, offset, val);
+	if (rc < 0)
+		return rc;
+
+	new = val | (rc & (mask ^ 0xFFFF));
+	rc = access_ereg(phydev, PHYACC_ATTR_MODE_WRITE, bank, offset, new);
+
+	return rc;
+}
+
+static int lan87xx_phy_init(struct phy_device *phydev)
+{
+	static const struct access_ereg_val init[] = {
+		/* TX Amplitude = 5 */
+		{PHYACC_ATTR_MODE_MODIFY, PHYACC_ATTR_BANK_AFE, 0x0B,
+		 0x000A, 0x001E},
+		/* Clear SMI interrupts */
+		{PHYACC_ATTR_MODE_READ, PHYACC_ATTR_BANK_SMI, 0x18,
+		 0, 0},
+		/* Clear MISC interrupts */
+		{PHYACC_ATTR_MODE_READ, PHYACC_ATTR_BANK_MISC, 0x08,
+		 0, 0},
+		/* Turn on TC10 Ring Oscillator (ROSC) */
+		{PHYACC_ATTR_MODE_MODIFY, PHYACC_ATTR_BANK_MISC, 0x20,
+		 0x0020, 0x0020},
+		/* WUR Detect Length to 1.2uS, LPC Detect Length to 1.09uS */
+		{PHYACC_ATTR_MODE_WRITE, PHYACC_ATTR_BANK_PCS, 0x20,
+		 0x283C, 0},
+		/* Wake_In Debounce Length to 39uS, Wake_Out Length to 79uS */
+		{PHYACC_ATTR_MODE_WRITE, PHYACC_ATTR_BANK_MISC, 0x21,
+		 0x274F, 0},
+		/* Enable Auto Wake Forward to Wake_Out, ROSC on, Sleep,
+		 * and Wake_In to wake PHY
+		 */
+		{PHYACC_ATTR_MODE_WRITE, PHYACC_ATTR_BANK_MISC, 0x20,
+		 0x80A7, 0},
+		/* Enable WUP Auto Fwd, Enable Wake on MDI, Wakeup Debouncer
+		 * to 128 uS
+		 */
+		{PHYACC_ATTR_MODE_WRITE, PHYACC_ATTR_BANK_MISC, 0x24,
+		 0xF110, 0},
+		/* Enable HW Init */
+		{PHYACC_ATTR_MODE_MODIFY, PHYACC_ATTR_BANK_SMI, 0x1A,
+		 0x0100, 0x0100},
+	};
+	int rc, i;
+
+	/* Start manual initialization procedures in Managed Mode */
+	rc = access_ereg_modify_changed(phydev, PHYACC_ATTR_BANK_SMI,
+					0x1a, 0x0000, 0x0100);
+	if (rc < 0)
+		return rc;
+
+	/* Soft Reset the SMI block */
+	rc = access_ereg_modify_changed(phydev, PHYACC_ATTR_BANK_SMI,
+					0x00, 0x8000, 0x8000);
+	if (rc < 0)
+		return rc;
+
+	/* Wait for the self-clearing bit to be cleared */
+	usleep_range(1000, 2000);
+	rc = access_ereg(phydev, PHYACC_ATTR_MODE_READ,
+			 PHYACC_ATTR_BANK_SMI, 0x00, 0);
+	if (rc < 0)
+		return rc;
+	if ((rc & 0x8000) != 0)
+		return -ETIMEDOUT;
+
+	/* PHY Initialization */
+	for (i = 0; i < ARRAY_SIZE(init); i++) {
+		if (init[i].mode == PHYACC_ATTR_MODE_MODIFY) {
+			rc = access_ereg_modify_changed(phydev, init[i].bank,
+							init[i].offset,
+							init[i].val,
+							init[i].mask);
+		} else {
+			rc = access_ereg(phydev, init[i].mode, init[i].bank,
+					 init[i].offset, init[i].val);
+		}
+		if (rc < 0)
+			return rc;
+	}
+
+	return 0;
+}
 
 static int lan88xx_phy_config_intr(struct phy_device *phydev)
 {
@@ -162,9 +303,27 @@ static int lan87xx_phy_ack_interrupt(struct phy_device *phydev)
 	return rc < 0 ? rc : 0;
 }
 
+static int lan87xx_phy_config_aneg(struct phy_device *phydev)
+{
+	/* Fixed speed, let the phy state machine check the link */
+	phy_trigger_machine(phydev, 0);
+	return 0;
+}
+
+static int lan87xx_phy_aneg_done(struct phy_device *phydev)
+{
+	/* Fixed speed */
+	return 1;
+}
+
 static int lan87xx_config_init(struct phy_device *phydev)
 {
 	int rc = 0;
+
+	/* init the PHY */
+	rc = lan87xx_phy_init(phydev);
+	if (rc < 0)
+		return rc;
 
 	/* enable rgmii delays */
 	if ((phydev->interface == PHY_INTERFACE_MODE_RGMII) ||
@@ -203,6 +362,8 @@ static int lan87xx_config_init(struct phy_device *phydev)
 	phydev->autoneg = 0;
 	phydev->speed = SPEED_100;
 	phydev->duplex = DUPLEX_FULL;
+	
+	rc = genphy_read_status(phydev);
 
 	return rc < 0 ? rc : 0;
 }
@@ -243,7 +404,8 @@ static struct phy_driver microchip_phy_driver[] = {
 	.remove		= lan87xx_remove,
 
 	.config_init	= lan87xx_config_init,
-	.config_aneg	= genphy_setup_forced,
+	.config_aneg	= lan87xx_phy_config_aneg,
+	.aneg_done	= lan87xx_phy_aneg_done,
 	.read_status	= genphy_read_status,
 
 	.ack_interrupt	= lan87xx_phy_ack_interrupt,

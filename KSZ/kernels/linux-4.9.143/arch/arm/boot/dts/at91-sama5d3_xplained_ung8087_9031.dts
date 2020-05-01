@@ -376,7 +376,7 @@
 				status = "okay";
 
 				ethernet-phy@1 {
-					reg = <0x1>;
+					reg = <0x3>;
 					/* ps == ksz90x1 */
 					txen-skew-ps = <900>;
 					txd0-skew-ps = <900>;
@@ -391,6 +391,12 @@
 					txd2-skew-psec = <0>;
 					txd3-skew-psec = <0>;
 					txc-skew-psec = <1000>;
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_EDGE_FALLING>;
+				};
+				/* for LAN8770R */
+				ethernet-phy@2 {
+					reg = <6>;
 					interrupt-parent = <&pioB>;
 					interrupts = <28 IRQ_TYPE_EDGE_FALLING>;
 				};
@@ -457,11 +463,12 @@
 				phy-mode = "rmii";
 				#address-cells = <1>;
 				#size-cells = <0>;
-				status = "disabled";
-
-				fixed-link {
-					speed = <100>;
-					full-duplex;
+				status = "okay";
+				/* for LAN8770 on RMII IF */
+				phy2: ethernet-phy@2 {
+					reg = <6>;
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_EDGE_FALLING>;
 				};
 			};
 

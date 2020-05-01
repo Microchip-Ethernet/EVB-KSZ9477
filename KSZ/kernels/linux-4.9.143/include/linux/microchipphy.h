@@ -91,4 +91,14 @@
 #define LAN87XX_MASK_RGMII_TXC_DLY_EN		(0x4000)
 #define LAN87XX_MASK_RGMII_RXC_DLY_EN		(0x2000)
 
+/* phyaccess nested types */
+#define	PHYACC_ATTR_MODE_READ		0
+#define	PHYACC_ATTR_MODE_WRITE		1
+#define	PHYACC_ATTR_MODE_MODIFY		2
+
+/* phyaccess banks */
+#define	PHYACC_ATTR_BANK_SMI		0
+#define	PHYACC_ATTR_BANK_MISC		1
+#define	PHYACC_ATTR_BANK_PCS		2
+#define	PHYACC_ATTR_BANK_AFE		3
 #endif /* _MICROCHIPPHY_H */

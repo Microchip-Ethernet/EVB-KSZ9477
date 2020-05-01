@@ -14,7 +14,7 @@
  * option) any later version.
  *
  * Support : Micrel Phys:
- *		Giga phys: ksz9021, ksz9031
+ *		Giga phys: ksz9021, ksz9031, ksz9131
  *		100/10 Phys : ksz8001, ksz8721, ksz8737, ksz8041
  *			   ksz8021, ksz8031, ksz8051,
  *			   ksz8081, ksz8091,
@@ -427,6 +427,7 @@ static int ksz9021_config_init(struct phy_device *phydev)
 #define MII_KSZ9031RN_MMD_REGDATA_REG	0x0e
 #define OP_DATA				1
 #define KSZ9031_PS_TO_REG		60
+#define KSZ9131_PS_TO_REG		100
 
 /* Extended registers */
 /* MMD Address 0x0 */
@@ -627,6 +628,118 @@ static int ksz9031_read_status(struct phy_device *phydev)
 		return genphy_config_aneg(phydev);
 	}
 
+	return 0;
+}
+
+#define KSZ9131_SKEW_5BIT_MAX	2400
+#define KSZ9131_SKEW_4BIT_MAX	800
+#define KSZ9131_OFFSET		700
+#define KSZ9131_STEP		100
+
+static int ksz9131_of_load_skew_values(struct phy_device *phydev,
+				       struct device_node *of_node,
+				       u16 reg, size_t field_sz,
+				       char *field[], u8 numfields)
+{
+	int val[4] = {-(1 + KSZ9131_OFFSET), -(2 + KSZ9131_OFFSET),
+		      -(3 + KSZ9131_OFFSET), -(4 + KSZ9131_OFFSET)};
+	int skewval, skewmax = 0;
+	int matches = 0;
+	u16 maxval;
+	u16 newval;
+	u16 mask;
+	int i;
+
+	/* *-psec properties in dts should mean x pico seconds */
+	if (field_sz == 5)
+		skewmax = KSZ9131_SKEW_5BIT_MAX;
+	else
+		skewmax = KSZ9131_SKEW_4BIT_MAX;
+
+	for (i = 0; i < numfields; i++)
+		if (!of_property_read_u32(of_node, field[i], &skewval)) {
+			if (skewval < -KSZ9131_OFFSET)
+				skewval = -KSZ9131_OFFSET;
+			else if (skewval > skewmax)
+				skewval = skewmax;
+
+			val[i] = skewval + KSZ9131_OFFSET;
+			matches++;
+		}
+
+	if (!matches) {
+		dev_err(&phydev->mdio.dev,
+			"Missing a property in the DT for MMD reg 0x%x.\n",
+			reg);
+		return 0;
+	}
+
+	if (matches < numfields)
+		newval = ksz9031_extended_read(phydev, OP_DATA, 2, reg);
+	else
+		newval = 0;
+
+	maxval = (field_sz == 4) ? 0xf : 0x1f;
+	for (i = 0; i < numfields; i++)
+		if (val[i] != -(i + 1 + KSZ9131_OFFSET)) {
+			mask = 0xffff;
+			mask ^= maxval << (field_sz * i);
+			newval = (newval & mask) |
+				(((val[i] / KSZ9131_STEP) & maxval)
+					<< (field_sz * i));
+		}
+
+	return ksz9031_extended_write(phydev, OP_DATA, 2, reg, newval);
+}
+
+static int ksz9131_config_init(struct phy_device *phydev)
+{
+	struct device *dev = &phydev->mdio.dev;
+	struct device_node *of_node = dev->of_node;
+	char *clk_skews[2] = {"rxc-skew-psec", "txc-skew-psec"};
+	char *rx_data_skews[4] = {
+		"rxd0-skew-psec", "rxd1-skew-psec",
+		"rxd2-skew-psec", "rxd3-skew-psec"
+	};
+	char *tx_data_skews[4] = {
+		"txd0-skew-psec", "txd1-skew-psec",
+		"txd2-skew-psec", "txd3-skew-psec"
+	};
+	char *control_skews[2] = {"txen-skew-psec", "rxdv-skew-psec"};
+	int ret;
+
+	if (!of_node && dev->parent->of_node)
+		of_node = dev->parent->of_node;
+
+	/* Resources are specified in platform device, which is 2 levels up. */
+	if (!of_node && dev->parent->parent->of_node)
+		of_node = dev->parent->parent->of_node;
+
+	if (of_node) {
+		ret = ksz9131_of_load_skew_values(phydev, of_node,
+				MII_KSZ9031RN_CLK_PAD_SKEW, 5,
+				clk_skews, 2);
+		if (ret < 0)
+			return ret;
+
+		ret = ksz9131_of_load_skew_values(phydev, of_node,
+				MII_KSZ9031RN_CONTROL_PAD_SKEW, 4,
+				control_skews, 2);
+		if (ret < 0)
+			return ret;
+
+		ret = ksz9131_of_load_skew_values(phydev, of_node,
+				MII_KSZ9031RN_RX_DATA_PAD_SKEW, 4,
+				rx_data_skews, 4);
+		if (ret < 0)
+			return ret;
+
+		ret = ksz9131_of_load_skew_values(phydev, of_node,
+				MII_KSZ9031RN_TX_DATA_PAD_SKEW, 4,
+				tx_data_skews, 4);
+		if (ret < 0)
+			return ret;
+	}
 	return 0;
 }
 
@@ -978,6 +1091,22 @@ static struct phy_driver ksphy_driver[] = {
 	.config_init	= ksz9031_config_init,
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= ksz9031_read_status,
+	.ack_interrupt	= kszphy_ack_interrupt,
+	.config_intr	= kszphy_config_intr,
+	.get_sset_count = kszphy_get_sset_count,
+	.get_strings	= kszphy_get_strings,
+	.get_stats	= kszphy_get_stats,
+	.suspend	= genphy_suspend,
+	.resume		= kszphy_resume,
+}, {
+	.phy_id		= PHY_ID_KSZ9131,
+	.phy_id_mask	= MICREL_PHY_ID_MASK,
+	.name		= "Micrel KSZ9131 Gigabit PHY",
+	.features	= (PHY_GBIT_FEATURES | SUPPORTED_Pause),
+	.flags		= PHY_HAS_MAGICANEG | PHY_HAS_INTERRUPT,
+	.config_init	= ksz9131_config_init,
+	.config_aneg	= genphy_config_aneg,
+	.read_status	= genphy_read_status,
 	.ack_interrupt	= kszphy_ack_interrupt,
 	.config_intr	= kszphy_config_intr,
 	.get_sset_count = kszphy_get_sset_count,

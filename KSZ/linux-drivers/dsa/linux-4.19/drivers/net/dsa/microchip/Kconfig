@@ -1,0 +1,101 @@
+config NET_DSA_MICROCHIP_KSZ_COMMON
+	tristate
+
+menuconfig NET_DSA_MICROCHIP_KSZ9477
+	tristate "Microchip KSZ9477 series switch support"
+	depends on NET_DSA
+	select NET_DSA_TAG_KSZ
+	select NET_DSA_MICROCHIP_KSZ_COMMON
+	help
+	  This driver adds support for Microchip KSZ9477 switch chips.
+
+config NET_DSA_MICROCHIP_KSZ9477_I2C
+	tristate "KSZ9477 series I2C connected switch driver"
+	depends on NET_DSA_MICROCHIP_KSZ9477 && I2C
+	default y
+	help
+	  Select to enable support for registering switches configured through I2C.
+
+config NET_DSA_MICROCHIP_KSZ9477_SPI
+	tristate "KSZ9477 series SPI connected switch driver"
+	depends on NET_DSA_MICROCHIP_KSZ9477 && SPI
+	default y
+	help
+	  Select to enable support for registering switches configured through SPI.
+
+menuconfig NET_DSA_MICROCHIP_KSZ8795
+	tristate "Microchip KSZ8795 series switch support"
+	depends on NET_DSA
+	select NET_DSA_TAG_KSZ
+	select NET_DSA_MICROCHIP_KSZ_COMMON
+	help
+	  This driver adds support for Microchip KSZ8795 switch chips.
+
+config NET_DSA_MICROCHIP_KSZ8795_SPI
+	tristate "KSZ8795 series SPI connected switch driver"
+	depends on NET_DSA_MICROCHIP_KSZ8795 && SPI
+	default y
+	help
+	  This driver accesses KSZ8795 chip through SPI.
+
+	  It is required to use the KSZ8795 switch driver as the only access
+	  is through SPI.
+
+menuconfig NET_DSA_MICROCHIP_KSZ8895
+	tristate "Microchip KSZ8895 series switch support"
+	depends on NET_DSA
+	select NET_DSA_TAG_KSZ
+	select NET_DSA_MICROCHIP_KSZ_COMMON
+	help
+	  This driver adds support for Microchip KSZ8895 switch chips.
+
+config NET_DSA_MICROCHIP_KSZ8895_SPI
+	tristate "KSZ8895 series SPI connected switch driver"
+	depends on NET_DSA_MICROCHIP_KSZ8895 && SPI
+	default y
+	help
+	  This driver accesses KSZ8895 chip through SPI.
+
+	  It is required to use the KSZ8895 switch driver as the only access
+	  is through SPI.
+
+menuconfig NET_DSA_MICROCHIP_KSZ8863
+	tristate "Microchip KSZ8863 series switch support"
+	depends on NET_DSA
+	select NET_DSA_TAG_KSZ
+	select NET_DSA_MICROCHIP_KSZ_COMMON
+	help
+	  This driver adds support for Microchip KSZ8863 switch chips.
+
+config NET_DSA_MICROCHIP_KSZ8863_I2C
+	tristate "KSZ8863 series I2C connected switch driver"
+	depends on NET_DSA_MICROCHIP_KSZ8863 && I2C
+	default y
+	help
+	  This driver accesses KSZ8863 chip through I2C.
+
+config NET_DSA_MICROCHIP_KSZ8863_SPI
+	tristate "KSZ8863 series SPI connected switch driver"
+	depends on NET_DSA_MICROCHIP_KSZ8863 && SPI
+	default y
+	help
+	  This driver accesses KSZ8863 chip through SPI.
+
+menuconfig NET_DSA_MICROCHIP_KSZ8463
+	tristate "Microchip KSZ8463 series switch support"
+	depends on NET_DSA
+	select NET_DSA_TAG_KSZ
+	select NET_DSA_MICROCHIP_KSZ_COMMON
+	help
+	  This driver adds support for Microchip KSZ8463 switch chips.
+
+config NET_DSA_MICROCHIP_KSZ8463_SPI
+	tristate "KSZ8463 series SPI connected switch driver"
+	depends on NET_DSA_MICROCHIP_KSZ8463 && SPI
+	default y
+	help
+	  This driver accesses KSZ8463 chip through SPI.
+
+	  It is required to use the KSZ8463 switch driver as the only access
+	  is through SPI.
+

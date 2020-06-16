@@ -21,10 +21,12 @@ void ksz_update_port_member(struct ksz_device *dev, int port)
 	struct ksz_port *p;
 	int i;
 
-	for (i = 0; i < dev->port_cnt; i++) {
+	for (i = 0; i < dev->mib_port_cnt; i++) {
 		if (i == port || i == dev->cpu_port)
 			continue;
 		p = &dev->ports[i];
+		if (!p->on)
+			continue;
 		if (!(dev->member & (1 << i)))
 			continue;
 
@@ -484,7 +486,7 @@ int ksz_switch_register(struct ksz_device *dev,
 			dev->interface = ret;
 	}
 
-	dev->ds->num_ports = dev->port_cnt;
+	dev->ds->num_ports = dev->mib_port_cnt;
 	ret = dsa_register_switch(dev->ds);
 	if (ret) {
 		dev->dev_ops->exit(dev);

@@ -436,9 +436,37 @@ static void ksz8895_w_vlan_table(struct ksz_device *dev, u16 vid, u16 vlan)
 #define KSZ8895_SW_ID		0x8895
 #define PHY_ID_KSZ8895_SW	((KSZ8895_ID_HI << 16) | KSZ8895_SW_ID)
 
+static bool ksz8895_v_phy(struct ksz_device *dev, u16 phy, u16 reg, u16 *val)
+{
+	struct ksz_port *p = &dev->ports[phy];
+
+	if (p->phy)
+		return false;
+	switch (reg) {
+	case MII_BMCR:
+		*val = 0x1140;
+		break;
+	case MII_BMSR:
+		*val = 0x796d;
+		break;
+	case MII_PHYSID1:
+		*val = KSZ8895_ID_HI;
+		break;
+	case MII_PHYSID2:
+		*val = KSZ8895_SW_ID;
+		break;
+	case MII_ADVERTISE:
+		*val = 0x05e1;
+		break;
+	case MII_LPA:
+		*val = 0xc5e1;
+		break;
+	}
+	return true;
+}
+
 static void ksz8895_r_phy(struct ksz_device *dev, u16 phy, u16 reg, u16 *val)
 {
-	struct ksz_port *port;
 	u8 ctrl;
 	u8 restart;
 	u8 link;
@@ -447,7 +475,10 @@ static void ksz8895_r_phy(struct ksz_device *dev, u16 phy, u16 reg, u16 *val)
 	u16 data = 0;
 	int processed = true;
 
-	port = &dev->ports[p];
+	if (phy >= dev->mib_port_cnt)
+		return;
+	if (ksz8895_v_phy(dev, phy, reg, val))
+		return;
 	switch (reg) {
 	case PHY_REG_CTRL:
 		ksz_pread8(dev, p, P_LOCAL_CTRL, &ctrl);
@@ -541,6 +572,14 @@ static void ksz8895_w_phy(struct ksz_device *dev, u16 phy, u16 reg, u16 val)
 	u8 data;
 	u8 p = phy;
 
+	if (phy >= dev->mib_port_cnt)
+		return;
+	do {
+		struct ksz_port *port = &dev->ports[phy];
+
+		if (!port->phy)
+			return;
+	} while (0);
 	switch (reg) {
 	case PHY_REG_CTRL:
 
@@ -1033,8 +1072,12 @@ static void ksz8895_config_cpu_port(struct dsa_switch *ds)
 
 		/* First port is disabled in KSZ8864. */
 		if (dev->chip_id == 0x8864 && i == 0)
-			break;
+			continue;
 		p->on = 1;
+
+		/* Port uses external PHY. */
+		if (dev->chip_id == 0x8864 && i == 3)
+			continue;
 		p->phy = 1;
 	}
 	ksz_read8(dev, REG_SW_CFG, &remote);
@@ -1170,11 +1213,11 @@ static struct bin_attribute ksz8895_registers_attr = {
 	.write	= ksz_registers_write,
 };
 
-#define KSZ_CHIP_NAME_SIZE		18
+#define KSZ_CHIP_NAME_SIZE		25
 
 static const char *ksz8895_chip_names[KSZ_CHIP_NAME_SIZE] = {
-	"Microchip KSZ8895",
-	"Microchip KSZ8864",
+	"Microchip KSZ8895 Switch",
+	"Microchip KSZ8864 Switch",
 };
 
 enum {

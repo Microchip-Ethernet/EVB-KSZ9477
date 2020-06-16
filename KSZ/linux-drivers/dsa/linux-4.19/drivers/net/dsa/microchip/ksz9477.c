@@ -1496,15 +1496,15 @@ static struct bin_attribute ksz9477_registers_attr = {
 #define KSZ_CHIP_NAME_SIZE		25
 
 static const char *ksz9477_chip_names[KSZ_CHIP_NAME_SIZE] = {
-	"Microchip KSZ9897 switch",
-	"Microchip KSZ9896 switch",
-	"Microchip KSZ9567 switch",
-	"Microchip KSZ8567 switch",
-	"Microchip KSZ8565 switch",
-	"Microchip KSZ9477 switch",
-	"Microchip KSZ9893 switch",
-	"Microchip KSZ9563 switch",
-	"Microchip KSZ8563 switch",
+	"Microchip KSZ9897 Switch",
+	"Microchip KSZ9896 Switch",
+	"Microchip KSZ9567 Switch",
+	"Microchip KSZ8567 Switch",
+	"Microchip KSZ8565 Switch",
+	"Microchip KSZ9477 Switch",
+	"Microchip KSZ9893 Switch",
+	"Microchip KSZ9563 Switch",
+	"Microchip KSZ8563 Switch",
 };
 
 enum {

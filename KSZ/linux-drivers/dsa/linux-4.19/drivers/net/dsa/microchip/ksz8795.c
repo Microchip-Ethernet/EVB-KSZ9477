@@ -1246,12 +1246,12 @@ static struct bin_attribute ksz8795_registers_attr = {
 	.write	= ksz_registers_write,
 };
 
-#define KSZ_CHIP_NAME_SIZE		18
+#define KSZ_CHIP_NAME_SIZE		25
 
 static const char *ksz8795_chip_names[KSZ_CHIP_NAME_SIZE] = {
-	"Microchip KSZ8795",
-	"Microchip KSZ8794",
-	"Microchip KSZ8765",
+	"Microchip KSZ8795 Switch",
+	"Microchip KSZ8794 Switch",
+	"Microchip KSZ8765 Switch",
 };
 
 enum {

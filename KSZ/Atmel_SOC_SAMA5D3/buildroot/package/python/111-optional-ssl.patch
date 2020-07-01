@@ -17,7 +17,7 @@ Index: b/configure.ac
 +AC_ARG_ENABLE(ssl,
 +	AS_HELP_STRING([--disable-ssl], [disable SSL]),
 +	[ if test "$enableval" = "no"; then
-+    	     DISABLED_EXTENSIONS="${DISABLED_EXTENSIONS} ssl"
++    	     DISABLED_EXTENSIONS="${DISABLED_EXTENSIONS} ssl _ssl _hashlib"
 +  	  fi])
 +
  AC_ARG_ENABLE(dbm,

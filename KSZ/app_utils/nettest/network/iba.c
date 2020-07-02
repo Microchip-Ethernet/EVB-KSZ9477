@@ -159,6 +159,7 @@ static void signal_init(struct thread_info *pthread)
 }
 
 int dbg_rcv = 0;
+int eth_vlan = 0;
 
 #if 1
 #define DBG_IBA
@@ -247,6 +248,9 @@ struct ksz_iba_info {
 	struct iba_frame *frame;
 	struct iba_cmd *cmds;
 	struct iba_cmd *regs;
+	u8 *vlan_packet;
+	struct iba_frame *vlan_frame;
+	u8 port;
 	u8 id;
 	u8 seqid;
 	u8 respid;
@@ -272,6 +276,10 @@ static void prepare_iba(struct ksz_iba_info *iba, u8 *dst, u8 *src)
 		memcpy(iba->src, src, ETH_ALEN);
 	memcpy(iba->packet, iba->dst, ETH_ALEN);
 	memcpy(&iba->packet[ETH_ALEN], iba->src, ETH_ALEN);
+	if (eth_vlan) {
+		memcpy(iba->vlan_packet, iba->dst, ETH_ALEN);
+		memcpy(&iba->vlan_packet[ETH_ALEN], iba->src, ETH_ALEN);
+	}
 
 	iba->frame->tag.type = htons(iba->tag_type);
 	iba->frame->tag.prio = 0;
@@ -1194,11 +1202,21 @@ static int iba_rcv(struct ksz_iba_info *info, u8 *rdata, int rlen)
 	struct iba_frame *iba;
 	struct iba_cmd *frame;
 	u8 *ptr;
+	u16 *vlan;
 	int ret = 1;
 
 	ptr = rdata;
 	ptr += ETH_ALEN * 2;
 	iba = (struct iba_frame *) ptr;
+	vlan = (u16 *) ptr;
+	if (*vlan == htons(ETH_P_8021Q)) {
+		u16 port;
+
+		++vlan;
+		port = *vlan & 4095;
+		++vlan;
+		iba = (struct iba_frame *) vlan;
+	}
 
 	if (iba->tag.type != htons(info->tag_type) ||
 	    iba->format.format != htons(iba_ksz_format))
@@ -1469,18 +1487,33 @@ static int tx_delay;
  */
 static int iba_xmit(struct ksz_iba_info *info)
 {
-	SOCKET sockfd = eth_fd[info->id];
+	SOCKET sockfd = eth_fd[0];
 	SAI *pservaddr;
 	socklen_t servlen;
 	int rc = 0;
 	int len = ntohs(info->frame->length);
+	u8 *packet = info->packet;
 
 	pservaddr = (SAI *) &eth_iba_addr[0];
 	servlen = sizeof(eth_iba_addr[0]);
-	if (info->id)
-		info->tag_type |= 0x0100;
-	else
-		info->tag_type &= ~0x0100;
+	if (eth_vlan) {
+		u16 *vlan = (u16 *) info->vlan_frame;
+
+		vlan--;
+
+		/* Update the VLAN id.  If empty do not add tag. */
+		if (info->id) {
+			*vlan = info->id * 100 + info->port;
+			*vlan |= 7 << 13;
+			*vlan = htons(*vlan);
+		}
+	} else {
+		sockfd = eth_fd[info->id];
+		if (info->id)
+			info->tag_type |= 0x0100;
+		else
+			info->tag_type &= ~0x0100;
+	}
 	info->frame->tag.type = htons(info->tag_type);
 	if (len < 60) {
 		memset(&info->packet[len], 0, 60 - len);
@@ -1495,11 +1528,16 @@ static int iba_xmit(struct ksz_iba_info *info)
 		info->packet[len] = tail_tag;
 		len += tail_tag_len;
 	}
+	if (eth_vlan && info->id) {
+		packet = info->vlan_packet;
+		memcpy(info->vlan_frame, info->frame, len - 12);
+		len += 4;
+	}
 #if 0
 do {
 	int i;
 	for (i = 0; i < len; i++) {
-printf("%02x ", info->packet[i]);
+printf("%02x ", packet[i]);
 if ((i % 16) == 15)
 printf("\n");
 	}
@@ -1507,7 +1545,7 @@ printf("\n");
 } while (0);
 #endif
 
-	Sendto(sockfd, info->packet, len, 0, (SA *) pservaddr, servlen);
+	Sendto(sockfd, packet, len, 0, (SA *) pservaddr, servlen);
 	return rc;
 }  /* iba_xmit */
 
@@ -1524,6 +1562,15 @@ static void ksz_iba_init(struct ksz_iba_info *iba)
 	iba->regs = malloc(IBA_BURST_CNT_MAX * sizeof(struct iba_cmd));
 	iba->cmds = malloc(IBA_BURST_CNT_MAX * sizeof(struct iba_cmd) / 4);
 	iba->frame = (struct iba_frame *) &iba->packet[ETH_ALEN * 2];
+	if (eth_vlan) {
+		u16 *vlan;
+
+		iba->vlan_packet = malloc(IBA_LEN_MAX + 4);
+		iba->vlan_frame = (struct iba_frame *)
+			&iba->vlan_packet[ETH_ALEN * 2 + 4];
+		vlan = (u16 *) &iba->vlan_packet[ETH_ALEN * 2];
+		*vlan = htons(ETH_P_8021Q);
+	}
 	iba->tag_type = tag_type;
 	memcpy(iba->dst, eth_iba, ETH_ALEN);
 	iba->src[0] = 0x00;
@@ -1532,6 +1579,7 @@ static void ksz_iba_init(struct ksz_iba_info *iba)
 	iba->src[3] = 0x98;
 	iba->src[4] = 0x97;
 	iba->src[5] = 0x81;
+	iba->port = 1;
 }  /* ksz_iba_init */
 
 static void ksz_iba_exit(struct ksz_iba_info *iba)
@@ -1541,6 +1589,8 @@ static void ksz_iba_exit(struct ksz_iba_info *iba)
 	free(iba->data);
 	free(iba->buf);
 	free(iba->packet);
+	if (eth_vlan)
+		free(iba->vlan_packet);
 }  /* ksz_iba_exit */
 
 
@@ -1678,12 +1728,24 @@ int get_cmd(FILE *fp)
 			break;
 		case 'c':
 			if (count > 1) {
+				if (eth_vlan) {
+					if (num[0] >= 0 && num[0] <= 3)
+						iba_info.id = num[0];
+					break;
+				}
 				if (num[0])
 					iba_info.id = 1;
 				else
 					iba_info.id = 0;
 			} else
 				printf("%u\n", iba_info.id);
+			break;
+		case 'v':
+			if (count > 1) {
+				if (num[0] >= 1 && num[0] <= 8)
+					iba_info.port = num[0];
+			} else
+				printf("%u\n", iba_info.port);
 			break;
 		case 'f':
 			if (count > 1) {
@@ -2174,6 +2236,8 @@ static void del_multi(SOCKET sockfd, char *local_if, u8 *addr)
 	rc = ioctl(sockfd, SIOCDELMULTI, &ifr);
 }
 
+static int dev_cnt = 2;
+
 static SOCKET create_raw(struct ip_info *info, char *dest, int p)
 {
 	SOCKET sockfd;
@@ -2282,6 +2346,10 @@ int main(int argc, char *argv[])
 						break;
 					strcpy(dest_ip, argv[i]);
 					break;
+				case 'v':
+					eth_vlan = 1;
+					dev_cnt = 1;
+					break;
 				}
 			}
 			++i;
@@ -2326,7 +2394,7 @@ int main(int argc, char *argv[])
 
 	ip_family = family;
 
-	for (p = 0; p < 2; p++) {
+	for (p = 0; p < dev_cnt; p++) {
 		eth_fd[p] = create_raw(&info, dest_ip, p);
 		if (eth_fd[p] < 0) {
 			printf("Cannot create socket\n");
@@ -2342,7 +2410,7 @@ int main(int argc, char *argv[])
 	prepare_iba(&iba_info, iba_info.dst, info.hwaddr);
 
 	rx_param.iba = eth_fd;
-	rx_param.cnt = 2;
+	rx_param.cnt = dev_cnt;
 
 	for (i = 0; i < 3; i++) {
 		param[i].fTaskStop = FALSE;
@@ -2368,7 +2436,7 @@ int main(int argc, char *argv[])
 		Pthread_join( tid[i], &status );
 	}
 
-	for (p = 0; p < 2; p++) {
+	for (p = 0; p < dev_cnt; p++) {
 		if (eth_fd[p] > 0) {
 			del_multi(eth_fd[p], ethnames, eth_iba);
 			free(eth_iba_buf[p]);

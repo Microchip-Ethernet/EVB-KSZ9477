@@ -3321,6 +3321,10 @@ printf(" !! %s\n", __func__);
 		dad->path_length = path_length(ptt);
 	}
 #endif
+#ifdef KSZ_1588_PTP
+	if (p->host_port != p)
+		port_set_announce_tmo(p->host_port);
+#endif
 	port_set_announce_tmo(p);
 	fc_prune(fc);
 	msg_get(m);
@@ -5272,6 +5276,12 @@ printf(" %s ann_rx %d\n", __func__, portnum(p));
 if (!is_peer_port(p->clock, p))
 printf("  !! %s 1\n", __func__);
 #endif
+#ifdef KSZ_1588_PTP
+		if (is_host_port(p->clock, p)) {
+			clock_set_port_state(p->clock,
+					     EV_ANNOUNCE_RECEIPT_TIMEOUT_EXPIRES);
+			return EV_ANNOUNCE_RECEIPT_TIMEOUT_EXPIRES;
+		}
 		if (clock_slave_only(p->clock) ||
 		    PS_MASTER == p->state || PS_GRAND_MASTER == p->state) {
 			port_clr_tmo(p->fda.fd[FD_ANNOUNCE_TIMER]);
@@ -5296,6 +5306,7 @@ printf(" %s sync_rx %d\n", __func__, portnum(p));
 			}
 		}
 		else
+#endif
 		port_set_announce_tmo(p);
 #ifdef KSZ_1588_PTP
 		if (clock_slave_only(p->clock) && clock_master_lost(p->clock)

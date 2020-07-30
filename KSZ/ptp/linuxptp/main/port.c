@@ -582,6 +582,8 @@ static int get_cnt_from_log(int log_seconds, int seconds)
 	} else {
 		cnt = 1 << log_seconds;
 		cnt = seconds / cnt;
+		if (!cnt)
+			cnt = 1;
 	}
 	return cnt;
 }
@@ -4807,8 +4809,7 @@ printf(" too many faults\n");
 					get_waitPdelayReqInterval(p->clock));
 			}
 		} else if (next == PS_SLAVE) {
-			if (!boundary_clock(p->clock) &&
-			    p->operLogSyncInterval != p->initialLogSyncInterval)
+			if (p->operLogSyncInterval != p->initialLogSyncInterval)
 				p->seqnumSync = get_cnt_from_log(
 					p->log_sync_interval,
 					get_waitSyncInterval(p->clock));
@@ -5571,8 +5572,6 @@ printf("  !! %s %d e\n", __func__, portnum(p));
 					    p->logSyncInterval)
 						exception_log(p->clock,
 							      "Sync interval changes to %d at port %hu", p->operLogSyncInterval, portnum(p));
-			p->seqnumSync = get_cnt_from_log(p->logSyncInterval,
-							 10);
 				}
 			}
 #if 0

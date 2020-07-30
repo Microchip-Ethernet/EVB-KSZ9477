@@ -89,6 +89,9 @@ void tsproc_set_delay(struct tsproc *tsp, tmv_t delay);
  * @return       0 on success, -1 when missing a measurement.
  */
 int tsproc_update_delay(struct tsproc *tsp, tmv_t *delay);
+#ifdef KSZ_1588_PTP
+int tsproc_update_delay_raw(struct tsproc *tsp, tmv_t *delay, tmv_t *raw);
+#endif
 
 /**
  * Update offset in a time stamp processor using new measurements.

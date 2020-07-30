@@ -43,6 +43,9 @@
 
 #ifdef KSZ_1588_PTP
 
+#if 1
+#define KSZ_DBG_GPTP
+#endif
 #if 0
 #define KSZ_DBG_HOST
 #define KSZ_DBG_TIMER
@@ -72,6 +75,8 @@ static uint32_t sync_rx_slave;
 #include "ksz_ptp.c"
 
 struct dev_info ptpdev;
+
+#define MAX_RATIO_ALLOWED	(0.00625 * 2)
 #endif
 
 #define ALLOWED_LOST_RESPONSES 3
@@ -1271,7 +1276,7 @@ capable:
 			}
 		}
 		port_set_port_cfg(p, 1, 1);
-#if 0
+#ifdef KSZ_DBG_GPTP
 printf(" as: %d\n", portnum(p));
 #endif
 	}
@@ -1844,8 +1849,13 @@ static void port_nrate_calculate(struct port *p, tmv_t origin, tmv_t ingress)
 		n->origin2 = origin;
 
 		/* Should not be bigger than 6,250,000 ns. */
-		if (diff > NS_PER_SEC / 16)
-			goto nrate_exit;
+		if (diff > NS_PER_SEC / 16) {
+			n->ingress1 = ingress;
+			n->origin1 = origin;
+			n->count = n->max_count - 1;
+			n->ratio = 1.0;
+			return;
+		}
 	} while (0);
 #endif
 	n->count++;
@@ -1860,14 +1870,15 @@ static void port_nrate_calculate(struct port *p, tmv_t origin, tmv_t ingress)
 		tmv_dbl(tmv_sub(origin, n->origin1)) /
 		tmv_dbl(tmv_sub(ingress, n->ingress1));
 #ifdef KSZ_1588_PTP
-#if 1
-	if (n->ratio > 1.01 || n->ratio < 0.99)
-printf("ratio: %lf\n", n->ratio);
-#endif
-	if (n->ratio > 1.01 || n->ratio < 0.99)
+	if (n->ratio > 1.0 + MAX_RATIO_ALLOWED ||
+	    n->ratio < 1.0 - MAX_RATIO_ALLOWED)
 		n->ratio = 1.0;
 
-nrate_exit:
+	/* Throw out previous peer delays as they may not be accurate. */
+	if (!n->ratio_valid &&
+	    (n->ratio > 1.00001 || n->ratio < 0.99999)) {
+		tsproc_reset(p->tsproc, 1);
+	}
 #endif
 	n->ingress1 = ingress;
 	n->origin1 = origin;
@@ -1902,6 +1913,10 @@ static void port_nrate_initialize(struct port *p)
 	p->nrate.count = 0;
 	p->nrate.ratio = 1.0;
 	p->nrate.ratio_valid = 0;
+#ifdef KSZ_1588_PTP
+	/* Want to calculate the ratio as soon as possible. */
+	p->nrate.count = p->nrate.max_count - 1;
+#endif
 }
 
 static int port_set_announce_tmo(struct port *p)
@@ -2177,6 +2192,15 @@ printf("%s %d %d\n", __func__, portnum(p), state);
 	case SERVO_UNLOCKED:
 		port_dispatch(p, EV_SYNCHRONIZATION_FAULT, 0);
 		break;
+#ifdef KSZ_1588_PTP
+	/* Significant change in frequency. */
+	case SERVO_JUMP_LONG:
+		if (p->follow_up_info)
+			p->nrate.origin2 = tmv_zero();
+		else
+			tsproc_reset(p->tsproc, 1);
+		/* fall through */
+#endif
 	case SERVO_JUMP:
 		port_dispatch(p, EV_SYNCHRONIZATION_FAULT, 0);
 		if (p->delay_req) {
@@ -3860,6 +3884,7 @@ static void port_peer_delay(struct port *p)
 	struct ptp_message *fup = p->peer_delay_fup;
 	tmv_t c3;
 #ifdef KSZ_1588_PTP
+	tmv_t raw_delay;
 	struct PortIdentity *portIdentity = &p->portIdentity;
 #endif
 
@@ -3931,14 +3956,28 @@ calc:
 				    clock_rate_ratio(p->clock));
 	tsproc_up_ts(p->tsproc, t1, t2);
 	tsproc_down_ts(p->tsproc, t3c, t4);
+#ifdef KSZ_1588_PTP
+	if (tsproc_update_delay_raw(p->tsproc, &p->peer_delay, &raw_delay))
+#else
 	if (tsproc_update_delay(p->tsproc, &p->peer_delay))
+#endif
 		return;
 
-	p->peerMeanPathDelay = tmv_to_TimeInterval(p->peer_delay);
-#if 0
-printf(" p: %d=%lld\n", portnum(p), p->peer_delay);
-#endif
 #ifdef KSZ_1588_PTP
+	/* Need to calculate the ratio as soon as possible for peer delay. */
+	if (p->follow_up_info && p->nrate.ratio == 1.0 &&
+	    (raw_delay < 0 || raw_delay > 1000))
+		p->nrate.count = p->nrate.max_count - 1;
+#endif
+	p->peerMeanPathDelay = tmv_to_TimeInterval(p->peer_delay);
+#ifdef KSZ_1588_PTP
+#ifdef KSZ_DBG_GPTP
+	if (raw_delay < 0 || (raw_delay > 1000 && p->follow_up_info) ||
+	    p->nrate.ratio > 1.0001 || p->nrate.ratio < 0.9999 ||
+	    p->peer_delay < 0)
+printf(" p: %d=%lld %lld %lf\n", portnum(p), p->peer_delay, raw_delay,
+	p->nrate.ratio);
+#endif
 	if (p->peer_delay < 0)
 		p->peer_delay = p->neighborPropDelay;
 	if (!p->peer_delay)

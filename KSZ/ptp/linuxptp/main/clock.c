@@ -23,6 +23,7 @@
 #include <string.h>
 #ifdef KSZ_1588_PTP
 #include <stdarg.h>
+#include <math.h>
 #endif
 #include <time.h>
 #include <sys/queue.h>
@@ -139,6 +140,7 @@ struct clock {
 	int master_port;
 	int dev_cnt;
 	int drift;
+	double last_fadj;
 	int skip_sync_check;
 	int use_one_step;
 	int use_2_step_pdelay;
@@ -1262,6 +1264,9 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 		   and return 0. Set the frequency back to make sure fadj is
 		   the actual frequency of the clock. */
 		clockadj_set_freq(c->clkid, fadj);
+#ifdef KSZ_1588_PTP
+		c->last_fadj = fadj;
+#endif
 	}
 	c->servo = servo_create(c->config, servo, -fadj, max_adj, sw_ts);
 	if (!c->servo) {
@@ -1973,6 +1978,14 @@ enum servo_state clock_synchronize(struct clock *c, tmv_t ingress, tmv_t origin)
 	    SERVO_UNLOCKED == c->servo_state && state != c->servo_state &&
 	    state != SERVO_LOCKING)
 		state = SERVO_LOCKING;
+	if (state == SERVO_JUMP) {
+		double diff = fabs(adj - c->last_fadj);
+
+		/* Change in frequency too much. */
+		if (diff > 100000.0)
+			state = SERVO_JUMP_LONG;
+	}
+	c->last_fadj = adj;
 #endif
 	c->servo_state = state;
 
@@ -1995,6 +2008,7 @@ enum servo_state clock_synchronize(struct clock *c, tmv_t ingress, tmv_t origin)
 	case SERVO_LOCKING:
 		clockadj_set_freq(c->clkid, -adj);
 		break;
+	case SERVO_JUMP_LONG:
 #endif
 	case SERVO_JUMP:
 		clockadj_set_freq(c->clkid, -adj);

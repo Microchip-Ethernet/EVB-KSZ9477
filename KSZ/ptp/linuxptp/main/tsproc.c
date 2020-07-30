@@ -176,6 +176,42 @@ int tsproc_update_delay(struct tsproc *tsp, tmv_t *delay)
 	return 0;
 }
 
+#ifdef KSZ_1588_PTP
+int tsproc_update_delay_raw(struct tsproc *tsp, tmv_t *delay, tmv_t *raw)
+{
+	tmv_t raw_delay;
+
+	if (tmv_is_zero(tsp->t2) || tmv_is_zero(tsp->t3))
+		return -1;
+
+	raw_delay = get_raw_delay(tsp);
+	tsp->filtered_delay = filter_sample(tsp->delay_filter, raw_delay);
+	tsp->filtered_delay_valid = 1;
+
+	pr_debug("delay   filtered %10" PRId64 "   raw %10" PRId64,
+		 tsp->filtered_delay, raw_delay);
+
+	if (!delay) {
+		return 0;
+	}
+
+	switch (tsp->mode) {
+	case TSPROC_FILTER:
+	case TSPROC_FILTER_WEIGHT:
+		*delay = tsp->filtered_delay;
+		break;
+	case TSPROC_RAW:
+	case TSPROC_RAW_WEIGHT:
+		*delay = raw_delay;
+		break;
+	}
+	if (raw)
+		*raw = raw_delay;
+
+	return 0;
+}
+#endif
+
 int tsproc_update_offset(struct tsproc *tsp, tmv_t *offset, double *weight)
 {
 	tmv_t delay = 0, raw_delay = 0;

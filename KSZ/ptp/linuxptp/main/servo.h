@@ -60,6 +60,7 @@ enum servo_state {
 
 #ifdef KSZ_1588_PTP
 	SERVO_LOCKING,
+	SERVO_JUMP_LONG,
 #endif
 };
 

@@ -1339,8 +1339,12 @@ struct clock *clock_create(enum clock_type type, struct config *config,
 	STAILQ_FOREACH(iface, &config->interfaces, list) {
 
 #ifdef KSZ_1588_PTP
-		if (!c->direct && strchr(iface->name, '.'))
-			c->direct = 1;
+		if (!c->direct) {
+			char *dot = strchr(iface->name, '.');
+
+			if (dot && strlen(dot) >= 3)
+				c->direct = 1;
+		}
 #endif
 		if (clock_add_port(c, phc_index, timestamping, iface)) {
 			pr_err("failed to open port %s", iface->name);

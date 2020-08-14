@@ -43,7 +43,7 @@
 
 #ifdef KSZ_1588_PTP
 
-#if 1
+#if 0
 #define KSZ_DBG_GPTP
 #endif
 #if 0
@@ -3935,7 +3935,11 @@ printf("%lld %lld %lld %lld = %lld ", t1, t4, t4 - t1, c1, t4 - t1 - c1);
 	if (!fup)
 		return;
 
+#ifdef KSZ_1588_PTP
+	if (!pid_eq(&fup->pdelay_resp_fup.requestingPortIdentity, portIdentity))
+#else
 	if (!pid_eq(&fup->pdelay_resp_fup.requestingPortIdentity, &p->portIdentity))
+#endif
 		return;
 
 	if (fup->header.sequenceId != rsp->header.sequenceId)

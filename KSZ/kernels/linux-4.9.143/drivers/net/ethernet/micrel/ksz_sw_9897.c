@@ -8903,6 +8903,13 @@ static void sw_setup(struct ksz_sw *sw)
 	if (sw->features & HSR_HW)
 		sw_setup_hsr(sw);
 #endif
+#if defined(CONFIG_KSZ_AVB) || defined(CONFIG_KSZ_MRP)
+	if ((sw->features & (AVB_SUPPORT | MRP_SUPPORT))) {
+		sw->ops->release(sw);
+		sw_setup_mrp(sw);
+		sw->ops->acquire(sw);
+	}
+#endif
 	sw_setup_acl(sw);
 }  /* sw_setup */
 

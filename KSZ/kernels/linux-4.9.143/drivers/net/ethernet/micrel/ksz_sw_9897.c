@@ -10658,7 +10658,7 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 #endif
 		break;
 	case PROC_SET_MTU:
-		if (2000 <= num && num <= 9000) {
+		if (64 <= num && num <= 9000) {
 			sw->reg->w16(sw, REG_SW_MTU__2, (u16) num);
 			sw->mtu = num;
 		}

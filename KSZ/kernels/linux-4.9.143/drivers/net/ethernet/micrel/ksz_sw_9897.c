@@ -3389,6 +3389,9 @@ static void sw_init_acl(struct ksz_sw *sw)
 			sw_r_acl_table(sw, port, i, acl);
 		}
 		sw->ops->acquire(sw);
+
+		/* Turn off ACL after reset. */
+		port_cfg_acl(sw, port, 0);
 	}
 }  /* sw_init_acl */
 
@@ -8776,6 +8779,10 @@ static void sw_setup(struct ksz_sw *sw)
 		port_cfg_back_pressure(sw, port, 1);
 		if (port < sw->phy_port_cnt)
 			port_cfg_force_flow_ctrl(sw, port, 0);
+
+		/* Enable ACL only when needed. */
+		if (sw->features & (AVB_SUPPORT | DLR_HW))
+			port_cfg_acl(sw, port, true);
 		cfg->intr_mask |= PORT_ACL_INT;
 		if (port == sw->HOST_PORT)
 			continue;

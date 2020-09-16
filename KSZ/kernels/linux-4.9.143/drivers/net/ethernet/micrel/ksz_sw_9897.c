@@ -13922,7 +13922,7 @@ static int append_tag(u16 shift, u8 *pad, u8 *tag, int len, int ptp_len,
 	return addlen;
 }
 
-static int adjust_tag(u8 *tag_data, u8 *tag, int skb_len, int len, int ptp_len)
+static int adjust_tag(u8 *tag_data, u8 *skb_data, int skb_len, int tag_len)
 {
 	int tag_start = 0;
 
@@ -13931,8 +13931,8 @@ static int adjust_tag(u8 *tag_data, u8 *tag, int skb_len, int len, int ptp_len)
 		tag_data[0] = 0;
 		tag_start = 1;
 	}
-	memcpy(&tag_data[tag_start], &tag[4 - ptp_len], len);
-	tag_start += len;
+	memcpy(&tag_data[tag_start], skb_data, tag_len);
+	tag_start += tag_len;
 	if (tag_start & 1)
 		tag_data[tag_start] = 0;
 	return tag_start;
@@ -14062,6 +14062,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	uint port;
 	struct sk_buff *org_skb;
 	struct ksz_sw_tx_tag tx_tag;
+	int tag_len;
 	int tag_start = 0;
 	u8 tag_data[8];
 	u8 *tag;
@@ -14284,6 +14285,9 @@ add_tag:
 #endif
 	set_tag_valid(sw, &tx_tag);
 	tag = (u8 *) &tx_tag;
+	tag_len = ptp_len + 2;
+	if (sw->TAIL_TAG_SHIFT != 7)
+		tag_len--;
 
 	/* Socket buffer has no fragments. */
 	if (!skb_shinfo(skb)->nr_frags) {
@@ -14292,8 +14296,8 @@ add_tag:
 
 		/* Need to compensate checksum. */
 		if (skb->ip_summed == CHECKSUM_PARTIAL)
-			tag_start = adjust_tag(tag_data, tag, skb->len, len,
-					       ptp_len);
+			tag_start = adjust_tag(tag_data, &skb->data[skb->len],
+					       skb->len, tag_len);
 		skb_put(skb, len);
 	} else {
 		struct sock dummy;
@@ -14319,8 +14323,9 @@ add_tag:
 
 		/* Need to compensate checksum. */
 		if (skb->ip_summed == CHECKSUM_PARTIAL)
-			tag_start = adjust_tag(tag_data, tag, skb->len, len,
-					       ptp_len);
+			tag_start = adjust_tag(tag_data,
+					       &sw->tx_pad[sw->tx_start],
+					       skb->len, tag_len);
 		skb_append_datato_frags(sk, skb, add_frag, sw->tx_pad, len);
 	}
 

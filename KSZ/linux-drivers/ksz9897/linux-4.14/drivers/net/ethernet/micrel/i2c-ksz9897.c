@@ -108,7 +108,7 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Jan 30, 2020"
+#define SW_DRV_RELDATE			"Sep 16, 2020"
 #define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */

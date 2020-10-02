@@ -1,7 +1,7 @@
 /**
  * Microchip MRP driver code
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2014-2015 Micrel, Inc.
@@ -6749,23 +6749,12 @@ static void msrp_cleanup(struct mrp_applicant *app)
 #endif
 #endif
 
-static void setup_mrp(struct mrp_info *mrp, struct net_device *dev)
+static void sw_setup_mrp(struct ksz_sw *sw)
 {
 	struct ksz_mac_table *entry;
 	struct ksz_alu_table *alu;
 	int i;
 	int j;
-	struct ksz_sw *sw = mrp->parent;
-
-#ifdef CONFIG_KSZ_MRP
-
-#ifndef NETIF_F_HW_VLAN_CTAG_FILTER
-	prandom32_seed(&rnd, get_random_int());
-#endif
-	memcpy(mrp->cvlan_addr, vlan_mrp_app.group_address, ETH_ALEN);
-	memcpy(mrp->svlan_addr, vlan_mrp_app.group_address, ETH_ALEN);
-	mrp->svlan_addr[5] = 0x0D;
-#endif
 
 	i = sw->info->multi_sys;
 	for (j = 0; j < 3; j++) {
@@ -6786,6 +6775,19 @@ static void setup_mrp(struct mrp_info *mrp, struct net_device *dev)
 				 false, 0);
 	}
 	sw->info->multi_sys = i;
+}  /* sw_setup_mrp */
+
+static void setup_mrp(struct mrp_info *mrp, struct net_device *dev)
+{
+#ifdef CONFIG_KSZ_MRP
+
+#ifndef NETIF_F_HW_VLAN_CTAG_FILTER
+	prandom32_seed(&rnd, get_random_int());
+#endif
+	memcpy(mrp->cvlan_addr, vlan_mrp_app.group_address, ETH_ALEN);
+	memcpy(mrp->svlan_addr, vlan_mrp_app.group_address, ETH_ALEN);
+	mrp->svlan_addr[5] = 0x0D;
+#endif
 }  /* setup_mrp */
 
 #ifdef CONFIG_KSZ_MRP
@@ -7664,9 +7666,11 @@ static ssize_t sysfs_mrp_read(struct ksz_sw *sw, int proc_num, ssize_t len,
 		if (regeneration_hack)
 			len += sprintf(buf + len,
 				"regeneration"NL);
+#ifdef CONFIG_1588_PTP
 		if (ba_hack)
 			len += sprintf(buf + len,
 				"BA"NL);
+#endif
 		if (mrp_10_1_2f_hack)
 			len += sprintf(buf + len,
 				"MRP.10.1.2F"NL);
@@ -7756,8 +7760,10 @@ static int sysfs_mrp_write(struct ksz_sw *sw, int proc_num, int num,
 			fqtss_34_2_9b_hack = true;
 		else if (!strncmp(buf, "fqtss", 5))
 			fqtss_hack = true;
+#ifdef CONFIG_1588_PTP
 		else if (!strncmp(buf, "ba", 2))
 			ba_hack = true;
+#endif
 		else if (!strncmp(buf, "regeneration", 12)) {
 			if (!regeneration_hack) {
 				uint n;
@@ -7770,7 +7776,9 @@ static int sysfs_mrp_write(struct ksz_sw *sw, int proc_num, int num,
 				}
 			}
 		} else if (!strncmp(buf, "reset", 5)) {
+#ifdef CONFIG_1588_PTP
 			ba_hack = false;
+#endif
 			mrp_10_1_2f_hack = false;
 			mrp_10_1_8a_hack = false;
 			mrp_10_5_1_hack = false;

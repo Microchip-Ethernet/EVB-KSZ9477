@@ -3389,6 +3389,9 @@ static void sw_init_acl(struct ksz_sw *sw)
 			sw_r_acl_table(sw, port, i, acl);
 		}
 		sw->ops->acquire(sw);
+
+		/* Turn off ACL after reset. */
+		port_cfg_acl(sw, port, 0);
 	}
 }  /* sw_init_acl */
 
@@ -8776,6 +8779,10 @@ static void sw_setup(struct ksz_sw *sw)
 		port_cfg_back_pressure(sw, port, 1);
 		if (port < sw->phy_port_cnt)
 			port_cfg_force_flow_ctrl(sw, port, 0);
+
+		/* Enable ACL only when needed. */
+		if (sw->features & (AVB_SUPPORT | DLR_HW))
+			port_cfg_acl(sw, port, true);
 		cfg->intr_mask |= PORT_ACL_INT;
 		if (port == sw->HOST_PORT)
 			continue;
@@ -8902,6 +8909,13 @@ static void sw_setup(struct ksz_sw *sw)
 #ifdef CONFIG_KSZ_HSR
 	if (sw->features & HSR_HW)
 		sw_setup_hsr(sw);
+#endif
+#if defined(CONFIG_KSZ_AVB) || defined(CONFIG_KSZ_MRP)
+	if ((sw->features & (AVB_SUPPORT | MRP_SUPPORT))) {
+		sw->ops->release(sw);
+		sw_setup_mrp(sw);
+		sw->ops->acquire(sw);
+	}
 #endif
 	sw_setup_acl(sw);
 }  /* sw_setup */
@@ -10651,7 +10665,7 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 #endif
 		break;
 	case PROC_SET_MTU:
-		if (2000 <= num && num <= 9000) {
+		if (64 <= num && num <= 9000) {
 			sw->reg->w16(sw, REG_SW_MTU__2, (u16) num);
 			sw->mtu = num;
 		}
@@ -13915,7 +13929,7 @@ static int append_tag(u16 shift, u8 *pad, u8 *tag, int len, int ptp_len,
 	return addlen;
 }
 
-static int adjust_tag(u8 *tag_data, u8 *tag, int skb_len, int len, int ptp_len)
+static int adjust_tag(u8 *tag_data, u8 *skb_data, int skb_len, int tag_len)
 {
 	int tag_start = 0;
 
@@ -13924,8 +13938,8 @@ static int adjust_tag(u8 *tag_data, u8 *tag, int skb_len, int len, int ptp_len)
 		tag_data[0] = 0;
 		tag_start = 1;
 	}
-	memcpy(&tag_data[tag_start], &tag[4 - ptp_len], len);
-	tag_start += len;
+	memcpy(&tag_data[tag_start], skb_data, tag_len);
+	tag_start += tag_len;
 	if (tag_start & 1)
 		tag_data[tag_start] = 0;
 	return tag_start;
@@ -14055,6 +14069,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	uint port;
 	struct sk_buff *org_skb;
 	struct ksz_sw_tx_tag tx_tag;
+	int tag_len;
 	int tag_start = 0;
 	u8 tag_data[8];
 	u8 *tag;
@@ -14277,6 +14292,9 @@ add_tag:
 #endif
 	set_tag_valid(sw, &tx_tag);
 	tag = (u8 *) &tx_tag;
+	tag_len = ptp_len + 2;
+	if (sw->TAIL_TAG_SHIFT != 7)
+		tag_len--;
 
 	/* Socket buffer has no fragments. */
 	if (!skb_shinfo(skb)->nr_frags) {
@@ -14285,8 +14303,8 @@ add_tag:
 
 		/* Need to compensate checksum. */
 		if (skb->ip_summed == CHECKSUM_PARTIAL)
-			tag_start = adjust_tag(tag_data, tag, skb->len, len,
-					       ptp_len);
+			tag_start = adjust_tag(tag_data, &skb->data[skb->len],
+					       skb->len, tag_len);
 		skb_put(skb, len);
 	} else {
 		struct sock dummy;
@@ -14312,8 +14330,9 @@ add_tag:
 
 		/* Need to compensate checksum. */
 		if (skb->ip_summed == CHECKSUM_PARTIAL)
-			tag_start = adjust_tag(tag_data, tag, skb->len, len,
-					       ptp_len);
+			tag_start = adjust_tag(tag_data,
+					       &sw->tx_pad[sw->tx_start],
+					       skb->len, tag_len);
 		skb_append_datato_frags(sk, skb, add_frag, sw->tx_pad, len);
 	}
 

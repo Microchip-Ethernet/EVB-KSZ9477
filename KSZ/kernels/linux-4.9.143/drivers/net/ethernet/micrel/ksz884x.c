@@ -5280,10 +5280,17 @@ static irqreturn_t netdev_intr(int irq, void *dev_id)
 		}
 
 		if (unlikely(int_enable & KS884X_INT_PHY)) {
-			struct ksz_port *port = &priv->port;
+			int p;
 
 			hw->features |= LINK_INT_WORKING;
-			port_get_link_speed(port);
+			for (p = 0; p < hw->dev_count; p++) {
+				dev = hw->port_info[p].pdev;
+
+				if (netif_running(dev)) {
+					priv = netdev_priv(dev);
+					port_get_link_speed(&priv->port);
+				}
+			}
 		}
 
 		if (unlikely(int_enable & KS884X_INT_RX_STOPPED)) {

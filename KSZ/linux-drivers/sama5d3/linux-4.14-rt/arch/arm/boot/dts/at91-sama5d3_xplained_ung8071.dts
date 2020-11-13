@@ -232,7 +232,9 @@
 					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
-					status = "disabled";
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
+					status = "okay";
 					ports {
 						#address-cells = <1>;
 						#size-cells = <0>;

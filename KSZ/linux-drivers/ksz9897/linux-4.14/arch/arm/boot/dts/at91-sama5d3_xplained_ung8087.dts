@@ -270,7 +270,7 @@
 							reg = <1>;
 							label = "lan2";
 						};
-						port@3 {
+						port@2 {
 							reg = <2>;
 							label = "cpu";
 							ethernet = <&macb1>;

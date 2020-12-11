@@ -273,11 +273,15 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 	struct port *p;
 	int cnt, err;
 	double rr;
+#ifdef KSZ_1588_PTP
 	tmv_t now;
+#endif
 	struct ptp_message *org = msg;
 
 	clock_gettime(CLOCK_MONOTONIC, &msg->ts.host);
+#ifdef KSZ_1588_PTP
 	now = timespec_to_tmv(msg->ts.host);
+#endif
 
 	/* First send the event message out. */
 	for (p = clock_first_port(q->clock); p; p = LIST_NEXT(p, list)) {
@@ -285,6 +289,7 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 		if (tc_blocked(q, p, msg)) {
 			continue;
 		}
+#ifdef KSZ_1588_PTP
 		if (port_is_ieee8021as(p)) {
 			if (!p->tx_ann && !p->no_asCapable)
 				continue;
@@ -320,6 +325,7 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 				hdr->logMessageInterval = p->logSyncInterval;
 			p->sync_tx++;
 		}
+#endif
 		cnt = transport_send(p->trp, &p->fda, TRANS_DEFER_EVENT, msg);
 		if (cnt <= 0) {
 			pr_err("failed to forward event from port %hd to %hd",
@@ -334,11 +340,13 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 		if (tc_blocked(q, p, msg)) {
 			continue;
 		}
+#ifdef KSZ_1588_PTP
 		if (port_is_ieee8021as(p)) {
 			msg = p->fwd;
 			if (!msg)
 				continue;
 		}
+#endif
 		err = transport_txts(p->trp, &p->fda, msg);
 		if (err || !msg_sots_valid(msg)) {
 			pr_err("failed to fetch txts on port %hd to %hd event",
@@ -346,7 +354,9 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 #if 0
 			port_dispatch(p, EV_FAULT_DETECTED, 0);
 #endif
+#ifdef KSZ_1588_PTP
 			p->tx_err = 1;
+#endif
 			continue;
 		}
 		ts_add(&msg->hwts.ts, p->tx_timestamp_offset);
@@ -357,10 +367,12 @@ static int tc_fwd_event(struct port *q, struct ptp_message *msg)
 			residence = dbl_tmv(tmv_dbl(residence) * rr);
 		}
 		tc_complete(q, p, msg, residence);
+#ifdef KSZ_1588_PTP
 		if (port_is_ieee8021as(p)) {
 			msg_put(msg);
 			p->fwd = NULL;
 		}
+#endif
 	}
 
 	return 0;
@@ -462,6 +474,7 @@ int tc_forward(struct port *q, struct ptp_message *msg)
 		if (tc_blocked(q, p, msg)) {
 			continue;
 		}
+#ifdef KSZ_1588_PTP
 		if (port_is_ieee8021as(p)) {
 			struct ptp_header *hdr = &msg->header;
 
@@ -471,6 +484,7 @@ int tc_forward(struct port *q, struct ptp_message *msg)
 			hdr->sequenceId = htons(p->seqnum.announce++);
 			p->tx_ann = 1;
 		}
+#endif
 		cnt = transport_send(p->trp, &p->fda, TRANS_GENERAL, msg);
 		if (cnt <= 0) {
 			pr_err("tc failed to forward message on port %d",
@@ -493,6 +507,7 @@ int tc_fwd_folup(struct port *q, struct ptp_message *msg)
 		if (tc_blocked(q, p, msg)) {
 			continue;
 		}
+#ifdef KSZ_1588_PTP
 		if (p->sync_cnt || p->skip_tx_sync) {
 			p->skip_tx_sync = 0;
 			continue;
@@ -514,10 +529,13 @@ int tc_fwd_folup(struct port *q, struct ptp_message *msg)
 				hdr->logMessageInterval = p->logSyncInterval;
 			p->fup_tx++;
 		}
+#endif
 		tc_complete(q, p, msg, tmv_zero());
+#ifdef KSZ_1588_PTP
 		if (port_is_ieee8021as(p)) {
 			msg_put(msg);
 		}
+#endif
 	}
 	return 0;
 }

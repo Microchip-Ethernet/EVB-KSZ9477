@@ -333,11 +333,7 @@ static int raw_send(struct transport *t, struct fdarray *fda, int event,
 	struct raw *raw = container_of(t, struct raw, t);
 	ssize_t cnt;
 	int fd = event ? fda->fd[FD_EVENT] : fda->fd[FD_GENERAL];
-#ifdef KSZ_1588_PTP_
-	unsigned char *ptr = buf;
-#else
 	unsigned char pkt[1600], *ptr = buf;
-#endif
 	struct eth_hdr *hdr;
 
 	ptr -= sizeof(*hdr);
@@ -349,10 +345,6 @@ static int raw_send(struct transport *t, struct fdarray *fda, int event,
 	hdr = (struct eth_hdr *) ptr;
 	addr_to_mac(&hdr->dst, addr);
 	addr_to_mac(&hdr->src, &raw->src_addr);
-#ifdef KSZ_1588_PTP_
-	if (!peer)
-		addr_to_mac(&hdr->src, &raw->mac_addr);
-#endif
 
 	hdr->type = htons(ETH_P_1588);
 

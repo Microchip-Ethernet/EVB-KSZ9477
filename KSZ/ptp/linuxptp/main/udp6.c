@@ -250,9 +250,7 @@ static int udp6_send(struct transport *t, struct fdarray *fda, int event,
 	ssize_t cnt;
 	int fd = event ? fda->fd[FD_EVENT] : fda->fd[FD_GENERAL];
 	struct address addr_buf;
-#ifndef KSZ_1588_PTP_
 	unsigned char junk[1600];
-#endif
 
 	if (!addr) {
 		memset(&addr_buf, 0, sizeof(addr_buf));

@@ -2125,8 +2125,10 @@ static void handle_state_decision_event(struct clock *c)
 	LIST_FOREACH(piter, &c->ports, list) {
 		enum port_state ps;
 		enum fsm_event event;
+#ifdef KSZ_1588_PTP
 		if (skip_host_port(c, piter))
 			continue;
+#endif
 		ps = bmc_state_decision(c, piter);
 		n++;
 		switch (ps) {

@@ -281,7 +281,8 @@ static double pi_sample(struct servo *servo,
 			break;
 
 		/* There is still a big enough offset after jump. */
-		} else if (*state == SERVO_JUMP && abs(offset) >= 500) {
+		} else if (*state == SERVO_JUMP && abs(offset) >= 500 &&
+			   abs(offset) <= 1000) {
 			ppb = s->drift;
 			break;
 		}

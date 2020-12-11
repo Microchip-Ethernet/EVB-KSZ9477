@@ -1864,7 +1864,7 @@ void clock_path_delay(struct clock *c, tmv_t req, tmv_t rx)
 {
 #ifdef KSZ_1588_PTP
 	/* Wait until syntonization to start calculating path delay. */
-	if (c->servo_state == SERVO_UNLOCKED) {
+	if (c->servo_state == SERVO_UNLOCKED && !c->path_delay) {
 
 		/* Need valid indication in clock_synchronize(). */
 		tsproc_set_delay(c->tsproc, 0);

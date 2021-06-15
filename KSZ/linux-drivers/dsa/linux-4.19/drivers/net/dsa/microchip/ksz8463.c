@@ -2,7 +2,7 @@
 /*
  * Microchip KSZ8463 switch driver
  *
- * Copyright (C) 2019-2020 Microchip Technology Inc.
+ * Copyright (C) 2019-2021 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  */
 
@@ -80,18 +80,6 @@ static const struct {
 	{ "rx_discards" },
 	{ "tx_discards" },
 };
-
-static void ksz_cfg16(struct ksz_device *dev, u32 addr, u16 bits, bool set)
-{
-	regmap_update_bits(dev->regmap[1], addr, bits, set ? bits : 0);
-}
-
-static void ksz_port_cfg16(struct ksz_device *dev, int port, int offset,
-			   u16 bits, bool set)
-{
-	regmap_update_bits(dev->regmap[1], PORT_CTRL_ADDR(port, offset), bits,
-			   set ? bits : 0);
-}
 
 static int ksz8463_reset_switch(struct ksz_device *dev)
 {
@@ -1065,11 +1053,15 @@ static int kszphy_config_init(struct phy_device *phydev)
 	return 0;
 }
 
+static char phy_driver_name[][KSZ_CHIP_NAME_SIZE] = {
+	"Microchip KSZ8463",
+};
+
 static struct phy_driver ksz8463_phy_driver[] = {
 {
 	.phy_id		= PHY_ID_KSZ8463_SW,
 	.phy_id_mask	= 0x00ffffff,
-	.name		= "Microchip KSZ8463",
+	.name		= phy_driver_name[0],
 	.features	= PHY_BASIC_FEATURES,
 	.flags		= PHY_HAS_INTERRUPT,
 	.config_init	= kszphy_config_init,
@@ -1105,7 +1097,7 @@ static int ksz8463_switch_detect(struct ksz_device *dev)
 	chip = KSZ8463_SW_CHIP;
 	if (chip >= 0) {
 		dev->name = ksz8463_chip_names[chip];
-		strlcpy(ksz8463_phy_driver[0].name, ksz8463_chip_names[chip],
+		strlcpy(phy_driver_name[0], ksz8463_chip_names[chip],
 			KSZ_CHIP_NAME_SIZE);
 	}
 	id2 = 0x63;

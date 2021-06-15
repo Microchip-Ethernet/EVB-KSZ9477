@@ -2,7 +2,7 @@
 /*
  * Microchip KSZ8895 switch driver
  *
- * Copyright (C) 2017-2020 Microchip Technology Inc.
+ * Copyright (C) 2017-2021 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  */
 
@@ -1230,11 +1230,15 @@ static int kszphy_config_init(struct phy_device *phydev)
 	return 0;
 }
 
+static char phy_driver_name[][KSZ_CHIP_NAME_SIZE] = {
+	"Microchip KSZ8895",
+};
+
 static struct phy_driver ksz8895_phy_driver[] = {
 {
 	.phy_id		= PHY_ID_KSZ8895_SW,
 	.phy_id_mask	= 0x00ffffff,
-	.name		= "Microchip KSZ8895",
+	.name		= phy_driver_name[0],
 	.features	= PHY_BASIC_FEATURES,
 	.flags		= PHY_HAS_INTERRUPT,
 	.config_init	= kszphy_config_init,
@@ -1277,7 +1281,7 @@ static int ksz8895_switch_detect(struct ksz_device *dev)
 		chip = KSZ8895_SW_CHIP;
 	}
 	if (chip >= 0) {
-		strlcpy(ksz8895_phy_driver[0].name, ksz8895_chip_names[chip],
+		strlcpy(phy_driver_name[0], ksz8895_chip_names[chip],
 			KSZ_CHIP_NAME_SIZE);
 	}
 

@@ -2,7 +2,7 @@
 /*
  * Microchip KSZ8863 switch driver
  *
- * Copyright (C) 2019-2020 Microchip Technology Inc.
+ * Copyright (C) 2019-2021 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  */
 
@@ -1180,11 +1180,15 @@ static int kszphy_config_init(struct phy_device *phydev)
 	return 0;
 }
 
+static char phy_driver_name[][KSZ_CHIP_NAME_SIZE] = {
+	"Microchip KSZ8863",
+};
+
 static struct phy_driver ksz8863_phy_driver[] = {
 {
 	.phy_id		= PHY_ID_KSZ8863_SW,
 	.phy_id_mask	= 0x00ffffff,
-	.name		= "Microchip KSZ8863",
+	.name		= phy_driver_name[0],
 	.features	= PHY_BASIC_FEATURES,
 	.flags		= PHY_HAS_INTERRUPT,
 	.config_init	= kszphy_config_init,
@@ -1224,7 +1228,7 @@ static int ksz8863_switch_detect(struct ksz_device *dev)
 		chip = KSZ8873_SW_CHIP;
 	if (chip >= 0) {
 		dev->name = ksz8863_chip_names[chip];
-		strlcpy(ksz8863_phy_driver[0].name, ksz8863_chip_names[chip],
+		strlcpy(phy_driver_name[0], ksz8863_chip_names[chip],
 			KSZ_CHIP_NAME_SIZE);
 	}
 	id2 = 0x63;

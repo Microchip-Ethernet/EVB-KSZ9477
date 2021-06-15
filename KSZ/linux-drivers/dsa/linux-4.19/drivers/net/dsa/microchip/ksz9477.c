@@ -2,7 +2,7 @@
 /*
  * Microchip KSZ9477 switch driver main logic
  *
- * Copyright (C) 2017-2020 Microchip Technology Inc.
+ * Copyright (C) 2017-2021 Microchip Technology Inc.
  */
 
 #include <linux/kernel.h>
@@ -1524,11 +1524,16 @@ static int kszphy_config_init(struct phy_device *phydev)
 	return 0;
 }
 
+static char phy_driver_name[][KSZ_CHIP_NAME_SIZE] = {
+	"Microchip KSZ989X",
+	"Microchip KSZ889X",
+};
+
 static struct phy_driver ksz9477_phy_driver[] = {
 {
 	.phy_id		= PHY_ID_KSZ989X_SW,
 	.phy_id_mask	= 0x00ffffff,
-	.name		= "Microchip KSZ989X",
+	.name		= phy_driver_name[0],
 	.features	= PHY_GBIT_FEATURES,
 	.flags		= PHY_HAS_INTERRUPT,
 	.config_init	= kszphy_config_init,
@@ -1540,7 +1545,7 @@ static struct phy_driver ksz9477_phy_driver[] = {
 }, {
 	.phy_id		= PHY_ID_KSZ889X_SW,
 	.phy_id_mask	= 0x00ffffff,
-	.name		= "Microchip KSZ889X",
+	.name		= phy_driver_name[1],
 	.features	= PHY_BASIC_FEATURES,
 	.flags		= PHY_HAS_INTERRUPT,
 	.config_init	= kszphy_config_init,
@@ -1645,7 +1650,7 @@ static int ksz9477_switch_detect(struct ksz_device *dev)
 			id = 0;
 		else
 			id = 1;
-		strlcpy(ksz9477_phy_driver[id].name, ksz9477_chip_names[chip],
+		strlcpy(phy_driver_name[id], ksz9477_chip_names[chip],
 			KSZ_CHIP_NAME_SIZE);
 	}
 

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0
  * Microchip switch driver common header
  *
- * Copyright (C) 2017-2020 Microchip Technology Inc.
+ * Copyright (C) 2017-2021 Microchip Technology Inc.
  */
 
 #ifndef __KSZ_COMMON_H
@@ -192,4 +192,16 @@ static inline void ksz_port_cfg(struct ksz_device *dev, int port, int offset,
 			   set ? bits : 0);
 }
 
+static inline void ksz_cfg16(struct ksz_device *dev, u32 addr, u16 bits,
+			     bool set)
+{
+	regmap_update_bits(dev->regmap[1], addr, bits, set ? bits : 0);
+}
+
+static inline void ksz_port_cfg16(struct ksz_device *dev, int port, int offset,
+				  u16 bits, bool set)
+{
+	regmap_update_bits(dev->regmap[1], PORT_CTRL_ADDR(port, offset), bits,
+			   set ? bits : 0);
+}
 #endif

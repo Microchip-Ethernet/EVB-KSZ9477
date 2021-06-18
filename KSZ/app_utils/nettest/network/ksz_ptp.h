@@ -158,7 +158,7 @@ struct ptp_msg_hdr {
 	struct ptp_port_identity sourcePortIdentity;
 	u16 sequenceId;
 	u8 controlField;
-	char logMessageInterval;
+	signed char logMessageInterval;
 } __packed;
 
 struct ptp_msg_sync {
@@ -226,9 +226,9 @@ struct IEEE_802_1AS_data_1 {
 } __packed;
 
 struct IEEE_802_1AS_data_2 {
-	char linkDelayInterval;
-	char timeSyncInterval;
-	char announceInterval;
+	signed char linkDelayInterval;
+	signed char timeSyncInterval;
+	signed char announceInterval;
 	u8 flags;
 	u16 reserved;
 } __packed;
@@ -242,7 +242,7 @@ struct ptp_request_unicast_tlv {
 	u8 reserved1:4;
 	u8 messageType:4;
 #endif
-	char logInterMessagePeriod;
+	signed char logInterMessagePeriod;
 	u32 durationField;
 } __packed;
 
@@ -255,7 +255,7 @@ struct ptp_grant_unicast_tlv {
 	u8 reserved1:4;
 	u8 messageType:4;
 #endif
-	char logInterMessagePeriod;
+	signed char logInterMessagePeriod;
 	u32 durationField;
 	u8 reserved2;
 #ifdef __BIG_ENDIAN_BITFIELD

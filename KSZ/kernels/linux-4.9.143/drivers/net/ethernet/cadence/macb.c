@@ -1751,6 +1751,10 @@ static int macb_rx_frame(struct macb *bp, unsigned int first_frag,
 
 	desc = macb_rx_desc(bp, last_frag);
 	len = desc->ctrl & bp->rx_frm_len_mask;
+#ifdef HAVE_KSZ_SWITCH
+	/* Remove CRC */
+	len -= 4;
+#endif
 
 	netdev_vdbg(bp->dev, "macb_rx_frame frags %u - %u (len %u)\n",
 		    macb_rx_ring_wrap(first_frag),

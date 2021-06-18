@@ -659,12 +659,12 @@ static void assert_buf(const char *name, int i, size_t func_size, u32 *buf,
 
 	if ((i + 1) > func_size / sizeof(void *)) {
 		printk(KERN_INFO "  [%s func] %u %u"NL,
-			name, i, func_size / sizeof(void *));
+			name, i, (int)(func_size / sizeof(void *)));
 		_assert = true;
 	}
 	if (data > buf + buf_size / sizeof(u32)) {
 		printk(KERN_INFO "  [%s data] %u"NL,
-			name, (data - buf));
+			name, (int)(data - buf));
 		_assert = true;
 	}
 	if (_assert)
@@ -1607,6 +1607,12 @@ static void w_mac_table_pre(struct ksz_iba_info *info,
 		data[3]);
 }  /* w_mac_table_pre */
 
+struct dyn_mac_param {
+	u16 addr;
+	u8 *src_addr;
+	u16 src_fid;
+};
+
 /**
  * s_dyn_mac_pre - IBA dynamic MAC table set pre-processing
  * @info:	The IBA instance.
@@ -1655,10 +1661,10 @@ static u32 s_dyn_mac_pre(struct ksz_iba_info *info, u16 addr, u8 *src_addr,
  */
 static void *r_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	u32 *data = in;
-	u16 addr = data[0];
-	u8 *src_addr = (u8 *) data[1];
-	u16 src_fid = data[2];
+	struct dyn_mac_param *param = in;
+	u8 *src_addr = param->src_addr;
+	u16 src_fid = param->src_fid;
+	u16 addr = param->addr;
 	u32 ctrl;
 
 	ctrl = s_dyn_mac_pre(info, addr, src_addr, src_fid);
@@ -1693,12 +1699,12 @@ static void *r_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 static int iba_r_dyn_mac_hw(struct ksz_sw *sw, u16 addr, u8 *src_addr,
 	u16 src_fid, struct ksz_mac_table *mac, u16 *entry)
 {
-	u32 data[3];
+	struct dyn_mac_param data;
 
-	data[0] = addr;
-	data[1] = (u32) src_addr;
-	data[2] = src_fid;
-	return iba_req(&sw->info->iba, data, entry, mac, r_dyn_mac_pre,
+	data.addr = addr;
+	data.src_addr = src_addr;
+	data.src_fid = src_fid;
+	return iba_req(&sw->info->iba, &data, entry, mac, r_dyn_mac_pre,
 		r_mac_table_post);
 }  /* iba_r_dyn_mac_hw */
 
@@ -1714,11 +1720,11 @@ static int iba_r_dyn_mac_hw(struct ksz_sw *sw, u16 addr, u8 *src_addr,
  */
 static void *w_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
-	u32 *data = in;
 	struct ksz_mac_table *mac = obj;
-	u16 addr = data[0];
-	u8 *src_addr = (u8 *) data[1];
-	u16 src_fid = data[2];
+	struct dyn_mac_param *param = in;
+	u8 *src_addr = param->src_addr;
+	u16 src_fid = param->src_fid;
+	u16 addr = param->addr;
 	u32 ctrl;
 
 	ctrl = s_dyn_mac_pre(info, addr, src_addr, src_fid);
@@ -1741,12 +1747,12 @@ static void *w_dyn_mac_pre(struct ksz_iba_info *info, void *in, void *obj)
 static int iba_w_dyn_mac_hw(struct ksz_sw *sw, u16 addr, u8 *src_addr,
 	u16 src_fid, struct ksz_mac_table *mac)
 {
-	u32 data[3];
+	struct dyn_mac_param data;
 
-	data[0] = addr;
-	data[1] = (u32) src_addr;
-	data[2] = src_fid;
-	return iba_req(&sw->info->iba, data, NULL, mac, w_dyn_mac_pre, NULL);
+	data.addr = addr;
+	data.src_addr = src_addr;
+	data.src_fid = src_fid;
+	return iba_req(&sw->info->iba, &data, NULL, mac, w_dyn_mac_pre, NULL);
 }  /* iba_w_dyn_mac_hw */
 
 /**

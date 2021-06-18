@@ -88,7 +88,7 @@ static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #if defined(CONFIG_IBA_KSZ9897)
 #include "../micrel/iba-ksz9897.c"
 #elif defined(CONFIG_HAVE_KSZ9897)
-#include "../micrel/spi-ksz9897.c"
+#include "../micrel/i2c-ksz9897.c"
 #elif defined(CONFIG_HAVE_KSZ8795)
 #include "../micrel/spi-ksz8795.c"
 #elif defined(CONFIG_SMI_KSZ8895)
@@ -98,7 +98,7 @@ static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #elif defined(CONFIG_SMI_KSZ8863)
 #include "../micrel/smi-ksz8863.c"
 #elif defined(CONFIG_HAVE_KSZ8863)
-#include "../micrel/spi-ksz8863.c"
+#include "../micrel/i2c-ksz8863.c"
 #elif defined(CONFIG_IBA_LAN937X)
 #include "../microchip/iba-lan937x.c"
 #elif defined(CONFIG_SMI_LAN937X)
@@ -1751,6 +1751,10 @@ static int macb_rx_frame(struct macb *bp, unsigned int first_frag,
 
 	desc = macb_rx_desc(bp, last_frag);
 	len = desc->ctrl & bp->rx_frm_len_mask;
+#ifdef HAVE_KSZ_SWITCH
+	/* Remove CRC */
+	len -= 4;
+#endif
 
 	netdev_vdbg(bp->dev, "macb_rx_frame frags %u - %u (len %u)\n",
 		    macb_rx_ring_wrap(first_frag),

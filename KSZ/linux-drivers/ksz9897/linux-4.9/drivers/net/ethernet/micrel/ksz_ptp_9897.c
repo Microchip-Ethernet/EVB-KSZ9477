@@ -2603,7 +2603,7 @@ static int ptp_drop_pkt(struct ptp_info *ptp, struct sk_buff *skb, u32 vlan_id,
 	*ptp_tag = get_rx_tag_ports(&sw->tag);
 	ptp->ops->get_rx_info(ptp, skb->data, *ptp_tag, sw->tag.timestamp);
 	*forward = ptp->forward;
-	if (!ptp->op_state) {
+	if (!ptp->op_state && !(ptp->rx_en & 1)) {
 		*ptp_tag = 0;
 		return false;
 	}

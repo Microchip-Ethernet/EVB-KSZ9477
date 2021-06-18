@@ -322,6 +322,8 @@ void *tlv_msg(void *msg, int *size, u16 tlvType, int ext)
 			(struct IEEE_C37_238_data *) org->dataField;
 		struct IEEE_802_1AS_data_1 *avb =
 			(struct IEEE_802_1AS_data_1 *) org->dataField;
+		struct IEEE_802_1AS_data_2 *req =
+			(struct IEEE_802_1AS_data_2 *) org->dataField;
 
 		switch (ext) {
 		case 0:
@@ -355,6 +357,23 @@ void *tlv_msg(void *msg, int *size, u16 tlvType, int ext)
 				sizeof(struct IEEE_802_1AS_data_1);
 			avb++;
 			msg = avb;
+			break;
+		case 2:
+			org->organizationId[0] = 0x00;
+			org->organizationId[1] = 0x80;
+			org->organizationId[2] = 0xC2;
+			org->organizationSubType[0] = 0;
+			org->organizationSubType[1] = 0;
+			org->organizationSubType[2] = 0x02;
+			req->linkDelayInterval = 127;
+			req->timeSyncInterval = -3;
+			req->announceInterval = 127;
+			req->flags = 3;
+			req->reserved = 0;
+			len = sizeof(struct ptp_organization_ext_tlv) - 1 +
+				sizeof(struct IEEE_802_1AS_data_2);
+			req++;
+			msg = req;
 			break;
 		}
 		break;
@@ -497,6 +516,33 @@ struct ptp_msg *signaling_msg(int type, int message, u8 period, u32 duration)
 	}
 	len = sizeof(struct ptp_msg_signaling_base) + 4 +
 		ntohs(signaling->tlv.request[0].tlv.lengthField);
+	prepare_hdr(&msg->hdr, SIGNALING_MSG, len, seqid, ctrl, logInterval,
+		clock);
+	return msg;
+}
+
+struct ptp_msg *interval_msg(void)
+{
+	static char payload[(sizeof(struct ptp_msg) + 4000) & ~3];
+	struct ptp_msg* msg = (struct ptp_msg *) payload;
+	int len;
+	int logInterval;
+	int seqid;
+	int ctrl;
+	struct ptp_clock_identity *clock;
+	struct ptp_msg_signaling_base *signaling;
+	void *tlv;
+
+	clock = &selfClockIdentity;
+	ctrl = 5;
+	logInterval = 0x7F;
+	seqid_signaling++;
+	seqid = seqid_signaling;
+	signaling = &msg->data.signaling.b;
+	memset(signaling, 0xff, 10);
+	len = sizeof(struct ptp_msg_signaling_base);
+	tlv = signaling + 1;
+	tlv = tlv_msg(tlv, &len, TLV_ORGANIZATION_EXTENSION, 2);
 	prepare_hdr(&msg->hdr, SIGNALING_MSG, len, seqid, ctrl, logInterval,
 		clock);
 	return msg;
@@ -840,6 +886,7 @@ void send_msg(struct ptp_msg *msg, int family, int len)
 	}
 	memset(&buf[len], 0, 7);
 	buf[len + 4] = 0x30;
+	buf[len + 5] = 0xff;
 	len += 7;
 #endif
 	} else
@@ -1007,19 +1054,37 @@ int disp_tlv(void *msg, int left)
 		} else if (0x00 == org->organizationId[0] &&
 				0x80 == org->organizationId[1] &&
 				0xC2 == org->organizationId[2]) {
-			struct IEEE_802_1AS_data_1 *data =
-				(struct IEEE_802_1AS_data_1 *) org->dataField;
+			if (0x00 == org->organizationSubType[0] &&
+			    0x00 == org->organizationSubType[1] &&
+			    0x01 == org->organizationSubType[2]) {
+				struct IEEE_802_1AS_data_1 *data =
+					(struct IEEE_802_1AS_data_1 *)
+					org->dataField;
 
 #if (__BITS_PER_LONG == 64)
-			printf("%d %u %d,%ld %d",
+				printf("%d %u %d,%ld %d",
 #else
-			printf("%d %u %d,%lld %d",
+				printf("%d %u %d,%lld %d",
 #endif
-				ntohl(data->cumulativeScaledRateOffset),
-				ntohs(data->gmTimeBaseIndicator),
-				data->lastGmPhaseChange.hi,
-				data->lastGmPhaseChange.lo,
-				ntohl(data->scaledLastGmFreqChange));
+					ntohl(data->cumulativeScaledRateOffset),
+					ntohs(data->gmTimeBaseIndicator),
+					data->lastGmPhaseChange.hi,
+					data->lastGmPhaseChange.lo,
+					ntohl(data->scaledLastGmFreqChange));
+			}
+			if (0x00 == org->organizationSubType[0] &&
+			    0x00 == org->organizationSubType[1] &&
+			    0x02 == org->organizationSubType[2]) {
+				struct IEEE_802_1AS_data_2 *data =
+					(struct IEEE_802_1AS_data_2 *)
+					org->dataField;
+
+				printf("%d %d %d %02x",
+					data->linkDelayInterval,
+					data->timeSyncInterval,
+					data->announceInterval,
+					data->flags);
+			}
 		}
 		left -= len + 4;
 		break;
@@ -1705,6 +1770,14 @@ int get_cmd(FILE *fp)
 				TLV_ACKNOWLEDGE_CANCEL_UNICAST_TRANSMISSION,
 				ANNOUNCE_MSG, 0, 0);
 			send_msg(msg, ip_family, len);
+		} else if (!strcmp(cmd, "sgi")) {
+			msg = interval_msg();
+			send_msg(msg, ip_family, len);
+		} else if (!strcmp(cmd, "ts")) {
+			if (count >= 2) {
+				transport = !!num[0];
+			} else
+				printf("transport = %d\n", transport);
 		} else if (!strcmp(cmd, "hw")) {
 			return 1;
 		} else if (!strcmp(cmd, "sw")) {
@@ -1734,7 +1807,7 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 1)
+				if (ptp_num > 100)
 					usleep(10);
 #endif
 				if (msg_len && !(msg_len & 1)) {
@@ -1765,7 +1838,7 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 1)
+				if (ptp_num > 100)
 					usleep(10);
 #endif
 			} while (++send_cnt < ptp_num);
@@ -1790,7 +1863,7 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 1)
+				if (ptp_num > 100)
 					usleep(10);
 #endif
 			} while (++send_cnt < ptp_num);
@@ -1823,7 +1896,7 @@ int get_cmd(FILE *fp)
 				prepare_msg(msg, ANNOUNCE_MSG);
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 1)
+				if (ptp_num > 100)
 					usleep(10);
 #endif
 			} while (++send_cnt < ptp_num);

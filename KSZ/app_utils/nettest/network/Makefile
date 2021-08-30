@@ -30,7 +30,7 @@ INCDIR  = -I$(SOCKDIR)
 OBJS = error.o inetfunc.o iofunc.o wrapsock.o wrapstdio.o ip.o wrapmcast.o
 OBJS += sockntop.o unpifi.o
 
-EXE=ptp prifinfo rstptest acltest authtest nettest iba kszsw dlr dlr_daemon
+EXE=ptp prifinfo rstptest acltest authtest nettest iba kszsw ksz dlr dlr_daemon
 
 all: $(EXE)
 
@@ -68,6 +68,9 @@ iba: iba.c $(HEADERS) $(OBJS) wrapthread.o
 	$(GCC) $(INCDIR) -O2 $(CFLAGS) -o $@ $< $(OBJS) wrapthread.o -pthread
 
 kszsw: kszsw.c $(HEADERS) $(OBJS) wrapthread.o
+	$(GCC) $(INCDIR) -O2 $(CFLAGS) -o $@ $< $(OBJS) wrapthread.o -pthread
+
+ksz: ksz.c $(HEADERS) $(OBJS) wrapthread.o
 	$(GCC) $(INCDIR) -O2 $(CFLAGS) -o $@ $< $(OBJS) wrapthread.o -pthread
 
 dlr: dlr.c $(HEADERS) $(OBJS) wrapthread.o

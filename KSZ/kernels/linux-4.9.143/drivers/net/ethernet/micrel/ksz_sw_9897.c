@@ -7684,6 +7684,9 @@ dbg_msg("jtag: %04x %04x"NL, buf[1], buf[0]);
 	port_sgmii_r(sw, p, SR_MII, 0, buf, 6);
 dbg_msg("%04x %04x %04x %04x %04x %04x"NL,
 buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
+	port_sgmii_r(sw, p, SR_MII, 0x8000, buf, 3);
+dbg_msg("%04x %04x %04x"NL,
+buf[0], buf[1], buf[2]);
 
 	/* Cannot detect whether the SGMII PHY is plugged in reliably. */
 	if (sw->sgmii_mode) {
@@ -7697,6 +7700,7 @@ buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 		} else if (sw->sgmii_mode == 1)
 			sw->port_info[p].fiber = 1;
 	}
+dbg_msg("fiber: %d %d"NL, sw->port_info[p].fiber, sw->sgmii_mode);
 	return ret;
 }  /* port_sgmii_detect */
 
@@ -7776,8 +7780,19 @@ static int sgmii_port_get_speed(struct ksz_sw *sw, uint p, bool force_link)
 	port_sgmii_r(sw, p, SR_MII, MMD_SR_MII_STATUS, &status, 1);
 	port_sgmii_r(sw, p, SR_MII, MMD_SR_MII_AUTO_NEG_STATUS, &data, 1);
 
+	/* 10/100/1000: 1f0001 = 01ad  1f0005 = 4000  1f8002 = 0008
+	 *              1f0001 = 01bd  1f0005 = d000  1f8002 = 001a
+	 * 1000:        1f0001 = 018d  1f0005 = 0000  1f8002 = 0000
+	 *              1f0001 = 01ad  1f0005 = 40a0  1f8002 = 0000
+	 *              1f0001 = 01ad  1f0005 = 41a0  1f8002 = 0000
+	 * fiber:       1f0001 = 0189  1f0005 = 0000  1f8002 = 0000
+	 *              1f0001 = 01ad  1f0005 = 41a0  1f8002 = 0000
+	 */
+
 	/* Running in fiber mode. */
-	if (info->fiber && (status & PORT_LINK_STATUS) && !data) {
+	if (info->fiber && !data &&
+	    (status & (PORT_AUTO_NEG_ACKNOWLEDGE | PORT_LINK_STATUS)) ==
+	    (PORT_AUTO_NEG_ACKNOWLEDGE | PORT_LINK_STATUS)) {
 		data = SR_MII_STAT_LINK_UP |
 		       (SR_MII_STAT_1000_MBPS << SR_MII_STAT_S) |
 		       SR_MII_STAT_FULL_DUPLEX;
@@ -7789,6 +7804,13 @@ static int sgmii_port_get_speed(struct ksz_sw *sw, uint p, bool force_link)
 	if (info->link == link)
 		return ret;
 dbg_msg(" sgmii %04x %04x"NL, status, data);
+	do {
+		u16 buf[6];
+
+		port_sgmii_r(sw, p, SR_MII, 0, buf, 6);
+dbg_msg("%04x %04x %04x %04x %04x %04x"NL,
+buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
+	} while (0);
 
 	/* Need to update control register with same link setting. */
 	if (data & SR_MII_STAT_LINK_UP) {
@@ -7863,12 +7885,9 @@ static void sgmii_port_set_speed(struct ksz_sw *sw, uint p, int speed,
 	}
 	adv <<= SR_MII_AUTO_NEG_PAUSE_S;
 	adv |= SR_MII_AUTO_NEG_FULL_DUPLEX;
-	adv |= SR_MII_AUTO_NEG_HALF_DUPLEX;
-	if (duplex) {
-		if (1 == duplex)
-			adv &= ~SR_MII_AUTO_NEG_FULL_DUPLEX;
-		else if (2 == duplex)
-			adv &= ~SR_MII_AUTO_NEG_HALF_DUPLEX;
+	if (1 == duplex) {
+		adv &= ~SR_MII_AUTO_NEG_FULL_DUPLEX;
+		adv |= SR_MII_AUTO_NEG_HALF_DUPLEX;
 	}
 	if (adv != cfg) {
 dbg_msg("ADV: %04x"NL, adv);
@@ -8955,8 +8974,6 @@ static void sw_reset(struct ksz_sw *sw)
 
 		port_sgmii_r(sw, p, SR_MII, MMD_SR_MII_CTRL, &ctrl, 1);
 		ctrl |= SR_MII_RESET;
-		port_sgmii_w(sw, p, SR_MII, MMD_SR_MII_CTRL, &ctrl, 1);
-		ctrl &= ~SR_MII_RESET;
 		port_sgmii_w(sw, p, SR_MII, MMD_SR_MII_CTRL, &ctrl, 1);
 	}
 	for (p = sw->phy_port_cnt; p < sw->port_cnt; p++) {
@@ -17566,6 +17583,8 @@ static void ksz9897_mib_read_work(struct work_struct *work)
 				if (p != sw->HOST_PORT)
 					determine_rate(sw, mib);
 				info = get_port_info(sw, p);
+
+				/* No interrupt when cable is removed. */
 				if (info->fiber &&
 				    info->state == media_connected &&
 				    mib->rate[0].no_change &&

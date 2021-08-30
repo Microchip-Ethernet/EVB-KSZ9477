@@ -207,6 +207,8 @@ struct ptp_clock_identity masterClockIdentity;
 static int ptp_correction;
 static int ptp_count = 1;
 static int ptp_num;
+static int delay_num = 10;
+static int pause_num = 200;
 static int ptp_domain;
 static int ptp_dst_port;
 static int ptp_src_port;
@@ -1396,9 +1398,10 @@ void disp_msg(struct ptp_msg *req, int len)
 		if (ptp_rx_port)
 			printf("r=%x %x:%9u\n", ptp_rx_port,
 				ptp_rx_sec, ptp_rx_nsec);
-	} else
+	} else if (req->hdr.reserved3) {
 		printf("r=%x %04x\n",
 			req->hdr.reserved2, ntohl(req->hdr.reserved3));
+	}
 #endif
 	printf("d=%x", req->hdr.domainNumber);
 	printf("  ");
@@ -1651,6 +1654,9 @@ static void print_sw_help(void)
 	printf("\ts\tsource port\n");
 	printf("\tt\t0 = 1-step; 1 = 2-step\n");
 	printf("\tu\treply count\n");
+	printf("\tuu\tsend count\n");
+	printf("\tud\tdelay count\n");
+	printf("\tup\tpause count\n");
 	printf("\tv\talternate master\n");
 	printf("\tw 1\tsend TLV\n");
 	printf("\tw 2 #\tsend Path Trace\n");
@@ -1807,8 +1813,8 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 100)
-					usleep(10);
+				if ((send_cnt % pause_num) == pause_num - 1)
+					usleep(delay_num);
 #endif
 				if (msg_len && !(msg_len & 1)) {
 					++len;
@@ -1838,8 +1844,8 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 100)
-					usleep(10);
+				if ((send_cnt % pause_num) == pause_num - 1)
+					usleep(delay_num);
 #endif
 			} while (++send_cnt < ptp_num);
 			disp_tx_timestamp(&msg->hdr);
@@ -1863,8 +1869,8 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 100)
-					usleep(10);
+				if ((send_cnt % pause_num) == pause_num - 1)
+					usleep(delay_num);
 #endif
 			} while (++send_cnt < ptp_num);
 			disp_tx_timestamp(&msg->hdr);
@@ -1896,8 +1902,8 @@ int get_cmd(FILE *fp)
 				prepare_msg(msg, ANNOUNCE_MSG);
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 100)
-					usleep(10);
+				if ((send_cnt % pause_num) == pause_num - 1)
+					usleep(delay_num);
 #endif
 			} while (++send_cnt < ptp_num);
 			break;
@@ -1962,6 +1968,22 @@ int get_cmd(FILE *fp)
 					printf("%d\n", ptp_num);
 				break;
 			}
+			if (line[1] == 'd') {
+				if (count >= 2 && num[0] > 0)
+					delay_num = num[0];
+				else
+					printf("%d\n", delay_num);
+				break;
+			}
+			if (line[1] == 'p') {
+				if (count >= 2 && num[0] > 0)
+					pause_num = num[0];
+				else
+					printf("%d\n", pause_num);
+				break;
+			}
+			if (line[1] != ' ' && line[1] != '\n')
+				break;
 			if (count >= 2)
 				ptp_count = num[0];
 			else

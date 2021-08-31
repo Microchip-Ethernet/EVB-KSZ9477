@@ -1,0 +1,144 @@
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/arch/arm/dts/Makefile u-boot-at91-linux4sam-2020.10.1/arch/arm/dts/Makefile
+--- u-boot-at91-linux4sam-2020.10.1.orig/arch/arm/dts/Makefile	2021-01-14 23:11:03.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/arch/arm/dts/Makefile	2021-06-07 00:58:12.393462171 -0700
+@@ -789,6 +789,9 @@ dtb-$(CONFIG_TARGET_SAMA5D3XEK) += \
+ dtb-$(CONFIG_TARGET_SAMA5D3_XPLAINED) += \
+ 	at91-sama5d3_xplained.dtb
+ 
++dtb-$(CONFIG_TARGET_SAMA5D3_XPLAINED_DEV) += \
++	at91-sama5d3_xplained_dev.dtb
++
+ dtb-$(CONFIG_TARGET_SAMA5D4EK) += \
+ 	at91-sama5d4ek.dtb
+ 
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/arch/arm/mach-at91/Kconfig u-boot-at91-linux4sam-2020.10.1/arch/arm/mach-at91/Kconfig
+--- u-boot-at91-linux4sam-2020.10.1.orig/arch/arm/mach-at91/Kconfig	2021-01-14 23:11:03.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/arch/arm/mach-at91/Kconfig	2021-06-07 00:57:43.106414439 -0700
+@@ -56,6 +56,14 @@ config SAMA5D3
+ 	bool
+ 	select CPU_V7A
+ 
++config HAVE_KSZ9897
++	bool "KSZ9897 SPI support"
++	depends on SAMA5D3
++
++config HAVE_KSZ8851
++	bool "KSZ8851 SPI support"
++	depends on SAMA5D3 && !HAVE_KSZ9897
++
+ config SAMA5D4
+ 	bool
+ 	select CPU_V7A
+@@ -224,6 +232,13 @@ config TARGET_SAMA5D3_XPLAINED
+ 	select BOARD_EARLY_INIT_F
+ 	select SAMA5D3
+ 	select SUPPORT_SPL
++	select BOARD_LATE_INIT
++
++config TARGET_SAMA5D3_XPLAINED_DEV
++	bool "SAMA5D3 Xplained dev board"
++	select BOARD_EARLY_INIT_F
++	select SAMA5D3
++	select SUPPORT_SPL
+ 	select BOARD_LATE_INIT
+ 
+ config TARGET_SAMA5D3XEK
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/board/atmel/sama5d3_xplained/Kconfig u-boot-at91-linux4sam-2020.10.1/board/atmel/sama5d3_xplained/Kconfig
+--- u-boot-at91-linux4sam-2020.10.1.orig/board/atmel/sama5d3_xplained/Kconfig	2021-01-14 23:11:03.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/board/atmel/sama5d3_xplained/Kconfig	2021-06-07 01:06:43.882471643 -0700
+@@ -10,3 +10,16 @@ config SYS_CONFIG_NAME
+ 	default "sama5d3_xplained"
+ 
+ endif
++
++if TARGET_SAMA5D3_XPLAINED_DEV
++
++config SYS_BOARD
++	default "sama5d3_xplained"
++
++config SYS_VENDOR
++	default "atmel"
++
++config SYS_CONFIG_NAME
++	default "sama5d3_xplained_dev"
++
++endif
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/cmd/Kconfig u-boot-at91-linux4sam-2020.10.1/cmd/Kconfig
+--- u-boot-at91-linux4sam-2020.10.1.orig/cmd/Kconfig	2021-01-14 23:11:03.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/cmd/Kconfig	2021-06-07 00:00:55.382039342 -0700
+@@ -1189,6 +1189,12 @@ config CMD_SF_TEST
+ 	  equal the SPI bus speed for a single-bit-wide SPI bus, assuming
+ 	  everything is working properly.
+ 
++config CMD_SPI_KSZ
++	bool "kspi - Command to access spi device"
++	depends on SPI && SAMA5D3
++	help
++	  SPI utility command.
++
+ config CMD_SPI
+ 	bool "sspi - Command to access spi device"
+ 	depends on SPI
+@@ -1197,12 +1203,12 @@ config CMD_SPI
+ 
+ config DEFAULT_SPI_BUS
+ 	int "default spi bus used by sspi command"
+-	depends on CMD_SPI
++	depends on CMD_SPI || CMD_SPI_KSZ
+ 	default 0
+ 
+ config DEFAULT_SPI_MODE
+ 	hex "default spi mode used by sspi command (see include/spi.h)"
+-	depends on CMD_SPI
++	depends on CMD_SPI || CMD_SPI_KSZ
+ 	default 0
+ 
+ config CMD_TSI148
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/cmd/Makefile u-boot-at91-linux4sam-2020.10.1/cmd/Makefile
+--- u-boot-at91-linux4sam-2020.10.1.orig/cmd/Makefile	2021-01-14 23:11:03.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/cmd/Makefile	2021-06-06 23:57:59.961572798 -0700
+@@ -126,6 +126,7 @@ obj-$(CONFIG_CMD_SCSI) += scsi.o disk.o
+ obj-$(CONFIG_CMD_SHA1SUM) += sha1sum.o
+ obj-$(CONFIG_CMD_SETEXPR) += setexpr.o
+ obj-$(CONFIG_CMD_SPI) += spi.o
++obj-$(CONFIG_CMD_SPI_KSZ) += spi_ksz.o
+ obj-$(CONFIG_CMD_STRINGS) += strings.o
+ obj-$(CONFIG_CMD_SMC) += smccc.o
+ obj-$(CONFIG_CMD_SYSBOOT) += sysboot.o pxe_utils.o
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/drivers/net/macb.c u-boot-at91-linux4sam-2020.10.1/drivers/net/macb.c
+--- u-boot-at91-linux4sam-2020.10.1.orig/drivers/net/macb.c	2021-01-14 23:11:03.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/drivers/net/macb.c	2021-06-06 22:07:33.145737598 -0700
+@@ -465,6 +465,7 @@ static void macb_phy_reset(struct macb_d
+ 		       name, status);
+ }
+ 
++#ifndef CONFIG_PHY_FIXED
+ static int macb_phy_find(struct macb_device *macb, const char *name)
+ {
+ 	int i;
+@@ -485,6 +486,7 @@ static int macb_phy_find(struct macb_dev
+ 
+ 	return -ENODEV;
+ }
++#endif
+ 
+ /**
+  * macb_linkspd_cb - Linkspeed change callback function
+@@ -585,6 +587,7 @@ static int macb_phy_init(struct macb_dev
+ 	int i;
+ 
+ 	arch_get_mdio_control(name);
++#ifndef CONFIG_PHY_FIXED
+ 	/* Auto-detect phy_addr */
+ 	ret = macb_phy_find(macb, name);
+ 	if (ret)
+@@ -596,6 +599,9 @@ static int macb_phy_init(struct macb_dev
+ 		printf("%s: No PHY present\n", name);
+ 		return -ENODEV;
+ 	}
++#else
++	(void) phy_id;
++#endif
+ 
+ #ifdef CONFIG_PHYLIB
+ #ifdef CONFIG_DM_ETH

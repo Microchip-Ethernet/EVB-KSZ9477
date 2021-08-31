@@ -1,0 +1,1256 @@
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/arch/arm/dts/at91-sama5d3_xplained_dev.dts u-boot-at91-linux4sam-2020.10.1/arch/arm/dts/at91-sama5d3_xplained_dev.dts
+--- u-boot-at91-linux4sam-2020.10.1.orig/arch/arm/dts/at91-sama5d3_xplained_dev.dts	1969-12-31 16:00:00.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/arch/arm/dts/at91-sama5d3_xplained_dev.dts	2021-06-06 22:53:57.597092046 -0700
+@@ -0,0 +1,367 @@
++/*
++ * at91-sama5d3_xplained.dts - Device Tree file for the SAMA5D3 Xplained board
++ *
++ *  Copyright (C) 2014 Atmel,
++ *		  2014 Nicolas Ferre <nicolas.ferre@atmel.com>
++ *
++ * Licensed under GPLv2 or later.
++ */
++/dts-v1/;
++#include "sama5d36.dtsi"
++
++/ {
++	model = "SAMA5D3 Xplained";
++	compatible = "atmel,sama5d3-xplained", "atmel,sama5d3", "atmel,sama5";
++
++	chosen {
++		u-boot,dm-pre-reloc;
++		stdout-path = &dbgu;
++	};
++
++	aliases {
++		spi0 = &spi0;
++		spi1 = &spi1;
++	};
++
++	memory {
++		reg = <0x20000000 0x10000000>;
++	};
++
++	clocks {
++		slow_xtal {
++			clock-frequency = <32768>;
++		};
++
++		main_xtal {
++			clock-frequency = <12000000>;
++		};
++	};
++
++	onewire_tm: onewire {
++		gpios = <&pioE 23 GPIO_ACTIVE_LOW>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_onewire_tm_default>;
++		status = "okay";
++
++		w1_eeprom: w1_eeprom@0 {
++			compatible = "maxim,ds24b33";
++			status = "okay";
++		};
++	};
++
++	ahb {
++		apb {
++			mmc0: mmc@f0000000 {
++				u-boot,dm-pre-reloc;
++				pinctrl-0 = <&pinctrl_mmc0_clk_cmd_dat0 &pinctrl_mmc0_dat1_3 &pinctrl_mmc0_dat4_7 &pinctrl_mmc0_cd>;
++				vmmc-supply = <&vcc_mmc0_reg>;
++				vqmmc-supply = <&vcc_3v3_reg>;
++				status = "okay";
++				slot@0 {
++					reg = <0>;
++					bus-width = <8>;
++					cd-gpios = <&pioE 0 GPIO_ACTIVE_LOW>;
++				};
++			};
++
++			mmc1: mmc@f8000000 {
++				u-boot,dm-pre-reloc;
++				vmmc-supply = <&vcc_3v3_reg>;
++				vqmmc-supply = <&vcc_3v3_reg>;
++				status = "disabled";
++				slot@0 {
++					reg = <0>;
++					bus-width = <4>;
++					cd-gpios = <&pioE 1 GPIO_ACTIVE_LOW>;
++				};
++			};
++
++			spi0: spi@f0004000 {
++				cs-gpios = <&pioD 13 0>, <0>, <0>, <&pioD 16 0>;
++				status = "okay";
++			};
++
++			can0: can@f000c000 {
++				status = "okay";
++			};
++
++			i2c0: i2c@f0014000 {
++				pinctrl-0 = <&pinctrl_i2c0_pu>;
++				status = "okay";
++			};
++
++			i2c1: i2c@f0018000 {
++				status = "okay";
++
++				pmic: act8865@5b {
++					compatible = "active-semi,act8865";
++					reg = <0x5b>;
++					status = "disabled";
++
++					regulators {
++						vcc_1v8_reg: DCDC_REG1 {
++							regulator-name = "VCC_1V8";
++							regulator-min-microvolt = <1800000>;
++							regulator-max-microvolt = <1800000>;
++							regulator-always-on;
++						};
++
++						vcc_1v2_reg: DCDC_REG2 {
++							regulator-name = "VCC_1V2";
++							regulator-min-microvolt = <1200000>;
++							regulator-max-microvolt = <1200000>;
++							regulator-always-on;
++						};
++
++						vcc_3v3_reg: DCDC_REG3 {
++							regulator-name = "VCC_3V3";
++							regulator-min-microvolt = <3300000>;
++							regulator-max-microvolt = <3300000>;
++							regulator-always-on;
++						};
++
++						vddfuse_reg: LDO_REG1 {
++							regulator-name = "FUSE_2V5";
++							regulator-min-microvolt = <2500000>;
++							regulator-max-microvolt = <2500000>;
++						};
++
++						vddana_reg: LDO_REG2 {
++							regulator-name = "VDDANA";
++							regulator-min-microvolt = <3300000>;
++							regulator-max-microvolt = <3300000>;
++							regulator-always-on;
++						};
++					};
++				};
++			};
++
++			macb0: ethernet@f0028000 {
++				phy-mode = "rgmii";
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "okay";
++
++				fixed-link {
++					speed = <1000>;
++					full-duplex;
++				};
++			};
++
++			pwm0: pwm@f002c000 {
++				pinctrl-names = "default";
++				pinctrl-0 = <&pinctrl_pwm0_pwmh0_0 &pinctrl_pwm0_pwmh1_0>;
++				status = "okay";
++			};
++
++			usart0: serial@f001c000 {
++				status = "okay";
++			};
++
++			usart1: serial@f0020000 {
++				pinctrl-0 = <&pinctrl_usart1 &pinctrl_usart1_rts_cts>;
++				status = "okay";
++			};
++
++			uart0: serial@f0024000 {
++				status = "okay";
++			};
++
++			mmc1: mmc@f8000000 {
++				pinctrl-0 = <&pinctrl_mmc1_clk_cmd_dat0 &pinctrl_mmc1_dat1_3 &pinctrl_mmc1_cd>;
++				status = "okay";
++				slot@0 {
++					reg = <0>;
++					bus-width = <4>;
++					cd-gpios = <&pioE 1 GPIO_ACTIVE_HIGH>;
++				};
++			};
++
++			spi1: spi@f8008000 {
++				cs-gpios = <&pioC 25 0>;
++				status = "okay";
++			};
++
++			adc0: adc@f8018000 {
++				pinctrl-0 = <
++					&pinctrl_adc0_adtrg
++					&pinctrl_adc0_ad0
++					&pinctrl_adc0_ad1
++					&pinctrl_adc0_ad2
++					&pinctrl_adc0_ad3
++					&pinctrl_adc0_ad4
++					&pinctrl_adc0_ad5
++					&pinctrl_adc0_ad6
++					&pinctrl_adc0_ad7
++					&pinctrl_adc0_ad8
++					&pinctrl_adc0_ad9
++					>;
++				status = "okay";
++			};
++
++			i2c2: i2c@f801c000 {
++				dmas = <0>, <0>;	/* Do not use DMA for i2c2 */
++				pinctrl-0 = <&pinctrl_i2c2_pu>;
++				status = "okay";
++			};
++
++			macb1: ethernet@f802c000 {
++				phy-mode = "rmii";
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++
++				ethernet-phy@1 {
++					reg = <0x1>;
++				};
++			};
++
++			dbgu: serial@ffffee00 {
++				u-boot,dm-pre-reloc;
++				status = "okay";
++			};
++
++			pinctrl@fffff200 {
++				board {
++					u-boot,dm-pre-reloc;
++					pinctrl_i2c0_pu: i2c0_pu {
++						atmel,pins =
++							<AT91_PIOA 30 AT91_PERIPH_A AT91_PINCTRL_PULL_UP>,
++							<AT91_PIOA 31 AT91_PERIPH_A AT91_PINCTRL_PULL_UP>;
++					};
++
++					pinctrl_i2c2_pu: i2c2_pu {
++						atmel,pins =
++							<AT91_PIOA 18 AT91_PERIPH_B AT91_PINCTRL_PULL_UP>,
++							<AT91_PIOA 19 AT91_PERIPH_B AT91_PINCTRL_PULL_UP>;
++					};
++
++					pinctrl_key_gpio: key_gpio_0 {
++						atmel,pins =
++							<AT91_PIOE 29 AT91_PERIPH_GPIO AT91_PINCTRL_PULL_UP_DEGLITCH>;
++					};
++
++					pinctrl_mmc0_cd: mmc0_cd {
++						u-boot,dm-pre-reloc;
++						atmel,pins =
++							<AT91_PIOE 0 AT91_PERIPH_GPIO AT91_PINCTRL_PULL_UP_DEGLITCH>;
++					};
++
++					pinctrl_mmc1_cd: mmc1_cd {
++						u-boot,dm-pre-reloc;
++						atmel,pins =
++							<AT91_PIOE 1 AT91_PERIPH_GPIO AT91_PINCTRL_PULL_UP_DEGLITCH>;
++					};
++
++					pinctrl_usba_vbus: usba_vbus {
++						atmel,pins =
++							<AT91_PIOE 9 AT91_PERIPH_GPIO AT91_PINCTRL_DEGLITCH>;	/* PE9, conflicts with A9 */
++					};
++
++					pinctrl_onewire_tm_default: onewire_tm_default {
++						atmel,pins =
++							<AT91_PIOE 23 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
++					};
++				};
++			};
++		};
++
++		nand0: nand@60000000 {
++			nand-bus-width = <8>;
++			nand-ecc-mode = "hw";
++			atmel,has-pmecc;
++			atmel,pmecc-cap = <4>;
++			atmel,pmecc-sector-size = <512>;
++			nand-on-flash-bbt;
++			status = "okay";
++
++			at91bootstrap@0 {
++				label = "at91bootstrap";
++				reg = <0x0 0x40000>;
++			};
++
++			bootloader@40000 {
++				label = "bootloader";
++				reg = <0x40000 0x80000>;
++			};
++
++			bootloaderenv@c0000 {
++				label = "bootloader env";
++				reg = <0xc0000 0xc0000>;
++			};
++
++			dtb@180000 {
++				label = "device tree";
++				reg = <0x180000 0x80000>;
++			};
++
++			kernel@200000 {
++				label = "kernel";
++				reg = <0x200000 0x600000>;
++			};
++
++			rootfs@800000 {
++				label = "rootfs";
++				reg = <0x800000 0x0f800000>;
++			};
++		};
++
++		usb0: gadget@00500000 {
++			atmel,vbus-gpio = <&pioE 9 GPIO_ACTIVE_HIGH>;	/* PE9, conflicts with A9 */
++			pinctrl-names = "default";
++			pinctrl-0 = <&pinctrl_usba_vbus>;
++			status = "okay";
++		};
++
++		usb1: ohci@00600000 {
++			num-ports = <3>;
++			atmel,vbus-gpio = <0
++					   &pioE 3 GPIO_ACTIVE_LOW
++					   &pioE 4 GPIO_ACTIVE_LOW
++					  >;
++			status = "okay";
++		};
++
++		usb2: ehci@00700000 {
++			status = "okay";
++		};
++	};
++
++	vcc_mmc0_reg: fixedregulator@0 {
++		compatible = "regulator-fixed";
++		gpio = <&pioE 2 GPIO_ACTIVE_LOW>;
++		regulator-name = "mmc0-card-supply";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		regulator-always-on;
++	};
++
++	gpio_keys {
++		compatible = "gpio-keys";
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_key_gpio>;
++
++		bp3 {
++			label = "PB_USER";
++			gpios = <&pioE 29 GPIO_ACTIVE_LOW>;
++			linux,code = <0x104>;
++			wakeup-source;
++		};
++	};
++
++	leds {
++		compatible = "gpio-leds";
++
++		d2 {
++			label = "d2";
++			gpios = <&pioE 23 GPIO_ACTIVE_LOW>;	/* PE23, conflicts with A23, CTS2 */
++			linux,default-trigger = "heartbeat";
++		};
++
++		d3 {
++			label = "d3";
++			gpios = <&pioE 24 GPIO_ACTIVE_HIGH>;
++		};
++	};
++};
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/cmd/spi_ksz.c u-boot-at91-linux4sam-2020.10.1/cmd/spi_ksz.c
+--- u-boot-at91-linux4sam-2020.10.1.orig/cmd/spi_ksz.c	1969-12-31 16:00:00.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/cmd/spi_ksz.c	2021-06-06 23:54:56.233289436 -0700
+@@ -0,0 +1,436 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2002
++ * Gerald Van Baren, Custom IDEAS, vanbaren@cideas.com
++ */
++
++/*
++ * SPI Read/Write Utilities
++ */
++
++#include <common.h>
++#include <command.h>
++#include <dm.h>
++#include <errno.h>
++#include <spi.h>
++
++/*-----------------------------------------------------------------------
++ * Definitions
++ */
++
++#ifndef MAX_SPI_BYTES
++#   define MAX_SPI_BYTES 32	/* Maximum number of bytes we can handle */
++#endif
++
++#define MAX_SPI_DATA_BYTES	(MAX_SPI_BYTES - 4)
++
++/*
++ * Values from last command.
++ */
++static unsigned int	bus = CONFIG_DEFAULT_SPI_BUS;
++static unsigned int	cs;
++static unsigned int	mode = CONFIG_DEFAULT_SPI_MODE;
++static int   		bitlen;
++static int		size;
++static uchar 		dout[MAX_SPI_BYTES];
++static uchar 		din[MAX_SPI_BYTES];
++
++#ifdef CONFIG_HAVE_KSZ9897
++
++/* SPI frame opcodes */
++#define KS_SPIOP_RD			3
++#define KS_SPIOP_WR			2
++
++#define SPI_ADDR_SHIFT			24
++#define SPI_ADDR_MASK			((1 << SPI_ADDR_SHIFT) - 1)
++#define SPI_TURNAROUND_SHIFT		5
++
++static int spi_cmd(uint addr, int len, int read)
++{
++	int j;
++	uint op = KS_SPIOP_WR;
++
++	if (read)
++		op = KS_SPIOP_RD;
++	addr &= SPI_ADDR_MASK;
++	addr |= op << SPI_ADDR_SHIFT;
++	addr <<= SPI_TURNAROUND_SHIFT;
++	for (j = 0; j < 4; j++) {
++		dout[3 - j] = (uchar) addr;
++		addr >>= 8;
++	}
++	return j;
++}
++
++static int spi_def_size(void)
++{
++	return 1;
++}
++
++static int spi_little(void)
++{
++	return 0;
++}
++
++static int spi_burst(void)
++{
++	return 1;
++}
++#endif
++
++#ifdef CONFIG_HAVE_KSZ8851
++
++/* SPI frame opcodes */
++#define KS_SPIOP_RD			(0x00)
++#define KS_SPIOP_WR			(0x40)
++#define KS_SPIOP_RXFIFO			(0x80)
++#define KS_SPIOP_TXFIFO			(0xC0)
++
++/* shift for byte-enable data */
++#define BYTE_EN(x)			((x) << 2)
++
++/* turn register number and byte-enable mask into data for start of packet */
++#define MK_OP(byteen, reg)  (BYTE_EN(byteen) | (reg) << (8 + 2) | (reg) >> 6)
++
++static int spi_cmd(uint addr, int len, int read)
++{
++	int bit;
++
++	switch (len) {
++	case 1:
++		bit = 1 << (addr & 3);
++		break;
++	case 4:
++		bit = 0xf;
++		break;
++	default:
++		bit = addr & 2 ? 0xc : 0x3;
++	}
++	addr = MK_OP(bit, addr);
++	if (!read)
++		addr |= KS_SPIOP_WR;
++	dout[0] = (uchar) addr;
++	addr >>= 8;
++	dout[1] = (uchar) addr;
++	return 2;
++}
++
++static int spi_def_size(void)
++{
++	return 2;
++}
++
++static int spi_little(void)
++{
++	return 1;
++}
++
++static int spi_burst(void)
++{
++	return 0;
++}
++#endif
++
++static int spi_data(char *param, uchar *val, int max, int cap, int size,
++	int num)
++{
++	char pad[8];
++	char hex[4];
++	int diff;
++	int i = 0;
++	int len = 0;
++	char *buf = param;
++
++	while (*buf++ && len < max) {
++		i++;
++		if (!(i & 1))
++			len++;
++	}
++	len = size * 2;
++	i %= len;
++	diff = (len - i) % len;
++	memset(pad, '0', 8);
++	pad[diff] = '\0';
++	hex[2] = '\0';
++	hex[1] = '\0';
++	i = 0;
++	len = 0;
++	buf = pad;
++	while (*buf) {
++		hex[i++] = *buf++;
++		if (2 == i) {
++			val[len++] = (uchar) simple_strtoul(hex, NULL, 16);
++			i = 0;
++		}
++	}
++	while (*param && len < max) {
++		hex[i++] = *param++;
++		if (2 == i) {
++			val[len++] = (uchar) simple_strtoul(hex, NULL, 16);
++			i = 0;
++		}
++	}
++	size *= num;
++	if (cap && len > size) {
++		diff = len - size;
++		len = size;
++		for (i = 0; i < len; i++)
++			val[i] = val[i + diff];
++	}
++	if (len < size) {
++		diff = size - len;
++		for (i = 0; i < len; i++)
++			val[i + diff] = val[i];
++		for (i = 0; i < diff; i++)
++			val[i] = 0;
++		len = size;
++	}
++	return len;
++}
++
++static int do_spi_xfer(int bus, int cs, int read, int start)
++{
++	struct spi_slave *slave;
++	int ret = 0;
++
++#ifdef CONFIG_DM_SPI
++	char name[30], *str;
++	struct udevice *dev;
++
++	snprintf(name, sizeof(name), "generic_%d:%d", bus, cs);
++	str = strdup(name);
++	if (!str)
++		return -ENOMEM;
++	ret = spi_get_bus_and_cs(bus, cs, 1000000, mode, "spi_generic_drv",
++				 str, &dev, &slave);
++	if (ret)
++		return ret;
++#else
++	slave = spi_setup_slave(bus, cs, 1000000, mode);
++	if (!slave) {
++		printf("Invalid device %d:%d\n", bus, cs);
++		return -EINVAL;
++	}
++#endif
++
++	ret = spi_claim_bus(slave);
++	if (ret)
++		goto done;
++	ret = spi_xfer(slave, bitlen, dout, din,
++		       SPI_XFER_BEGIN | SPI_XFER_END);
++#ifndef CONFIG_DM_SPI
++	/* We don't get an error code in this case */
++	if (ret)
++		ret = -EIO;
++#endif
++	if (ret) {
++		printf("Error %d during SPI transaction\n", ret);
++	}
++	if (!ret && read) {
++		int j;
++		int len;
++		int tmp;
++		int newline = 0;
++
++		tmp = 0;
++		len = bitlen / 8;
++		for (j = start; j < len; j += size) {
++			++tmp;
++			if (2 == size) {
++				if (spi_little()) {
++					ushort *tmp = (ushort *) &din[j];
++
++					*tmp = htons(*tmp);
++				}
++				printf("%02X%02X", din[j], din[j + 1]);
++				if (8 == tmp)
++					newline = 1;
++			} else if (4 == size) {
++				if (spi_little()) {
++					uint *tmp = (uint *) &din[j];
++
++					*tmp = htonl(*tmp);
++				}
++				printf("%02X%02X%02X%02X",
++					din[j], din[j + 1],
++					din[j + 2], din[j + 3]);
++				if (8 == tmp)
++					newline = 1;
++			} else {
++				printf("%02X", din[j]);
++				if (16 == tmp)
++					newline = 1;
++			}
++			if (newline) {
++				printf("\n");
++				tmp = 0;
++				newline = 0;
++			} else
++				printf(" ");
++		}
++		if (tmp)
++			printf("\n");
++	}
++
++done:
++	spi_release_bus(slave);
++#ifndef CONFIG_DM_SPI
++	spi_free_slave(slave);
++#endif
++
++	return ret;
++}
++
++/*
++ * SPI read/write
++ *
++ * Syntax:
++ *   kr {addr} {num}
++ *   kw {addr} {val} {num}
++ *     {addr} is the hexadecimal address
++ *     {num} is the number of addresses to access
++ *     {val} is a hexadecimal string of data to send
++ * The command prints out the hexadecimal string received via SPI.
++ */
++
++int do_ksz_spi (cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
++{
++	int   j;
++	int   len;
++	int   read = 0;
++	static int start = 0;
++
++	if ('r' == argv[0][1])
++		read = 1;
++
++	/*
++	 * We use the last specified parameters, unless new ones are
++	 * entered.
++	 */
++
++	if ((flag & CMD_FLAG_REPEAT) == 0)
++	{
++		uchar val[MAX_SPI_DATA_BYTES];
++		uint  addr;
++		int   cap = 0;
++		int   num = 1;
++		int   need = 3;
++
++		if (read)
++			need--;
++
++		if (argc < need)
++			return CMD_RET_USAGE;
++
++		/* Check for size specification.
++		*/
++		if ((size = cmd_get_data_size(argv[0], 1)) < 0)
++			return 1;
++		if ('.' != argv[0][2])
++			size = spi_def_size();
++		addr = simple_strtoul(argv[1], NULL, 16);
++
++		if (argc > need && spi_burst()) {
++			cap = simple_strtoul(argv[need], NULL, 16);
++			if (cap) {
++				len = cap * size;
++				if (len > MAX_SPI_DATA_BYTES)
++					cap = MAX_SPI_DATA_BYTES / size;
++				num = cap;
++			}
++		}
++		if (!read)
++			len = spi_data(argv[2], val, MAX_SPI_DATA_BYTES, cap,
++				size, num);
++		else {
++			len = num * size;
++			memset(val, 0, len);
++		}
++
++		start = spi_cmd(addr, size, read);
++		num = size;
++		for (j = 0; j < len; j++) {
++			dout[j + start] = val[j];
++			if (size > 1 && spi_little()) {
++				--num;
++				if (!num) {
++					if (2 == size) {
++						ushort *tmp = (ushort *)
++							&dout[(j & ~1) + start];
++
++						*tmp = htons(*tmp);
++					} else if (4 == size) {
++						uint *tmp = (uint *)
++							&dout[(j & ~3) + start];
++
++						*tmp = htonl(*tmp);
++					}
++					num = size;
++				}
++			}
++		}
++		len += start;
++		bitlen = len * 8;
++	}
++
++	if (do_spi_xfer(bus, cs, read, start))
++		return 1;
++
++	return 0;
++}
++
++/*
++ * SPI config
++ *
++ * Syntax:
++ *   spi {dev}
++ *     {dev} is the device number for controlling chip select (see TBD)
++ */
++
++int do_cfg_spi (cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
++{
++	char  *cp = 0;
++
++	/*
++	 * We use the last specified parameters, unless new ones are
++	 * entered.
++	 */
++
++	if ((flag & CMD_FLAG_REPEAT) == 0)
++	{
++		if (argc >= 2) {
++			cs = simple_strtoul(argv[1], &cp, 10);
++			if (*cp == ':') {
++				bus = cs;
++				cs = simple_strtoul(cp+1, &cp, 10);
++			}
++			if (*cp == '.')
++				mode = simple_strtoul(cp+1, NULL, 10);
++		}
++	}
++
++	return 0;
++}
++
++/***************************************************/
++
++U_BOOT_CMD(
++	kr,	3,	1,	do_ksz_spi,
++	"KSZ SPI read command",
++	"[.b, .w, .l] <addr> [num] - Read from KSZ switch register"
++);
++
++U_BOOT_CMD(
++	kw,	4,	1,	do_ksz_spi,
++	"KSZ SPI write command",
++	"[.b, .w, .l] <addr> <val> [num] - Write to KSZ switch register"
++);
++
++U_BOOT_CMD(
++	ks,	2,	1,	do_cfg_spi,
++	"SPI config command",
++	"[<bus>:]<cs>[.<mode>] - Configure bus, cs, and mode\n"
++	"<bus>     - Identifies the SPI bus\n"
++	"<cs>      - Identifies the chip select\n"
++	"<mode>    - Identifies the SPI mode to use"
++);
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/configs/sama5d3_xplained_ung8071_mmc_defconfig u-boot-at91-linux4sam-2020.10.1/configs/sama5d3_xplained_ung8071_mmc_defconfig
+--- u-boot-at91-linux4sam-2020.10.1.orig/configs/sama5d3_xplained_ung8071_mmc_defconfig	1969-12-31 16:00:00.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/configs/sama5d3_xplained_ung8071_mmc_defconfig	2021-08-30 14:12:42.963272315 -0700
+@@ -0,0 +1,83 @@
++CONFIG_ARM=y
++CONFIG_ARCH_CPU_INIT=y
++CONFIG_ARCH_AT91=y
++CONFIG_SYS_TEXT_BASE=0x26f00000
++CONFIG_HAVE_KSZ9897=y
++CONFIG_TARGET_SAMA5D3_XPLAINED_DEV=y
++CONFIG_SYS_MALLOC_F_LEN=0x2000
++CONFIG_ENV_SIZE=0x4000
++CONFIG_NR_DRAM_BANKS=1
++CONFIG_DEBUG_UART_BOARD_INIT=y
++CONFIG_DEBUG_UART_BASE=0xffffee00
++CONFIG_DEBUG_UART_CLOCK=132000000
++CONFIG_DEBUG_UART=y
++CONFIG_ENV_VARS_UBOOT_CONFIG=y
++CONFIG_FIT=y
++CONFIG_SD_BOOT=y
++CONFIG_BOOTDELAY=3
++CONFIG_USE_BOOTARGS=y
++CONFIG_BOOTARGS="console=ttyS0,115200 earlyprintk root=/dev/mmcblk0p2 rw rootwait"
++# CONFIG_DISPLAY_BOARDINFO is not set
++CONFIG_HUSH_PARSER=y
++CONFIG_CMD_BOOTZ=y
++# CONFIG_BOOTM_NETBSD is not set
++# CONFIG_BOOTM_PLAN9 is not set
++# CONFIG_BOOTM_RTEMS is not set
++# CONFIG_BOOTM_VXWORKS is not set
++# CONFIG_CMD_ELF is not set
++# CONFIG_CMD_FLASH is not set
++CONFIG_CMD_I2C=y
++# CONFIG_CMD_LOADS is not set
++CONFIG_CMD_MMC=y
++CONFIG_CMD_NAND=y
++CONFIG_CMD_NAND_TRIMFFS=y
++CONFIG_CMD_SPI_KSZ=y
++CONFIG_CMD_SPI=y
++CONFIG_DEFAULT_SPI_BUS=1
++CONFIG_CMD_DHCP=y
++CONFIG_CMD_MII=y
++CONFIG_CMD_PING=y
++# CONFIG_CMD_BLOCK_CACHE is not set
++CONFIG_CMD_EXT4=y
++CONFIG_CMD_EXT4_WRITE=y
++CONFIG_CMD_FAT=y
++CONFIG_CMD_FS_GENERIC=y
++CONFIG_CMD_MTDPARTS=y
++CONFIG_OF_CONTROL=y
++CONFIG_DEFAULT_DEVICE_TREE="at91-sama5d3_xplained_dev"
++CONFIG_ENV_IS_IN_FAT=y
++CONFIG_SYS_RELOC_GD_ENV_ADDR=y
++CONFIG_DM=y
++CONFIG_CLK=y
++CONFIG_CLK_AT91=y
++CONFIG_AT91_UTMI=y
++CONFIG_AT91_H32MX=y
++CONFIG_DM_GPIO=y
++CONFIG_AT91_GPIO=y
++CONFIG_DM_I2C=y
++CONFIG_SYS_I2C_AT91=y
++CONFIG_DM_MMC=y
++CONFIG_GENERIC_ATMEL_MCI=y
++CONFIG_MTD=y
++CONFIG_MTD_RAW_NAND=y
++CONFIG_NAND_ATMEL=y
++CONFIG_ATMEL_NAND_HW_PMECC=y
++CONFIG_PMECC_CAP=4
++CONFIG_MTD_UBI=y
++CONFIG_PHY_FIXED=y
++CONFIG_DM_ETH=y
++CONFIG_MACB=y
++CONFIG_PINCTRL=y
++CONFIG_PINCTRL_AT91=y
++# CONFIG_RAM_ROCKCHIP_DEBUG is not set
++CONFIG_DM_SERIAL=y
++CONFIG_DEBUG_UART_ATMEL=y
++CONFIG_DEBUG_UART_ANNOUNCE=y
++CONFIG_ATMEL_USART=y
++CONFIG_SPI=y
++CONFIG_DM_SPI=y
++CONFIG_TIMER=y
++CONFIG_ATMEL_PIT_TIMER=y
++CONFIG_LZO=y
++CONFIG_OF_LIBFDT_OVERLAY=y
++# CONFIG_EFI_LOADER is not set
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/configs/sama5d3_xplained_ung8071_nandflash_defconfig u-boot-at91-linux4sam-2020.10.1/configs/sama5d3_xplained_ung8071_nandflash_defconfig
+--- u-boot-at91-linux4sam-2020.10.1.orig/configs/sama5d3_xplained_ung8071_nandflash_defconfig	1969-12-31 16:00:00.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/configs/sama5d3_xplained_ung8071_nandflash_defconfig	2021-08-30 13:56:26.627231442 -0700
+@@ -0,0 +1,85 @@
++CONFIG_ARM=y
++CONFIG_ARCH_CPU_INIT=y
++CONFIG_ARCH_AT91=y
++CONFIG_SYS_TEXT_BASE=0x26f00000
++CONFIG_HAVE_KSZ9897=y
++CONFIG_TARGET_SAMA5D3_XPLAINED_DEV=y
++CONFIG_SYS_MALLOC_F_LEN=0x2000
++CONFIG_ENV_OFFSET=0xC0000
++CONFIG_NR_DRAM_BANKS=1
++CONFIG_DEBUG_UART_BOARD_INIT=y
++CONFIG_DEBUG_UART_BASE=0xffffee00
++CONFIG_DEBUG_UART_CLOCK=132000000
++CONFIG_DEBUG_UART=y
++CONFIG_ENV_VARS_UBOOT_CONFIG=y
++CONFIG_BUILD_TARGET="u-boot-with-spl.bin"
++CONFIG_FIT=y
++CONFIG_NAND_BOOT=y
++CONFIG_BOOTDELAY=3
++CONFIG_USE_BOOTARGS=y
++CONFIG_BOOTARGS="console=ttyS0,115200 earlyprintk mtdparts=atmel_nand:256k(bootstrap)ro,768k(uboot)ro,256K(env_redundant),256k(env),512k(dtb),6M(kernel)ro,-(rootfs) rootfstype=ubifs ubi.mtd=6 root=ubi0:rootfs"
++# CONFIG_DISPLAY_BOARDINFO is not set
++CONFIG_HUSH_PARSER=y
++CONFIG_CMD_BOOTZ=y
++# CONFIG_BOOTM_NETBSD is not set
++# CONFIG_BOOTM_PLAN9 is not set
++# CONFIG_BOOTM_RTEMS is not set
++# CONFIG_BOOTM_VXWORKS is not set
++# CONFIG_CMD_ELF is not set
++# CONFIG_CMD_FLASH is not set
++CONFIG_CMD_I2C=y
++# CONFIG_CMD_LOADS is not set
++CONFIG_CMD_MMC=y
++CONFIG_CMD_NAND=y
++CONFIG_CMD_NAND_TRIMFFS=y
++CONFIG_CMD_SPI_KSZ=y
++CONFIG_CMD_SPI=y
++CONFIG_DEFAULT_SPI_BUS=1
++CONFIG_CMD_DHCP=y
++CONFIG_CMD_MII=y
++CONFIG_CMD_PING=y
++# CONFIG_CMD_BLOCK_CACHE is not set
++CONFIG_CMD_FAT=y
++CONFIG_CMD_MTDPARTS=y
++CONFIG_OF_CONTROL=y
++CONFIG_DEFAULT_DEVICE_TREE="at91-sama5d3_xplained_dev"
++CONFIG_ENV_IS_IN_NAND=y
++CONFIG_SYS_REDUNDAND_ENVIRONMENT=y
++CONFIG_ENV_OFFSET_REDUND=0x100000
++CONFIG_SYS_RELOC_GD_ENV_ADDR=y
++CONFIG_DM=y
++CONFIG_CLK=y
++CONFIG_CLK_AT91=y
++CONFIG_AT91_UTMI=y
++CONFIG_AT91_H32MX=y
++CONFIG_DM_GPIO=y
++CONFIG_AT91_GPIO=y
++CONFIG_DM_I2C=y
++CONFIG_SYS_I2C_AT91=y
++CONFIG_DM_MMC=y
++CONFIG_GENERIC_ATMEL_MCI=y
++CONFIG_MTD=y
++CONFIG_NAND_ATMEL=y
++CONFIG_PMECC_CAP=4
++CONFIG_SPL_GENERATE_ATMEL_PMECC_HEADER=y
++CONFIG_MTD_UBI=y
++CONFIG_PHY_FIXED=y
++CONFIG_DM_ETH=y
++CONFIG_MACB=y
++CONFIG_PINCTRL=y
++CONFIG_PINCTRL_AT91=y
++# CONFIG_RAM_ROCKCHIP_DEBUG is not set
++CONFIG_DM_SERIAL=y
++CONFIG_DEBUG_UART_ATMEL=y
++CONFIG_DEBUG_UART_ANNOUNCE=y
++CONFIG_ATMEL_USART=y
++CONFIG_SPI=y
++CONFIG_DM_SPI=y
++CONFIG_TIMER=y
++CONFIG_ATMEL_PIT_TIMER=y
++CONFIG_FS_EXT4=y
++CONFIG_EXT4_WRITE=y
++CONFIG_FAT_WRITE=y
++CONFIG_LZO=y
++CONFIG_OF_LIBFDT_OVERLAY=y
++# CONFIG_EFI_LOADER is not set
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/configs/sama5d3_xplained_ung8087_mmc_defconfig u-boot-at91-linux4sam-2020.10.1/configs/sama5d3_xplained_ung8087_mmc_defconfig
+--- u-boot-at91-linux4sam-2020.10.1.orig/configs/sama5d3_xplained_ung8087_mmc_defconfig	1969-12-31 16:00:00.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/configs/sama5d3_xplained_ung8087_mmc_defconfig	2021-08-30 14:22:03.527295783 -0700
+@@ -0,0 +1,83 @@
++CONFIG_ARM=y
++CONFIG_ARCH_CPU_INIT=y
++CONFIG_ARCH_AT91=y
++CONFIG_SYS_TEXT_BASE=0x26f00000
++CONFIG_HAVE_KSZ9897=y
++CONFIG_TARGET_SAMA5D3_XPLAINED_DEV=y
++CONFIG_SYS_MALLOC_F_LEN=0x2000
++CONFIG_ENV_SIZE=0x4000
++CONFIG_NR_DRAM_BANKS=1
++CONFIG_DEBUG_UART_BOARD_INIT=y
++CONFIG_DEBUG_UART_BASE=0xffffee00
++CONFIG_DEBUG_UART_CLOCK=132000000
++CONFIG_DEBUG_UART=y
++CONFIG_ENV_VARS_UBOOT_CONFIG=y
++CONFIG_FIT=y
++CONFIG_SD_BOOT=y
++CONFIG_BOOTDELAY=3
++CONFIG_USE_BOOTARGS=y
++CONFIG_BOOTARGS="console=ttyS0,115200 earlyprintk root=/dev/mmcblk0p2 rw rootwait"
++# CONFIG_DISPLAY_BOARDINFO is not set
++CONFIG_HUSH_PARSER=y
++CONFIG_CMD_BOOTZ=y
++# CONFIG_BOOTM_NETBSD is not set
++# CONFIG_BOOTM_PLAN9 is not set
++# CONFIG_BOOTM_RTEMS is not set
++# CONFIG_BOOTM_VXWORKS is not set
++# CONFIG_CMD_ELF is not set
++# CONFIG_CMD_FLASH is not set
++CONFIG_CMD_I2C=y
++# CONFIG_CMD_LOADS is not set
++CONFIG_CMD_MMC=y
++CONFIG_CMD_NAND=y
++CONFIG_CMD_NAND_TRIMFFS=y
++CONFIG_CMD_SPI_KSZ=y
++CONFIG_CMD_SPI=y
++CONFIG_DEFAULT_SPI_BUS=0
++CONFIG_CMD_DHCP=y
++CONFIG_CMD_MII=y
++CONFIG_CMD_PING=y
++# CONFIG_CMD_BLOCK_CACHE is not set
++CONFIG_CMD_EXT4=y
++CONFIG_CMD_EXT4_WRITE=y
++CONFIG_CMD_FAT=y
++CONFIG_CMD_FS_GENERIC=y
++CONFIG_CMD_MTDPARTS=y
++CONFIG_OF_CONTROL=y
++CONFIG_DEFAULT_DEVICE_TREE="at91-sama5d3_xplained_dev"
++CONFIG_ENV_IS_IN_FAT=y
++CONFIG_SYS_RELOC_GD_ENV_ADDR=y
++CONFIG_DM=y
++CONFIG_CLK=y
++CONFIG_CLK_AT91=y
++CONFIG_AT91_UTMI=y
++CONFIG_AT91_H32MX=y
++CONFIG_DM_GPIO=y
++CONFIG_AT91_GPIO=y
++CONFIG_DM_I2C=y
++CONFIG_SYS_I2C_AT91=y
++CONFIG_DM_MMC=y
++CONFIG_GENERIC_ATMEL_MCI=y
++CONFIG_MTD=y
++CONFIG_MTD_RAW_NAND=y
++CONFIG_NAND_ATMEL=y
++CONFIG_ATMEL_NAND_HW_PMECC=y
++CONFIG_PMECC_CAP=4
++CONFIG_MTD_UBI=y
++CONFIG_PHY_FIXED=y
++CONFIG_DM_ETH=y
++CONFIG_MACB=y
++CONFIG_PINCTRL=y
++CONFIG_PINCTRL_AT91=y
++# CONFIG_RAM_ROCKCHIP_DEBUG is not set
++CONFIG_DM_SERIAL=y
++CONFIG_DEBUG_UART_ATMEL=y
++CONFIG_DEBUG_UART_ANNOUNCE=y
++CONFIG_ATMEL_USART=y
++CONFIG_SPI=y
++CONFIG_DM_SPI=y
++CONFIG_TIMER=y
++CONFIG_ATMEL_PIT_TIMER=y
++CONFIG_LZO=y
++CONFIG_OF_LIBFDT_OVERLAY=y
++# CONFIG_EFI_LOADER is not set
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/configs/sama5d3_xplained_ung8087_nandflash_defconfig u-boot-at91-linux4sam-2020.10.1/configs/sama5d3_xplained_ung8087_nandflash_defconfig
+--- u-boot-at91-linux4sam-2020.10.1.orig/configs/sama5d3_xplained_ung8087_nandflash_defconfig	1969-12-31 16:00:00.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/configs/sama5d3_xplained_ung8087_nandflash_defconfig	2021-08-30 13:59:57.427240267 -0700
+@@ -0,0 +1,85 @@
++CONFIG_ARM=y
++CONFIG_ARCH_CPU_INIT=y
++CONFIG_ARCH_AT91=y
++CONFIG_SYS_TEXT_BASE=0x26f00000
++CONFIG_HAVE_KSZ9897=y
++CONFIG_TARGET_SAMA5D3_XPLAINED_DEV=y
++CONFIG_SYS_MALLOC_F_LEN=0x2000
++CONFIG_ENV_OFFSET=0xC0000
++CONFIG_NR_DRAM_BANKS=1
++CONFIG_DEBUG_UART_BOARD_INIT=y
++CONFIG_DEBUG_UART_BASE=0xffffee00
++CONFIG_DEBUG_UART_CLOCK=132000000
++CONFIG_DEBUG_UART=y
++CONFIG_ENV_VARS_UBOOT_CONFIG=y
++CONFIG_BUILD_TARGET="u-boot-with-spl.bin"
++CONFIG_FIT=y
++CONFIG_NAND_BOOT=y
++CONFIG_BOOTDELAY=3
++CONFIG_USE_BOOTARGS=y
++CONFIG_BOOTARGS="console=ttyS0,115200 earlyprintk mtdparts=atmel_nand:256k(bootstrap)ro,768k(uboot)ro,256K(env_redundant),256k(env),512k(dtb),6M(kernel)ro,-(rootfs) rootfstype=ubifs ubi.mtd=6 root=ubi0:rootfs"
++# CONFIG_DISPLAY_BOARDINFO is not set
++CONFIG_HUSH_PARSER=y
++CONFIG_CMD_BOOTZ=y
++# CONFIG_BOOTM_NETBSD is not set
++# CONFIG_BOOTM_PLAN9 is not set
++# CONFIG_BOOTM_RTEMS is not set
++# CONFIG_BOOTM_VXWORKS is not set
++# CONFIG_CMD_ELF is not set
++# CONFIG_CMD_FLASH is not set
++CONFIG_CMD_I2C=y
++# CONFIG_CMD_LOADS is not set
++CONFIG_CMD_MMC=y
++CONFIG_CMD_NAND=y
++CONFIG_CMD_NAND_TRIMFFS=y
++CONFIG_CMD_SPI_KSZ=y
++CONFIG_CMD_SPI=y
++CONFIG_DEFAULT_SPI_BUS=0
++CONFIG_CMD_DHCP=y
++CONFIG_CMD_MII=y
++CONFIG_CMD_PING=y
++# CONFIG_CMD_BLOCK_CACHE is not set
++CONFIG_CMD_FAT=y
++CONFIG_CMD_MTDPARTS=y
++CONFIG_OF_CONTROL=y
++CONFIG_DEFAULT_DEVICE_TREE="at91-sama5d3_xplained_dev"
++CONFIG_ENV_IS_IN_NAND=y
++CONFIG_SYS_REDUNDAND_ENVIRONMENT=y
++CONFIG_ENV_OFFSET_REDUND=0x100000
++CONFIG_SYS_RELOC_GD_ENV_ADDR=y
++CONFIG_DM=y
++CONFIG_CLK=y
++CONFIG_CLK_AT91=y
++CONFIG_AT91_UTMI=y
++CONFIG_AT91_H32MX=y
++CONFIG_DM_GPIO=y
++CONFIG_AT91_GPIO=y
++CONFIG_DM_I2C=y
++CONFIG_SYS_I2C_AT91=y
++CONFIG_DM_MMC=y
++CONFIG_GENERIC_ATMEL_MCI=y
++CONFIG_MTD=y
++CONFIG_NAND_ATMEL=y
++CONFIG_PMECC_CAP=4
++CONFIG_SPL_GENERATE_ATMEL_PMECC_HEADER=y
++CONFIG_MTD_UBI=y
++CONFIG_PHY_FIXED=y
++CONFIG_DM_ETH=y
++CONFIG_MACB=y
++CONFIG_PINCTRL=y
++CONFIG_PINCTRL_AT91=y
++# CONFIG_RAM_ROCKCHIP_DEBUG is not set
++CONFIG_DM_SERIAL=y
++CONFIG_DEBUG_UART_ATMEL=y
++CONFIG_DEBUG_UART_ANNOUNCE=y
++CONFIG_ATMEL_USART=y
++CONFIG_SPI=y
++CONFIG_DM_SPI=y
++CONFIG_TIMER=y
++CONFIG_ATMEL_PIT_TIMER=y
++CONFIG_FS_EXT4=y
++CONFIG_EXT4_WRITE=y
++CONFIG_FAT_WRITE=y
++CONFIG_LZO=y
++CONFIG_OF_LIBFDT_OVERLAY=y
++# CONFIG_EFI_LOADER is not set
+diff -purN u-boot-at91-linux4sam-2020.10.1.orig/include/configs/sama5d3_xplained_dev.h u-boot-at91-linux4sam-2020.10.1/include/configs/sama5d3_xplained_dev.h
+--- u-boot-at91-linux4sam-2020.10.1.orig/include/configs/sama5d3_xplained_dev.h	1969-12-31 16:00:00.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/include/configs/sama5d3_xplained_dev.h	2021-06-07 01:18:07.520806263 -0700
+@@ -0,0 +1,89 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * Configuration settings for the SAMA5D3 Xplained board.
++ *
++ * Copyright (C) 2014 Atmel Corporation
++ *		      Bo Shen <voice.shen@atmel.com>
++ */
++
++#ifndef __CONFIG_H
++#define __CONFIG_H
++
++#include <linux/sizes.h>
++#include "at91-sama5_common.h"
++
++/*
++ * This needs to be defined for the OHCI code to work but it is defined as
++ * ATMEL_ID_UHPHS in the CPU specific header files.
++ */
++#define ATMEL_ID_UHP			32
++
++/*
++ * Specify the clock enable bit in the PMC_SCER register.
++ */
++#define ATMEL_PMC_UHP			(1 <<  6)
++
++/* SDRAM */
++#define CONFIG_SYS_SDRAM_BASE           0x20000000
++#define CONFIG_SYS_SDRAM_SIZE		0x10000000
++
++#ifdef CONFIG_SPL_BUILD
++#define CONFIG_SYS_INIT_SP_ADDR		0x318000
++#else
++#define CONFIG_SYS_INIT_SP_ADDR \
++	(CONFIG_SYS_SDRAM_BASE + 16 * 1024 - GENERATED_GBL_DATA_SIZE)
++#endif
++
++/* NAND flash */
++#ifdef CONFIG_CMD_NAND
++#define CONFIG_SYS_MAX_NAND_DEVICE	1
++#define CONFIG_SYS_NAND_BASE		0x60000000
++/* our ALE is AD21 */
++#define CONFIG_SYS_NAND_MASK_ALE	(1 << 21)
++/* our CLE is AD22 */
++#define CONFIG_SYS_NAND_MASK_CLE	(1 << 22)
++#define CONFIG_SYS_NAND_ONFI_DETECTION
++#endif
++
++/* USB */
++#ifdef CONFIG_CMD_USB
++#define CONFIG_USB_ATMEL
++#define CONFIG_USB_ATMEL_CLK_SEL_UPLL
++#define CONFIG_USB_OHCI_NEW
++#define CONFIG_SYS_USB_OHCI_CPU_INIT
++#define CONFIG_SYS_USB_OHCI_REGS_BASE		0x00600000
++#define CONFIG_SYS_USB_OHCI_SLOT_NAME		"SAMA5D3 Xplained"
++#define CONFIG_SYS_USB_OHCI_MAX_ROOT_PORTS	2
++#endif
++
++#define CONFIG_SYS_LOAD_ADDR			0x22000000 /* load address */
++
++/* SPL */
++#define CONFIG_SPL_MAX_SIZE		0x18000
++#define CONFIG_SPL_BSS_START_ADDR	0x20000000
++#define CONFIG_SPL_BSS_MAX_SIZE		0x80000
++#define CONFIG_SYS_SPL_MALLOC_START	0x20080000
++#define CONFIG_SYS_SPL_MALLOC_SIZE	0x80000
++
++/* size of u-boot.bin to load */
++#define CONFIG_SYS_MONITOR_LEN		(2 * SZ_512K)
++
++#ifdef CONFIG_SD_BOOT
++#define CONFIG_SYS_MMCSD_FS_BOOT_PARTITION	1
++#define CONFIG_SPL_FS_LOAD_PAYLOAD_NAME	"u-boot.img"
++
++#elif CONFIG_NAND_BOOT
++#define CONFIG_SPL_NAND_DRIVERS
++#define CONFIG_SPL_NAND_BASE
++#endif
++#define CONFIG_SYS_NAND_U_BOOT_OFFS	0x40000
++#define CONFIG_SYS_NAND_5_ADDR_CYCLE
++#define CONFIG_SYS_NAND_PAGE_SIZE	0x800
++#define CONFIG_SYS_NAND_PAGE_COUNT	64
++#define CONFIG_SYS_NAND_OOBSIZE		64
++#define CONFIG_SYS_NAND_BLOCK_SIZE	0x20000
++#define CONFIG_SYS_NAND_BAD_BLOCK_POS	0x0
++
++#define CONFIG_SYS_CBSIZE		512
++
++#endif

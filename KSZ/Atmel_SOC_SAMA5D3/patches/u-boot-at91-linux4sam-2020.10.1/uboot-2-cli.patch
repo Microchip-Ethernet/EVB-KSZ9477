@@ -1,0 +1,115 @@
+--- u-boot-at91-linux4sam-2020.10.1.orig/common/cli_hush.c	2021-01-14 23:11:03.000000000 -0800
++++ u-boot-at91-linux4sam-2020.10.1/common/cli_hush.c	2021-06-07 00:39:16.236378532 -0700
+@@ -2764,6 +2764,43 @@ static int parse_group(o_string *dest, s
+ }
+ #endif
+ 
++/* This function checks if a required variable inside the variable exists. */
++static char *chk_var(char *src)
++{
++	char *env;
++	char *ptr;
++	char *q;
++	char *start;
++	char *stop;
++	char buf[CONFIG_SYS_PBSIZE];
++
++	strncpy(buf, src, CONFIG_SYS_PBSIZE - 1);
++	buf[CONFIG_SYS_PBSIZE - 1] = '\0';
++	ptr = buf;
++	do {
++		stop = NULL;
++		start = strchr(ptr, '$');
++		if (start && *(start + 1) == '{') {
++			env = start + 2;
++			stop = strchr(env, '}');
++			if (stop) {
++				*stop = '\0';
++
++				/* variable starts with _ is not essential. */
++				if (*env != '_') {
++					q = env_get(env);
++					if (!q) {
++						start = NULL;
++						src = NULL;
++					}
++				}
++				ptr = stop + 1;
++			}
++		}
++	} while (start && stop);
++	return src;
++}
++
+ /* basically useful version until someone wants to get fancier,
+  * see the bash man page under "Parameter Expansion" */
+ static char *lookup_param(char *src)
+@@ -2796,6 +2833,68 @@ static char *lookup_param(char *src)
+ 	p = env_get(src);
+ 	if (!p)
+ 		p = get_local_var(src);
++	else if (env_get_yesno("subst_var")) {
++		char *env;
++		char *start;
++		char *stop;
++		char *q;
++		char *ptr;
++		int left;
++		int len;
++		char buf[CONFIG_SYS_PBSIZE];
++		static char res[CONFIG_SYS_PBSIZE];
++
++		len = strlen(p);
++		do {
++			ptr = res;
++			left = CONFIG_SYS_PBSIZE;
++			start = stop = NULL;
++			if (len < CONFIG_SYS_PBSIZE) {
++				strncpy(buf, p, len);
++				buf[len] = '\0';
++				start = strchr(buf, '$');
++			}
++			if (start && *(start + 1) == '{') {
++				len = start - buf;
++				env = start + 2;
++				stop = strchr(env, '}');
++				if (stop) {
++					*start = '\0';
++					*stop = '\0';
++					q = env_get(env);
++					if (q)
++						q = chk_var(q);
++					strncpy(ptr, buf, len);
++					ptr[len] = '\0';
++					ptr += len;
++					left -= len;
++					len = strlen(stop + 1);
++					left -= len;
++					if (q) {
++						len = strlen(q);
++						if (len < left) {
++							strncpy(ptr, q, len);
++							ptr[len] = '\0';
++							ptr += len;
++							left -= len;
++						} else {
++							/* Cannot expand. */
++							*start = '$';
++							*stop = '}';
++							stop = start - 1;
++							start = NULL;
++						}
++					} else if (' ' == *(stop + 1))
++						++stop;
++					strcpy(ptr, stop + 1);
++					p = res;
++					len = strlen(res);
++				}
++			}
++		} while (start && stop);
++		if (p == res && ' ' == res[len - 1])
++			res[len - 1] = '\0';
++	}
+ 
+ 	if (!p || strlen(p) == 0) {
+ 		p = default_val;

@@ -384,4 +384,10 @@ config BR2_TARGET_UBOOT_ENV
 	  Select this option for accessing U-Boot environmental variables
 	  from Linux kernel.
 
+config BR2_TARGET_UBOOT_ENVTOOLS
+	bool "U-Boot fw_printenv utility in new U-Boot"
+	help
+	  Select this option for accessing U-Boot environmental variables
+	  from Linux kernel.
+
 endif # BR2_TARGET_UBOOT

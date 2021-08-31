@@ -155,6 +155,11 @@ define UBOOT_BUILD_CMDS
 			$(MAKE) -C $(@D) 		\
 			CROSS_COMPILE="$(TARGET_CROSS)" \
 			env)
+	$(if $(BR2_TARGET_UBOOT_ENVTOOLS),
+		$(TARGET_CONFIGURE_OPTS) 		\
+			$(MAKE) -C $(@D) 		\
+			CROSS_COMPILE="$(TARGET_CROSS)" \
+			envtools)
 	$(if $(BR2_TARGET_UBOOT_FORMAT_SD),
 		$(@D)/tools/mxsboot sd $(@D)/u-boot.sb $(@D)/u-boot.sd)
 	$(if $(BR2_TARGET_UBOOT_FORMAT_NAND),
@@ -175,6 +180,10 @@ define UBOOT_INSTALL_IMAGES_CMDS
 	$(if $(BR2_TARGET_UBOOT_ENV),
 		cp -dpf $(@D)/tools/env/fw_printenv $(TARGET_DIR)/sbin)
 	$(if $(BR2_TARGET_UBOOT_ENV),
+		ln -sf fw_printenv $(TARGET_DIR)/sbin/fw_setenv)
+	$(if $(BR2_TARGET_UBOOT_ENVTOOLS),
+		cp -dpf $(@D)/tools/env/fw_printenv $(TARGET_DIR)/sbin)
+	$(if $(BR2_TARGET_UBOOT_ENVTOOLS),
 		ln -sf fw_printenv $(TARGET_DIR)/sbin/fw_setenv)
 	$(if $(BR2_TARGET_UBOOT_FORMAT_NAND),
 		cp -dpf $(@D)/$(UBOOT_MAKE_TARGET) $(BINARIES_DIR))

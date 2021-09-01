@@ -41,10 +41,6 @@
 #include "stmmac_ptp.h"
 #include "stmmac.h"
 
-#if defined(CONFIG_IBA_KSZ9897) || defined(CONFIG_IBA_LAN937X)
-#define CONFIG_KSZ_IBA_ONLY
-#endif
-
 #if defined(CONFIG_KSZ_SWITCH_EMBEDDED)
 #include <linux/of_irq.h>
 #include <linux/of_net.h>
@@ -208,12 +204,13 @@ static void get_sysfs_data_(struct net_device *dev,
 #endif
 
 #ifdef CONFIG_1588_PTP
-#ifdef CONFIG_HAVE_LAN937X
-#include "../../microchip/lan937x_ptp_sysfs.c"
-#else
+#if defined(CONFIG_HAVE_KSZ9897)
 #include "../../micrel/ksz_ptp_sysfs.c"
+#elif defined(CONFIG_HAVE_LAN937X)
+#include "../../microchip/lan937x_ptp_sysfs.c"
 #endif
 #endif
+
 #ifdef CONFIG_KSZ_DLR
 #include "../../micrel/ksz_dlr_sysfs.c"
 #endif

@@ -19,6 +19,12 @@
 #include <linux/ptp_clock_kernel.h>
 #include <linux/timecounter.h>
 
+#if defined(CONFIG_LAN937X_SWITCH)
+#ifndef CONFIG_KSZ_SWITCH
+#define CONFIG_KSZ_SWITCH
+#endif
+#endif
+
 #ifdef CONFIG_KSZ_SWITCH
 #ifdef CONFIG_PHYLINK
 #include <linux/phylink.h>

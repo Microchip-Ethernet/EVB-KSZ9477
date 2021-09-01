@@ -37,21 +37,6 @@
 #include <linux/pm_runtime.h>
 #include "macb.h"
 
-#if defined(CONFIG_LAN937X_SWITCH)
-#define CONFIG_KSZ_SWITCH
-
-#if defined(CONFIG_LAN937X_SWITCH_EMBEDDED)
-#define CONFIG_KSZ_SWITCH_EMBEDDED
-#endif
-
-#if defined(CONFIG_SMI_LAN937X)
-#define CONFIG_KSZ_SMI
-#endif
-#if defined(CONFIG_LAN937X_MRP)
-#define CONFIG_KSZ_MRP
-#endif
-#endif
-
 #if 1
 /* No hardware checksumming means no fix for such feature. */
 #define NO_HW_CSUM
@@ -59,10 +44,6 @@
 #if 1
 /* Decide to have this fix or not. */
 #define NO_HW_CSUM_FIX
-#endif
-
-#if defined(CONFIG_IBA_KSZ9897) || defined(CONFIG_IBA_LAN937X)
-#define CONFIG_KSZ_IBA_ONLY
 #endif
 
 #ifdef CONFIG_KSZ_SWITCH
@@ -87,7 +68,6 @@ static void get_sysfs_data_(struct net_device *dev,
 #define get_sysfs_data		get_sysfs_data_
 #endif
 
-static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #define DO_NOT_USE_COPY_SKB
 
 #if defined(CONFIG_IBA_KSZ9897)
@@ -159,12 +139,13 @@ static void get_sysfs_data_(struct net_device *dev,
 #endif
 
 #ifdef CONFIG_1588_PTP
-#ifdef CONFIG_HAVE_LAN937X
-#include "../microchip/lan937x_ptp_sysfs.c"
-#else
+#if defined(CONFIG_HAVE_KSZ9897)
 #include "../micrel/ksz_ptp_sysfs.c"
+#elif defined(CONFIG_HAVE_LAN937X)
+#include "../microchip/lan937x_ptp_sysfs.c"
 #endif
 #endif
+
 #ifdef CONFIG_KSZ_DLR
 #include "../micrel/ksz_dlr_sysfs.c"
 #endif

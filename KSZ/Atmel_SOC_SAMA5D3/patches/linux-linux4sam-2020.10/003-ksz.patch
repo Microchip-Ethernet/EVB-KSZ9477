@@ -86407,8 +86407,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-08-27 16:37:46.339979067 -0700
-@@ -0,0 +1,19144 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-08-31 16:41:18.984375647 -0700
+@@ -0,0 +1,19137 @@
 +/**
 + * Microchip gigabit switch common code
 + *
@@ -100530,6 +100530,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (sw->overrides & PTP_TAG)
 +		ptp_len = 4;
 +	tag_len = ptp_len + 2;
++	if (sw->TAIL_TAG_SHIFT != 7)
++		tag_len--;
 +
 +	memset(&tx_tag, 0, sizeof(tx_tag));
 +
@@ -100714,9 +100716,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 +	set_tag_valid(sw, &tx_tag);
 +	tag = (u8 *) &tx_tag;
-+	tag_len = ptp_len + 2;
-+	if (sw->TAIL_TAG_SHIFT != 7)
-+		tag_len--;
 +
 +	len = append_tag(sw->TAIL_TAG_SHIFT, skb->data, tag, len,
 +		ptp_len, ptp_len + 2);
@@ -102450,13 +102449,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +		p = get_phy_port(sw, i);
 +		if (!(port->link_ports & (1 << p)))
 +			continue;
-+#ifdef CONFIG_1588_PTP
-+		if (sw->features & PTP_HW) {
-+			struct ptp_info *ptp = &sw->ptp_hw;
-+
-+			ptp->link_ports = port->link_ports;
-+		}
-+#endif
 +#ifdef CONFIG_KSZ_AVB
 +		info = get_port_info(sw, p);
 +		speed = (media_connected == info->state) ?
@@ -102475,6 +102467,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +		if (sw->features & PTP_HW) {
 +			struct ptp_info *ptp = &sw->ptp_hw;
 +
++			ptp->link_ports = port->link_ports;
 +			if (ptp->started)
 +				set_latency(&ptp->set_latency);
 +		}
@@ -128582,7 +128575,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/spi-ks
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/spi-ksz9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/spi-ksz9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/spi-ksz9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/spi-ksz9897.c	2021-08-27 14:49:48.236003779 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/spi-ksz9897.c	2021-08-28 16:20:37.757396211 -0700
 @@ -0,0 +1,684 @@
 +/**
 + * Microchip KSZ9897 SPI driver

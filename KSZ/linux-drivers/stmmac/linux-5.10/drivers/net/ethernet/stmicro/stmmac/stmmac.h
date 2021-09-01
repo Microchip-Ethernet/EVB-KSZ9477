@@ -23,6 +23,12 @@
 #include <linux/reset.h>
 #include <net/page_pool.h>
 
+#if defined(CONFIG_LAN937X_SWITCH)
+#ifndef CONFIG_KSZ_SWITCH
+#define CONFIG_KSZ_SWITCH
+#endif
+#endif
+
 #ifdef CONFIG_KSZ_SWITCH
 #if defined(CONFIG_HAVE_KSZ9897)
 #include "../../micrel/ksz_cfg_9897.h"

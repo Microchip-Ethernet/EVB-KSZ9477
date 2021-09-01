@@ -1,0 +1,13 @@
+diff -Napur linux-at91-linux4sam-2020.10-orig/net/bridge/br_device.c linux-at91-linux4sam-2020.10/net/bridge/br_device.c
+--- linux-at91-linux4sam-2020.10-orig/net/bridge/br_device.c	2021-01-14 04:54:56.000000000 -0800
++++ linux-at91-linux4sam-2020.10/net/bridge/br_device.c	2021-09-01 14:22:09.520294536 -0700
+@@ -428,6 +428,9 @@ void br_dev_setup(struct net_device *dev
+ 	dev->hw_features = COMMON_FEATURES | NETIF_F_HW_VLAN_CTAG_TX |
+ 			   NETIF_F_HW_VLAN_STAG_TX;
+ 	dev->vlan_features = COMMON_FEATURES;
++#ifdef CONFIG_KSZ_SWITCH
++	dev->hard_header_len += 6;
++#endif
+ 
+ 	br->dev = dev;
+ 	spin_lock_init(&br->lock);

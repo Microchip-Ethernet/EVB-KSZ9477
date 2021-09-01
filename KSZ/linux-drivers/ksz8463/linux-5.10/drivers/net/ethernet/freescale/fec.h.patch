@@ -1,0 +1,33 @@
+diff --git a/drivers/net/ethernet/freescale/fec.h b/drivers/net/ethernet/freescale/fec.h
+index f79e57f..f27e371 100644
+--- a/drivers/net/ethernet/freescale/fec.h
++++ b/drivers/net/ethernet/freescale/fec.h
+@@ -584,6 +584,28 @@ struct fec_enet_private {
+ 	int pps_enable;
+ 	unsigned int next_counter;
+ 
++#ifdef HAVE_KSZ_SWITCH
++	struct platform_device	*sw_pdev;
++	struct fec_enet_private	*hw_priv;
++	struct phy_device	dummy_phy;
++	spinlock_t		tx_lock;
++	struct ksz_port		port;
++	int			phy_addr;
++	u8			state;
++	u32			ready:1;
++	u32			multi:1;
++	u32			promisc:1;
++	u8			opened;
++	u8			hw_multi;
++	u8			hw_promisc;
++	void			*parent;
++	struct delayed_work	promisc_reset;
++	struct ksz_sw_sysfs	sysfs;
++#ifdef CONFIG_1588_PTP
++	struct ksz_ptp_sysfs	ptp_sysfs;
++#endif
++#endif
++
+ 	u64 ethtool_stats[0];
+ };
+ 

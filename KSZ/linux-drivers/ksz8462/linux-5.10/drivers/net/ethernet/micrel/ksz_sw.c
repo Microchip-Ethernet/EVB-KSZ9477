@@ -7273,8 +7273,15 @@ static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
 
-	phylink_set_port_modes(mask);
+	phylink_set(mask, TP);
+	phylink_set(mask, MII);
+
 	phylink_set(mask, Autoneg);
+
+	phylink_set(mask, 10baseT_Half);
+	phylink_set(mask, 10baseT_Full);
+	phylink_set(mask, 100baseT_Half);
+	phylink_set(mask, 100baseT_Full);
 
 	switch (port->flow_ctrl) {
 	case PHY_NO_FLOW_CTRL:
@@ -7295,16 +7302,11 @@ static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 		phylink_clear(mask, Asym_Pause);
 	}
 
-	phylink_set(mask, 10baseT_Half);
-	phylink_set(mask, 10baseT_Full);
-	phylink_set(mask, 100baseT_Half);
-	phylink_set(mask, 100baseT_Full);
-
 	bitmap_and(supported, supported, mask, __ETHTOOL_LINK_MODE_MASK_NBITS);
 	bitmap_and(state->advertising, state->advertising, mask,
 		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-	linkmode_copy(port->phydev->supported, mask);
-	linkmode_copy(port->phydev->advertising, mask);
+	linkmode_copy(port->phydev->supported, supported);
+	linkmode_copy(port->phydev->advertising, state->advertising);
 }  /* sw_set_phylink_support */
 
 static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
@@ -7319,8 +7321,8 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 	s->duplex = 1;
 	s->pause = 3;
 	s->link = 1;
-	s->an_enabled = 1;
-	s->an_complete = 1;
+	s->an_enabled = 0;
+	s->an_complete = 0;
 }  /* sw_port_phylink_get_fixed_state */
 
 static void sw_port_phylink_validate(struct phylink_config *config,
@@ -7525,10 +7527,9 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 	uint n;
 	uint p;
 	struct ksz_port_info *info;
+	struct ksz_port_info *host;
 
-	/* Update in case it is changed. */
-	if (dev->phydev)
-		port->phydev = dev->phydev;
+	host = get_port_info(sw, sw->HOST_PORT);
 	for (i = 0, n = port->first_port; i < port->port_cnt; i++, n++) {
 		p = get_phy_port(sw, n);
 		info = get_port_info(sw, p);
@@ -7538,6 +7539,8 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 		 */
 		info->partner = 0xFF;
 		info->state = media_unknown;
+		info->tx_rate = host->tx_rate;
+		info->duplex = host->duplex;
 		if (port->port_cnt == 1) {
 			if (sw->netdev[0]) {
 				struct ksz_port *sw_port = sw->netport[0];
@@ -8717,10 +8720,7 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		struct phy_priv *priv;
 		struct sw_priv *hw_priv = container_of(sw, struct sw_priv, sw);
 
-		if (hw_priv->bus)
-			phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
-		else
-			phydev = &sw->phy_map[phy_id];
+		phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
 		priv = phydev->priv;
 		priv->port = port;
 		set_phy_support(port, phydev);
@@ -9149,9 +9149,12 @@ static int kszphy_probe(struct phy_device *phydev)
 {
 	struct mii_bus *bus = phydev->mdio.bus;
 	struct sw_priv *sw_priv = bus->priv;
-	struct phy_priv *priv = &sw_priv->sw.phydata[phydev->mdio.addr];
+	struct ksz_sw *sw = &sw_priv->sw;
+	uint p;
 
-	phydev->priv = priv;
+	p = phydev->mdio.addr;
+	phydev->priv = &sw->phydata[p];
+	phydev->interface = PHY_INTERFACE_MODE_MII;
 	return 0;
 }
 
@@ -9177,6 +9180,12 @@ static int kszphy_get_features(struct phy_device *phydev)
 		return ret;
 
 	set_phy_support(port, phydev);
+
+	/* Special for first PHY connected to MAC. */
+	if (phydev->mdio.addr == 0) {
+		linkmode_clear_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
+				   phydev->supported);
+	}
 	return 0;
 }
 
@@ -9274,9 +9283,34 @@ static void sw_r_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 *val)
 	u8 restart;
 	u8 link;
 	u8 speed;
-	u8 p = phy - 1;
+	u8 p;
 	u16 data = 0;
 
+	if (phy) {
+		p = phy - 1;
+	} else {
+		switch (reg) {
+		case PHY_REG_CTRL:
+			data = 0x1140;
+			break;
+		case PHY_REG_STATUS:
+			data = 0x796d;
+			break;
+		case PHY_REG_ID_1:
+			data = KSZ8863_ID_HI;
+			break;
+		case PHY_REG_ID_2:
+			data = KSZ8863_SW_ID;
+			break;
+		case PHY_REG_AUTO_NEGOTIATION:
+			data = 0x05e1;
+			break;
+		case PHY_REG_REMOTE_CAPABILITY:
+			data = 0xc5e1;
+			break;
+		}
+		return;
+	}
 	switch (reg) {
 	case PHY_REG_CTRL:
 		port_r(sw, p, P_PHY_CTRL, &ctrl);
@@ -9378,8 +9412,12 @@ static void sw_w_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 val)
 	u8 restart;
 	u8 speed;
 	u8 data;
-	u8 p = phy - 1;
+	u8 p;
 
+	if (phy)
+		p = phy - 1;
+	else
+		return;
 	switch (reg) {
 	case PHY_REG_CTRL:
 		port_r(sw, p, P_SPEED_STATUS, &speed);
@@ -9473,7 +9511,6 @@ static void sw_w_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 val)
 static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 {
 	struct sw_priv *ks = bus->priv;
-	struct ksz_sw *sw = &ks->sw;
 	int ret = 0;
 
 	if (phy_id > SWITCH_PORT_NUM)
@@ -9482,18 +9519,7 @@ static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 	mutex_lock(&ks->lock);
 	if (regnum < 6) {
 		u16 data;
-		struct ksz_port *port;
 
-		port = &ks->ports[phy_id];
-
-		/* Not initialized during registration. */
-		if (sw->phy[phy_id]) {
-			struct phy_priv *phydata;
-
-			phydata = sw->phy[phy_id]->priv;
-			port = phydata->port;
-		}
-		phy_id = port->linked->phy_id;
 		sw_r_phy(&ks->sw, phy_id, regnum, &data);
 		ret = data;
 	}
@@ -9609,10 +9635,9 @@ static int ksz_mii_init(struct sw_priv *ks)
 	for (i = 0; i < PHY_MAX_ADDR; i++) {
 		phydev = mdiobus_get_phy(bus, i);
 		if (phydev) {
-			struct phy_priv *priv = &ks->sw.phydata[i];
+			struct phy_priv *priv = phydev->priv;
 
 			priv->state = phydev->state;
-			phydev->interface = PHY_INTERFACE_MODE_MII;
 		}
 	}
 

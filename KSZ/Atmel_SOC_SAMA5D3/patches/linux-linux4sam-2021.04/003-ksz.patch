@@ -21342,8 +21342,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_iba.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_iba.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_iba.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_iba.c	2021-08-28 13:20:47.158794564 -0700
-@@ -0,0 +1,3125 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_iba.c	2021-09-02 22:38:44.420941442 -0700
+@@ -0,0 +1,3138 @@
 +/**
 + * Microchip IBA code
 + *
@@ -21367,6 +21367,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +#if 0
 +#define SHOW_IBA
 +#endif
++#endif
++
++#if 1
++#define RETRY_IBA
 +#endif
 +
 +#define ETH_P_IBA			IBA_TAG_TYPE
@@ -21527,6 +21531,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +	return val;
 +}  /* iba_set_val */
 +
++#if 0
 +/**
 + * iba_chk_regs - IBA register check
 + * @sw:		The switch instance.
@@ -21589,6 +21594,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +	else if (1 == need_tail_tag)
 +		sw->overrides &= ~TAIL_TAGGING;
 +}  /* iba_chk_regs */
++#endif
 +
 +static u32 last_iba_addr;
 +
@@ -21690,8 +21696,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +			rc = NETDEV_TX_BUSY;
 +		}
 +	} while (NETDEV_TX_BUSY == rc && timeout--);
-+if (timeout < 3)
-+printk(" not tx: %d\n", timeout);
 +	return rc;
 +}  /* iba_xmit */
 +
@@ -22145,7 +22149,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +		mutex_unlock(sw->hwlock);
 +	printk(KERN_ALERT "revert to SPI"NL);
 +
-+#if 1
++#ifdef RETRY_IBA
 +	sw_setup_iba(sw);
 +	schedule_delayed_work(&sw->set_ops, msecs_to_jiffies(1000));
 +#endif
@@ -22248,7 +22252,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +printk("  !! %x"NL, rc);
 +		iba_dbg_states(info);
 +
-+#ifndef CONFIG_LAN78XX_KSZ9897_IBA
++#ifndef CONFIG_KSZ_IBA_ONLY
 +		/* Not testing if IBA is okay. */
 +		if (!(info->use_iba & 0x80))
 +			iba_to_spi(info->sw_dev, info);
@@ -22264,7 +22268,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +dbg_msg("  w timeout"NL);
 +		iba_dbg_states(info);
 +
-+#ifndef CONFIG_LAN78XX_KSZ9897_IBA
++#ifndef CONFIG_KSZ_IBA_ONLY
 +		/* Not testing if IBA is okay. */
 +		if (!(info->use_iba & 0x80))
 +			iba_to_spi(info->sw_dev, info);
@@ -23496,10 +23500,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +{
 +	int i;
 +
-+	info->data[0] = 0;
 +	for (i = 0; i < 7; i++) {
-+		iba_cmd(info, IBA_CMD_READ, IBA_CMD_32,
-+			REG_HSR_ALU_VAL_A + i * 4);
++		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
++			REG_HSR_ALU_VAL_A + i * 4, 0);
 +	}
 +}  /* r_hsr_table_pre */
 +
@@ -23855,12 +23858,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +{
 +	u32 ctrl;
 +	u32 *data = in;
-+	uint *port = obj;
++	u32 *port_in = obj;
 +	int cnt;
 +	int num = data[0];
-+	struct ksz_sw *sw = info->sw_dev;
-+	u32 freeze = sw->info->port_cfg[*port].freeze ?
-+		MIB_COUNTER_FLUSH_FREEZE : 0;
++	uint p = port_in[0];
++	u32 freeze = port_in[1];
 +
 +	for (cnt = 0; cnt < num; cnt++, data++) {
 +		ctrl = data[1] & MIB_COUNTER_INDEX_M;
@@ -23868,13 +23870,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +		ctrl |= MIB_COUNTER_READ;
 +		ctrl |= freeze;
 +		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
-+			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4),
++			PORT_CTRL_ADDR(p, REG_PORT_MIB_CTRL_STAT__4),
 +			ctrl);
 +		iba_cmd_set(info, IBA_CMD_WAIT_ON_1, IBA_CMD_32,
-+			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4),
++			PORT_CTRL_ADDR(p, REG_PORT_MIB_CTRL_STAT__4),
 +			MIB_COUNTER_VALID);
 +		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
-+			PORT_CTRL_ADDR(*port, REG_PORT_MIB_DATA), 0);
++			PORT_CTRL_ADDR(p, REG_PORT_MIB_DATA), 0);
 +	}
 +	return info->fptr;
 +}  /* r_mib_cnt_pre */
@@ -23894,7 +23896,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +	u32 cmd;
 +	int i = 0;
 +	u32 *data = out;
-+	uint *port = obj;
++	u32 *port_in = obj;
++	uint p = port_in[0];
 +
 +	while (info->regs[i].cmd != (u32) -1) {
 +		cmd = (info->regs[i].cmd >> IBA_CMD_S);
@@ -23903,8 +23906,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +			u32 size = (info->regs[i].cmd & IBA_CMD_32);
 +
 +#if 1
-+if (((reg >> 12) & 0xf) != *port + 1)
-+dbg_msg(" ?? %s %x %x"NL, __func__, reg, *port);
++if (((reg >> 12) & 0xf) != p + 1)
++dbg_msg(" ?? %s %x %x"NL, __func__, reg, p);
 +#endif
 +			reg &= ((1 << 12) - 1);
 +			switch (reg) {
@@ -23938,13 +23941,19 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +			    u32 data[])
 +{
 +	u32 data_in[MAX_IBA_MIB_ENTRIES + 1];
++	u32 obj[2];
++	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
++	u32 freeze = cfg->freeze ? MIB_COUNTER_FLUSH_FREEZE : 0;
++	uint p = port;
 +
++	obj[0] = p;
++	obj[1] = freeze;
 +	if (num > MAX_IBA_MIB_ENTRIES)
 +		num = MAX_IBA_MIB_ENTRIES;
 +	data_in[0] = num;
 +	memcpy(&data_in[1], addr, sizeof(u32) * num);
 +	memset(data, 0, sizeof(u32) * num * READ_MIB_ENTRY_SIZE);
-+	return iba_req(&sw->info->iba, data_in, data, &port, r_mib_cnt_pre,
++	return iba_req(&sw->info->iba, data_in, data, obj, r_mib_cnt_pre,
 +		r_mib_cnt_post);
 +}  /* iba_r_mib_cnt_hw */
 +
@@ -24238,7 +24247,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +#else
 +				for (; i <= cnt; i++) {
 +					data = ntohl(frame->data[i]);
++#if 0
 +					iba_chk_regs(info->sw_dev, cmds, data);
++#endif
 +					cmds += 4;
 +#ifdef SHOW_IBA
 +					dbg_msg("%08x ", data);
@@ -24280,7 +24291,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +#endif
 +				break;
 +			case IBA_CMD_WRITE:
++#if 0
 +				iba_chk_regs(info->sw_dev, cmds, data);
++#endif
 +#ifdef SHOW_IBA
 +				dbg_msg("w: ");
 +#endif
@@ -62505,8 +62518,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_st
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8795.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8795.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.c	2021-08-28 13:20:47.334784229 -0700
-@@ -0,0 +1,12125 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.c	2021-09-03 02:05:14.848579883 -0700
+@@ -0,0 +1,12145 @@
 +/**
 + * Microchip KSZ8795 switch common code
 + *
@@ -67393,6 +67406,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			port_set_stp_state(sw, port, STP_STATE_DISABLED);
 +		}
 +	}
++	if (fewer)
 +dbg_msg(" fewer: %d %d\n", fewer, sw->eth_cnt);
 +	if (fewer)
 +		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
@@ -71237,8 +71251,15 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
 +
-+	phylink_set_port_modes(mask);
++	phylink_set(mask, TP);
++	phylink_set(mask, MII);
++
 +	phylink_set(mask, Autoneg);
++
++	phylink_set(mask, 10baseT_Half);
++	phylink_set(mask, 10baseT_Full);
++	phylink_set(mask, 100baseT_Half);
++	phylink_set(mask, 100baseT_Full);
 +
 +	switch (port->flow_ctrl) {
 +	case PHY_NO_FLOW_CTRL:
@@ -71259,16 +71280,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		phylink_clear(mask, Asym_Pause);
 +	}
 +
-+	phylink_set(mask, 10baseT_Half);
-+	phylink_set(mask, 10baseT_Full);
-+	phylink_set(mask, 100baseT_Half);
-+	phylink_set(mask, 100baseT_Full);
-+
 +	bitmap_and(supported, supported, mask, __ETHTOOL_LINK_MODE_MASK_NBITS);
 +	bitmap_and(state->advertising, state->advertising, mask,
 +		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-+	linkmode_copy(port->phydev->supported, mask);
-+	linkmode_copy(port->phydev->advertising, mask);
++	linkmode_copy(port->phydev->supported, supported);
++	linkmode_copy(port->phydev->advertising, state->advertising);
 +}  /* sw_set_phylink_support */
 +
 +static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
@@ -71284,8 +71300,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	s->duplex = 1;
 +	s->pause = 3;
 +	s->link = 1;
-+	s->an_enabled = 1;
-+	s->an_complete = 1;
++	s->an_enabled = 0;
++	s->an_complete = 0;
 +}  /* sw_port_phylink_get_fixed_state */
 +
 +static void sw_port_phylink_validate(struct phylink_config *config,
@@ -71490,10 +71506,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	uint n;
 +	uint p;
 +	struct ksz_port_info *info;
++	struct ksz_port_info *host;
 +
-+	/* Update in case it is changed. */
-+	if (dev->phydev)
-+		port->phydev = dev->phydev;
++	host = get_port_info(sw, sw->HOST_PORT);
 +	for (i = 0, n = port->first_port; i < port->port_cnt; i++, n++) {
 +		p = get_phy_port(sw, n);
 +		info = get_port_info(sw, p);
@@ -71503,6 +71518,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		 */
 +		info->link = 0xFF;
 +		info->state = media_unknown;
++		info->tx_rate = host->tx_rate;
++		info->duplex = host->duplex;
 +		if (port->port_cnt == 1) {
 +			if (sw->netdev[0]) {
 +				struct ksz_port *sw_port = sw->netport[0];
@@ -73062,10 +73079,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		struct phy_priv *priv;
 +		struct sw_priv *hw_priv = container_of(sw, struct sw_priv, sw);
 +
-+		if (hw_priv->bus)
-+			phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
-+		else
-+			phydev = &sw->phy_map[phy_id];
++		phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
 +		priv = phydev->priv;
 +		priv->port = port;
 +		set_phy_support(port, phydev);
@@ -73480,9 +73494,18 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	struct mii_bus *bus = phydev->mdio.bus;
 +	struct sw_priv *sw_priv = bus->priv;
-+	struct phy_priv *priv = &sw_priv->sw.phydata[phydev->mdio.addr];
++	struct ksz_sw *sw = &sw_priv->sw;
++	struct ksz_port_info *info;
++	uint p;
 +
-+	phydev->priv = priv;
++	p = phydev->mdio.addr;
++	phydev->priv = &sw->phydata[p];
++	if (p)
++		--p;
++	else
++		p = sw->HOST_PORT;
++	info = get_port_info(sw, p);
++	phydev->interface = info->interface;
 +	return 0;
 +}
 +
@@ -73518,6 +73541,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		if (speed == 1000)
 +			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
 +					 phydev->supported);
++		linkmode_clear_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
++				   phydev->supported);
 +	}
 +	return 0;
 +}
@@ -73556,9 +73581,34 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 link;
 +	u8 speed;
 +	u8 force;
-+	u8 p = phy - 1;
++	u8 p;
 +	u16 data = 0;
 +
++	if (phy) {
++		p = phy - 1;
++	} else {
++		switch (reg) {
++		case PHY_REG_CTRL:
++			data = 0x1140;
++			break;
++		case PHY_REG_STATUS:
++			data = 0x796d;
++			break;
++		case PHY_REG_ID_1:
++			data = KSZ8795_ID_HI;
++			break;
++		case PHY_REG_ID_2:
++			data = KSZ8795_SW_ID;
++			break;
++		case PHY_REG_AUTO_NEGOTIATION:
++			data = 0x05e1;
++			break;
++		case PHY_REG_REMOTE_CAPABILITY:
++			data = 0xc5e1;
++			break;
++		}
++		return;
++	}
 +	switch (reg) {
 +	case PHY_REG_CTRL:
 +		port_r(sw, p, P_LOCAL_CTRL, &ctrl);
@@ -73657,8 +73707,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 restart;
 +	u8 speed;
 +	u8 data;
-+	u8 p = phy - 1;
++	u8 p;
 +
++	if (phy)
++		p = phy - 1;
++	else
++		return;
 +	switch (reg) {
 +	case PHY_REG_CTRL:
 +		port_r(sw, p, P_SPEED_STATUS, &speed);
@@ -73757,18 +73811,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	ret = 0;
 +	if (regnum < 6) {
 +		u16 data;
-+		struct ksz_port *port;
 +
-+		port = &ks->ports[phy_id];
-+
-+		/* Not initialized during registration. */
-+		if (sw->phy[phy_id]) {
-+			struct phy_priv *phydata;
-+
-+			phydata = sw->phy[phy_id]->priv;
-+			port = phydata->port;
-+		}
-+		phy_id = port->linked->phy_id;
 +		sw_r_phy(sw, phy_id, regnum, &data);
 +		ret = data;
 +	}
@@ -73924,19 +73967,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	for (i = 0; i < PHY_MAX_ADDR; i++) {
 +		phydev = mdiobus_get_phy(bus, i);
 +		if (phydev) {
-+			struct phy_priv *priv = &ks->sw.phydata[i];
-+			struct ksz_sw *sw = &ks->sw;
-+			struct ksz_port_info *info;
-+			uint p;
++			struct phy_priv *priv = phydev->priv;
 +
 +			priv->state = phydev->state;
-+			p = phydev->mdio.addr;
-+			if (p)
-+				--p;
-+			else
-+				p = sw->HOST_PORT;
-+			info = get_port_info(sw, p);
-+			phydev->interface = info->interface;
 +		}
 +	}
 +
@@ -75622,8 +75655,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8895.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8895.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.c	2021-08-28 13:20:47.394780705 -0700
-@@ -0,0 +1,9950 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.c	2021-09-03 02:06:48.835978925 -0700
+@@ -0,0 +1,9977 @@
 +/**
 + * Microchip KSZ8895 switch common code
 + *
@@ -79230,6 +79263,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			port_set_stp_state(sw, port, STP_STATE_DISABLED);
 +		}
 +	}
++	if (fewer)
 +dbg_msg(" fewer: %d %d\n", fewer, sw->eth_cnt);
 +	if (fewer)
 +		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
@@ -82431,8 +82465,15 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
 +
-+	phylink_set_port_modes(mask);
++	phylink_set(mask, TP);
++	phylink_set(mask, MII);
++
 +	phylink_set(mask, Autoneg);
++
++	phylink_set(mask, 10baseT_Half);
++	phylink_set(mask, 10baseT_Full);
++	phylink_set(mask, 100baseT_Half);
++	phylink_set(mask, 100baseT_Full);
 +
 +	switch (port->flow_ctrl) {
 +	case PHY_NO_FLOW_CTRL:
@@ -82453,16 +82494,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		phylink_clear(mask, Asym_Pause);
 +	}
 +
-+	phylink_set(mask, 10baseT_Half);
-+	phylink_set(mask, 10baseT_Full);
-+	phylink_set(mask, 100baseT_Half);
-+	phylink_set(mask, 100baseT_Full);
-+
 +	bitmap_and(supported, supported, mask, __ETHTOOL_LINK_MODE_MASK_NBITS);
 +	bitmap_and(state->advertising, state->advertising, mask,
 +		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-+	linkmode_copy(port->phydev->supported, mask);
-+	linkmode_copy(port->phydev->advertising, mask);
++	linkmode_copy(port->phydev->supported, supported);
++	linkmode_copy(port->phydev->advertising, state->advertising);
 +}  /* sw_set_phylink_support */
 +
 +static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
@@ -82477,8 +82513,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	s->duplex = 1;
 +	s->pause = 3;
 +	s->link = 1;
-+	s->an_enabled = 1;
-+	s->an_complete = 1;
++	s->an_enabled = 0;
++	s->an_complete = 0;
 +}  /* sw_port_phylink_get_fixed_state */
 +
 +static void sw_port_phylink_validate(struct phylink_config *config,
@@ -82683,10 +82719,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	uint n;
 +	uint p;
 +	struct ksz_port_info *info;
++	struct ksz_port_info *host;
 +
-+	/* Update in case it is changed. */
-+	if (dev->phydev)
-+		port->phydev = dev->phydev;
++	host = get_port_info(sw, sw->HOST_PORT);
 +	for (i = 0, n = port->first_port; i < port->port_cnt; i++, n++) {
 +		p = get_phy_port(sw, n);
 +		info = get_port_info(sw, p);
@@ -82696,6 +82731,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		 */
 +		info->link = 0xFF;
 +		info->state = media_unknown;
++		info->tx_rate = host->tx_rate;
++		info->duplex = host->duplex;
 +		if (port->port_cnt == 1) {
 +			if (sw->netdev[0]) {
 +				struct ksz_port *sw_port = sw->netport[0];
@@ -84149,10 +84186,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		struct phy_priv *priv;
 +		struct sw_priv *hw_priv = container_of(sw, struct sw_priv, sw);
 +
-+		if (hw_priv->bus)
-+			phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
-+		else
-+			phydev = &sw->phy_map[phy_id];
++		phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
 +		priv = phydev->priv;
 +		priv->port = port;
 +		set_phy_support(port, phydev);
@@ -84543,9 +84577,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	struct mii_bus *bus = phydev->mdio.bus;
 +	struct sw_priv *sw_priv = bus->priv;
-+	struct phy_priv *priv = &sw_priv->sw.phydata[phydev->mdio.addr];
++	struct ksz_sw *sw = &sw_priv->sw;
++	uint p;
 +
-+	phydev->priv = priv;
++	p = phydev->mdio.addr;
++	phydev->priv = &sw->phydata[p];
++	phydev->interface = PHY_INTERFACE_MODE_MII;
 +	return 0;
 +}
 +
@@ -84571,6 +84608,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		return ret;
 +
 +	set_phy_support(port, phydev);
++
++	/* Special for first PHY connected to MAC. */
++	if (phydev->mdio.addr == 0) {
++		linkmode_clear_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
++				   phydev->supported);
++	}
 +	return 0;
 +}
 +
@@ -84608,9 +84651,34 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 link;
 +	u8 speed;
 +	u8 force;
-+	u8 p = phy - 1;
++	u8 p;
 +	u16 data = 0;
 +
++	if (phy) {
++		p = phy - 1;
++	} else {
++		switch (reg) {
++		case PHY_REG_CTRL:
++			data = 0x1140;
++			break;
++		case PHY_REG_STATUS:
++			data = 0x796d;
++			break;
++		case PHY_REG_ID_1:
++			data = KSZ8895_ID_HI;
++			break;
++		case PHY_REG_ID_2:
++			data = KSZ8895_SW_ID;
++			break;
++		case PHY_REG_AUTO_NEGOTIATION:
++			data = 0x05e1;
++			break;
++		case PHY_REG_REMOTE_CAPABILITY:
++			data = 0xc5e1;
++			break;
++		}
++		return;
++	}
 +	switch (reg) {
 +	case PHY_REG_CTRL:
 +		port_r(sw, p, P_LOCAL_CTRL, &ctrl);
@@ -84709,8 +84777,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 restart;
 +	u8 speed;
 +	u8 data;
-+	u8 p = phy - 1;
++	u8 p;
 +
++	if (phy)
++		p = phy - 1;
++	else
++		return;
 +	switch (reg) {
 +	case PHY_REG_CTRL:
 +		port_r(sw, p, P_SPEED_STATUS, &speed);
@@ -84810,18 +84882,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	ret = 0;
 +	if (regnum < 6) {
 +		u16 data;
-+		struct ksz_port *port;
 +
-+		port = &ks->ports[phy_id];
-+
-+		/* Not initialized during registration. */
-+		if (sw->phy[phy_id]) {
-+			struct phy_priv *phydata;
-+
-+			phydata = sw->phy[phy_id]->priv;
-+			port = phydata->port;
-+		}
-+		phy_id = port->linked->phy_id;
 +		sw_r_phy(sw, phy_id, regnum, &data);
 +		ret = data;
 +	}
@@ -84978,10 +85039,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	for (i = 0; i < PHY_MAX_ADDR; i++) {
 +		phydev = mdiobus_get_phy(bus, i);
 +		if (phydev) {
-+			struct phy_priv *priv = &ks->sw.phydata[i];
++			struct phy_priv *priv = phydev->priv;
 +
 +			priv->state = phydev->state;
-+			phydev->interface = PHY_INTERFACE_MODE_MII;
 +		}
 +	}
 +
@@ -86445,8 +86505,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-09-01 13:21:44.123794414 -0700
-@@ -0,0 +1,19156 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-09-03 07:23:35.149072938 -0700
+@@ -0,0 +1,19170 @@
 +/**
 + * Microchip gigabit switch common code
 + *
@@ -95075,6 +95135,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +				port_cfg_power(sw, port, false);
 +		}
 +	}
++	if (fewer)
 +dbg_msg(" fewer: %d %d"NL, fewer, sw->eth_cnt);
 +	if (fewer)
 +		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
@@ -101068,11 +101129,47 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +				   struct phylink_link_state *state)
 +{
 +	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
++	struct ksz_port_info *info;
++	bool basic_support = true;
++	uint flow_ctrl;
++	uint p;
 +
-+	phylink_set_port_modes(mask);
++	p = get_phy_port(sw, port->first_port);
++	info = get_port_info(sw, p);
++
++	phylink_set(mask, TP);
++	phylink_set(mask, MII);
++
 +	phylink_set(mask, Autoneg);
 +
-+	switch (port->flow_ctrl) {
++	flow_ctrl = port->flow_ctrl;
++	switch (info->interface) {
++	case PHY_INTERFACE_MODE_RGMII:
++		if (sw->features & GIGABIT_SUPPORT) {
++			phylink_set(mask, 1000baseT_Full);
++			phylink_set(mask, 1000baseX_Full);
++		}
++		break;
++	case PHY_INTERFACE_MODE_SGMII:
++		phylink_set(mask, 1000baseT_Full);
++		phylink_set(mask, 1000baseX_Full);
++		if (info->fiber) {
++			basic_support = false;
++		} else {
++			phylink_set(mask, 1000baseT_Half);
++		}
++		break;
++	default:
++		break;
++	}
++	if (basic_support) {
++		phylink_set(mask, 10baseT_Half);
++		phylink_set(mask, 10baseT_Full);
++		phylink_set(mask, 100baseT_Half);
++		phylink_set(mask, 100baseT_Full);
++	}
++
++	switch (flow_ctrl) {
 +	case PHY_NO_FLOW_CTRL:
 +		phylink_clear(mask, Pause);
 +		phylink_clear(mask, Asym_Pause);
@@ -101091,36 +101188,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		phylink_clear(mask, Asym_Pause);
 +	}
 +
-+	switch (state->interface) {
-+	case PHY_INTERFACE_MODE_RGMII:
-+		phylink_set(mask, 10baseT_Full);
-+		phylink_set(mask, 100baseT_Full);
-+		if (sw->features & GIGABIT_SUPPORT) {
-+			phylink_set(mask, 1000baseT_Full);
-+			phylink_set(mask, 1000baseX_Full);
-+		}
-+		break;
-+	case PHY_INTERFACE_MODE_SGMII:
-+		phylink_set(mask, 1000baseT_Full);
-+		phylink_set(mask, 1000baseT_Half);
-+		phylink_set(mask, 1000baseX_Full);
-+
-+	/* Fall through */
-+	case PHY_INTERFACE_MODE_MII:
-+	case PHY_INTERFACE_MODE_RMII:
-+	default:
-+		phylink_set(mask, 10baseT_Half);
-+		phylink_set(mask, 10baseT_Full);
-+		phylink_set(mask, 100baseT_Half);
-+		phylink_set(mask, 100baseT_Full);
-+		break;
-+	}
-+
 +	bitmap_and(supported, supported, mask, __ETHTOOL_LINK_MODE_MASK_NBITS);
 +	bitmap_and(state->advertising, state->advertising, mask,
 +		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-+	linkmode_copy(port->phydev->supported, mask);
-+	linkmode_copy(port->phydev->advertising, mask);
++	linkmode_copy(port->phydev->supported, supported);
++	linkmode_copy(port->phydev->advertising, state->advertising);
 +}  /* sw_set_phylink_support */
 +
 +static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
@@ -101130,14 +101202,14 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct ksz_sw *sw = p->sw;
 +	struct ksz_port_info *info = get_port_info(sw, sw->HOST_PORT);
 +
-+dbg_msg(" fixed state: %d %d\n", sw->interface, info->interface);
 +	s->interface = sw->interface;
 +	s->speed = info->tx_rate / TX_RATE_UNIT;
 +	s->duplex = 1;
 +	s->pause = 3;
 +	s->link = 1;
-+	s->an_enabled = 1;
-+	s->an_complete = 1;
++	s->an_enabled = 0;
++	s->an_complete = 0;
++dbg_msg(" fixed state: %d %d %d\n", sw->interface, info->interface, s->speed);
 +}  /* sw_port_phylink_get_fixed_state */
 +
 +static void sw_port_phylink_validate(struct phylink_config *config,
@@ -101150,7 +101222,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +dbg_msg(" validate: %d\n", state->interface);
 +	if ((sw->dev_offset && p->port_cnt > 1) ||
 +	    (!sw->dev_offset && !sw->phy_offset)) {
-+dbg_msg(" first\n");
 +		if (sw->phylink_ops)
 +			sw->phylink_ops->validate(config, supported, state);
 +	} else {
@@ -101366,11 +101437,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	uint n;
 +	uint p;
 +	struct ksz_port_info *info;
++	struct ksz_port_info *host;
 +
 +#ifdef CONFIG_KSZ_IBA
 +	if (!sw->info->iba.use_iba && dev == sw->main_dev)
 +		sw_set_dev(sw, sw->main_dev, sw->main_dev->dev_addr);
 +#endif
++	host = get_port_info(sw, sw->HOST_PORT);
 +	for (i = 0, n = port->first_port; i < port->port_cnt; i++, n++) {
 +		p = get_phy_port(sw, n);
 +		info = get_port_info(sw, p);
@@ -101383,6 +101456,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		 */
 +		info->link = 0xFF;
 +		info->state = media_unknown;
++		info->tx_rate = host->tx_rate;
++		info->duplex = host->duplex;
 +		if (port->port_cnt == 1) {
 +			if (sw->netdev[0]) {
 +				struct ksz_port *sw_port = sw->netport[0];
@@ -103204,8 +103279,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (!i && (sw->features & (AVB_SUPPORT | MRP_SUPPORT)))
 +		setup_mrp(&sw->mrp, dev);
 +#endif
-+	if (sw->features & AVB_SUPPORT)
-+		port->flow_ctrl = PHY_NO_FLOW_CTRL;
 +
 +	p = get_phy_port(sw, port->first_port);
 +	info = get_port_info(sw, p);
@@ -103213,10 +103286,14 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	port->linked = info;
 +
 +	/* Point to port under netdev. */
-+	if (phy_offset)
++	if (phy_offset) {
 +		phy_id = port->linked->phy_id;
-+	else
++	} else {
 +		phy_id = 0;
++		info = get_port_info(sw, sw->HOST_PORT);
++	}
++	if (sw->features & AVB_SUPPORT)
++		port->flow_ctrl = PHY_NO_FLOW_CTRL;
 +
 +	/* Replace virtual port with one from network device. */
 +	do {
@@ -103224,10 +103301,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		struct phy_priv *priv;
 +		struct sw_priv *hw_priv = container_of(sw, struct sw_priv, sw);
 +
-+		if (hw_priv->bus)
-+			phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
-+		else
-+			phydev = &sw->phy_map[phy_id];
++		phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
 +		priv = phydev->priv;
 +		priv->port = port;
 +		set_phy_support(port, phydev);
@@ -103867,9 +103941,18 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	struct mii_bus *bus = phydev->mdio.bus;
 +	struct sw_priv *sw_priv = bus->priv;
-+	struct phy_priv *priv = &sw_priv->sw.phydata[phydev->mdio.addr];
++	struct ksz_sw *sw = &sw_priv->sw;
++	struct ksz_port_info *info;
++	uint p;
 +
-+	phydev->priv = priv;
++	p = phydev->mdio.addr;
++	phydev->priv = &sw->phydata[p];
++	if (p)
++		--p;
++	else
++		p = sw->HOST_PORT;
++	info = get_port_info(sw, p);
++	phydev->interface = info->interface;
 +	return 0;
 +}
 +
@@ -103889,7 +103972,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct phy_priv *priv = phydev->priv;
 +	struct ksz_port *port = priv->port;
 +	struct ksz_sw *sw = port->sw;
++	struct ksz_port_info *info;
 +	int ret;
++	uint p;
 +
 +	ret = genphy_read_abilities(phydev);
 +	if (ret < 0)
@@ -103897,29 +103982,33 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	set_phy_support(port, phydev);
 +
++	if (phydev->mdio.addr) {
++		p = phydev->mdio.addr - 1;
++	} else {
++		p = sw->HOST_PORT;
++	}
++	info = get_port_info(sw, p);
++
 +	/* Do not support half-duplex in gigabit. */
 +	if (sw->features & GIGABIT_SUPPORT)
 +		linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
 +				 phydev->supported);
-+	if (port->port_cnt == 1) {
-+		uint p = get_phy_port(sw, port->first_port);
-+
-+		if (PHY_INTERFACE_MODE_SGMII == sw->port_info[p].interface) {
-+			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
-+					 phydev->supported);
-+			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT,
-+					 phydev->supported);
-+		}
++	if (PHY_INTERFACE_MODE_SGMII == info->interface) {
++		linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
++				 phydev->supported);
++		linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT,
++				 phydev->supported);
 +	}
 +
 +	/* Special for first PHY connected to MAC. */
 +	if (phydev->mdio.addr == 0) {
-+		struct ksz_port_info *info = get_port_info(sw, sw->HOST_PORT);
 +		int speed = info->tx_rate / TX_RATE_UNIT;
 +
 +		if (speed == 1000)
 +			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
 +					 phydev->supported);
++		linkmode_clear_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
++				   phydev->supported);
 +	}
 +	return 0;
 +}
@@ -103958,7 +104047,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u16 ret = 0;
 +	uint p;
 +
-+	p = phy - 1;
++	if (phy)
++		p = phy - 1;
++	else
++		p = sw->HOST_PORT;
 +	if (p < sw->phy_port_cnt) {
 +		u16 data;
 +
@@ -103995,6 +104087,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			else
 +				ret = 0;
 +			break;
++		case MII_ESTATUS:
++			ret = 0x2000;
++			break;
 +		}
 +	}
 +
@@ -104020,18 +104115,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	ret = 0;
 +	if (regnum < 16) {
 +		u16 data;
-+		struct ksz_port *port;
 +
-+		port = &ks->ports[phy_id];
-+
-+		/* Not initialized during registration. */
-+		if (sw->phy[phy_id]) {
-+			struct phy_priv *phydata;
-+
-+			phydata = sw->phy[phy_id]->priv;
-+			port = phydata->port;
-+		}
-+		phy_id = port->linked->phy_id;
 +		sw_r_phy(sw, phy_id, regnum, &data);
 +		ret = data;
 +	}
@@ -104149,19 +104233,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	for (i = 0; i < PHY_MAX_ADDR; i++) {
 +		phydev = mdiobus_get_phy(bus, i);
 +		if (phydev) {
-+			struct phy_priv *priv = &ks->sw.phydata[i];
-+			struct ksz_sw *sw = &ks->sw;
-+			struct ksz_port_info *info;
-+			uint p;
++			struct phy_priv *priv = phydev->priv;
 +
 +			priv->state = phydev->state;
-+			p = phydev->mdio.addr;
-+			if (p)
-+				--p;
-+			else
-+				p = sw->HOST_PORT;
-+			info = get_port_info(sw, p);
-+			phydev->interface = info->interface;
 +		}
 +	}
 +
@@ -107098,8 +107172,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.c	2021-08-28 13:20:47.566770606 -0700
-@@ -0,0 +1,10226 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.c	2021-09-03 02:08:45.511250048 -0700
+@@ -0,0 +1,10251 @@
 +/**
 + * Microchip switch common code
 + *
@@ -114375,8 +114449,15 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
 +
-+	phylink_set_port_modes(mask);
++	phylink_set(mask, TP);
++	phylink_set(mask, MII);
++
 +	phylink_set(mask, Autoneg);
++
++	phylink_set(mask, 10baseT_Half);
++	phylink_set(mask, 10baseT_Full);
++	phylink_set(mask, 100baseT_Half);
++	phylink_set(mask, 100baseT_Full);
 +
 +	switch (port->flow_ctrl) {
 +	case PHY_NO_FLOW_CTRL:
@@ -114397,16 +114478,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		phylink_clear(mask, Asym_Pause);
 +	}
 +
-+	phylink_set(mask, 10baseT_Half);
-+	phylink_set(mask, 10baseT_Full);
-+	phylink_set(mask, 100baseT_Half);
-+	phylink_set(mask, 100baseT_Full);
-+
 +	bitmap_and(supported, supported, mask, __ETHTOOL_LINK_MODE_MASK_NBITS);
 +	bitmap_and(state->advertising, state->advertising, mask,
 +		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-+	linkmode_copy(port->phydev->supported, mask);
-+	linkmode_copy(port->phydev->advertising, mask);
++	linkmode_copy(port->phydev->supported, supported);
++	linkmode_copy(port->phydev->advertising, state->advertising);
 +}  /* sw_set_phylink_support */
 +
 +static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
@@ -114421,8 +114497,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	s->duplex = 1;
 +	s->pause = 3;
 +	s->link = 1;
-+	s->an_enabled = 1;
-+	s->an_complete = 1;
++	s->an_enabled = 0;
++	s->an_complete = 0;
 +}  /* sw_port_phylink_get_fixed_state */
 +
 +static void sw_port_phylink_validate(struct phylink_config *config,
@@ -114627,10 +114703,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	uint n;
 +	uint p;
 +	struct ksz_port_info *info;
++	struct ksz_port_info *host;
 +
-+	/* Update in case it is changed. */
-+	if (dev->phydev)
-+		port->phydev = dev->phydev;
++	host = get_port_info(sw, sw->HOST_PORT);
 +	for (i = 0, n = port->first_port; i < port->port_cnt; i++, n++) {
 +		p = get_phy_port(sw, n);
 +		info = get_port_info(sw, p);
@@ -114640,6 +114715,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		 */
 +		info->partner = 0xFF;
 +		info->state = media_unknown;
++		info->tx_rate = host->tx_rate;
++		info->duplex = host->duplex;
 +		if (port->port_cnt == 1) {
 +			if (sw->netdev[0]) {
 +				struct ksz_port *sw_port = sw->netport[0];
@@ -115819,10 +115896,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		struct phy_priv *priv;
 +		struct sw_priv *hw_priv = container_of(sw, struct sw_priv, sw);
 +
-+		if (hw_priv->bus)
-+			phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
-+		else
-+			phydev = &sw->phy_map[phy_id];
++		phydev = mdiobus_get_phy(hw_priv->bus, phy_id);
 +		priv = phydev->priv;
 +		priv->port = port;
 +		set_phy_support(port, phydev);
@@ -116251,9 +116325,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	struct mii_bus *bus = phydev->mdio.bus;
 +	struct sw_priv *sw_priv = bus->priv;
-+	struct phy_priv *priv = &sw_priv->sw.phydata[phydev->mdio.addr];
++	struct ksz_sw *sw = &sw_priv->sw;
++	uint p;
 +
-+	phydev->priv = priv;
++	p = phydev->mdio.addr;
++	phydev->priv = &sw->phydata[p];
++	phydev->interface = PHY_INTERFACE_MODE_MII;
 +	return 0;
 +}
 +
@@ -116279,6 +116356,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		return ret;
 +
 +	set_phy_support(port, phydev);
++
++	/* Special for first PHY connected to MAC. */
++	if (phydev->mdio.addr == 0) {
++		linkmode_clear_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
++				   phydev->supported);
++	}
 +	return 0;
 +}
 +
@@ -116376,9 +116459,34 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 restart;
 +	u8 link;
 +	u8 speed;
-+	u8 p = phy - 1;
++	u8 p;
 +	u16 data = 0;
 +
++	if (phy) {
++		p = phy - 1;
++	} else {
++		switch (reg) {
++		case PHY_REG_CTRL:
++			data = 0x1140;
++			break;
++		case PHY_REG_STATUS:
++			data = 0x796d;
++			break;
++		case PHY_REG_ID_1:
++			data = KSZ8863_ID_HI;
++			break;
++		case PHY_REG_ID_2:
++			data = KSZ8863_SW_ID;
++			break;
++		case PHY_REG_AUTO_NEGOTIATION:
++			data = 0x05e1;
++			break;
++		case PHY_REG_REMOTE_CAPABILITY:
++			data = 0xc5e1;
++			break;
++		}
++		return;
++	}
 +	switch (reg) {
 +	case PHY_REG_CTRL:
 +		port_r(sw, p, P_PHY_CTRL, &ctrl);
@@ -116480,8 +116588,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 restart;
 +	u8 speed;
 +	u8 data;
-+	u8 p = phy - 1;
++	u8 p;
 +
++	if (phy)
++		p = phy - 1;
++	else
++		return;
 +	switch (reg) {
 +	case PHY_REG_CTRL:
 +		port_r(sw, p, P_SPEED_STATUS, &speed);
@@ -116575,7 +116687,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 +{
 +	struct sw_priv *ks = bus->priv;
-+	struct ksz_sw *sw = &ks->sw;
 +	int ret = 0;
 +
 +	if (phy_id > SWITCH_PORT_NUM)
@@ -116584,18 +116695,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	mutex_lock(&ks->lock);
 +	if (regnum < 6) {
 +		u16 data;
-+		struct ksz_port *port;
 +
-+		port = &ks->ports[phy_id];
-+
-+		/* Not initialized during registration. */
-+		if (sw->phy[phy_id]) {
-+			struct phy_priv *phydata;
-+
-+			phydata = sw->phy[phy_id]->priv;
-+			port = phydata->port;
-+		}
-+		phy_id = port->linked->phy_id;
 +		sw_r_phy(&ks->sw, phy_id, regnum, &data);
 +		ret = data;
 +	}
@@ -116711,10 +116811,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	for (i = 0; i < PHY_MAX_ADDR; i++) {
 +		phydev = mdiobus_get_phy(bus, i);
 +		if (phydev) {
-+			struct phy_priv *priv = &ks->sw.phydata[i];
++			struct phy_priv *priv = phydev->priv;
 +
 +			priv->state = phydev->state;
-+			phydev->interface = PHY_INTERFACE_MODE_MII;
 +		}
 +	}
 +

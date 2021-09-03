@@ -1429,12 +1429,6 @@ static int stmmac_init_phy(struct net_device *dev)
 
 			phydev = priv->port.phydev;
 			ret = phylink_connect_phy(priv->phylink, phydev);
-			if (!ret) {
-				phylink_start(priv->phylink);
-
-				/* Do not want polling done. */
-				phy_stop_machine(phydev);
-			}
 			return ret;
 		}
 	}
@@ -3528,6 +3522,8 @@ static int stmmac_open(struct net_device *dev)
 
 #ifdef CONFIG_KSZ_SWITCH
 	if (sw_is_switch(sw)) {
+		bool start_phylink;
+
 		if (0 == priv->opened) {
 			if (rx_mode & 1) {
 				priv->hw_multi = 1;
@@ -3541,8 +3537,12 @@ static int stmmac_open(struct net_device *dev)
 		}
 
 skip_hw:
+		/* The function is called when starting hardware. */
+		start_phylink = (priv->opened > 0);
 		priv->opened++;
 		priv = net_priv;
+		if (start_phylink)
+			phylink_start(priv->phylink);
 	}
 #endif
 
@@ -3550,6 +3550,12 @@ skip_hw:
 
 #ifdef CONFIG_KSZ_SWITCH
 	if (sw_is_switch(sw)) {
+		struct phy_device *phydev;
+
+		phydev = priv->port.phydev;
+
+		/* Do not want polling done. */
+		phy_stop_machine(phydev);
 		sw->net_ops->open_port(sw, dev, &priv->port);
 	}
 #endif

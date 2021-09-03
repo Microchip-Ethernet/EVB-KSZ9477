@@ -92,7 +92,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb.
  #ifdef CONFIG_MACB_USE_HWSTAMP
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_main.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/cadence/macb_main.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_main.c	2021-01-14 04:54:56.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/cadence/macb_main.c	2021-09-01 09:54:52.817733869 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/cadence/macb_main.c	2021-09-03 01:22:58.995530800 -0700
 @@ -38,6 +38,484 @@
  #include <linux/pm_runtime.h>
  #include "macb.h"
@@ -707,7 +707,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	bp->phylink = phylink_create(&bp->phylink_config, bp->pdev->dev.fwnode,
  				     bp->phy_interface, &macb_phylink_ops);
  	if (IS_ERR(bp->phylink)) {
-@@ -751,6 +1316,274 @@ err_out:
+@@ -751,16 +1316,289 @@ err_out:
  	return err;
  }
  
@@ -982,7 +982,24 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  static void macb_update_stats(struct macb *bp)
  {
  	u32 *p = &bp->hw_stats.macb.rx_pause_frames;
-@@ -941,6 +1774,11 @@ static void macb_tx_error_task(struct wo
+ 	u32 *end = &bp->hw_stats.macb.tx_pause_frames + 1;
+ 	int offset = MACB_PFR;
++	int i;
++	u32 val;
+ 
+ 	WARN_ON((unsigned long)(end - p - 1) != (MACB_TPF - MACB_PFR) / 4);
+ 
+-	for (; p < end; p++, offset += 4)
+-		*p += bp->macb_reg_readl(bp, offset);
++	for (i = 0; p < end; i++, p++, offset += 4) {
++		val = bp->macb_reg_readl(bp, offset);
++		*p += val;
++		bp->ethtool_stats[i] += val;
++	}
+ }
+ 
+ static int macb_halt_tx(struct macb *bp)
+@@ -941,6 +1779,11 @@ static void macb_tx_error_task(struct wo
  	netif_tx_start_all_queues(bp->dev);
  	macb_writel(bp, NCR, macb_readl(bp, NCR) | MACB_BIT(TSTART));
  
@@ -994,7 +1011,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	spin_unlock_irqrestore(&bp->lock, flags);
  }
  
-@@ -948,6 +1786,11 @@ static void macb_tx_interrupt(struct mac
+@@ -948,6 +1791,11 @@ static void macb_tx_interrupt(struct mac
  {
  	unsigned int tail;
  	unsigned int head;
@@ -1006,7 +1023,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	u32 status;
  	struct macb *bp = queue->bp;
  	u16 queue_index = queue - bp->queues;
-@@ -999,10 +1842,17 @@ static void macb_tx_interrupt(struct mac
+@@ -999,10 +1847,17 @@ static void macb_tx_interrupt(struct mac
  				netdev_vdbg(bp->dev, "skb %u (data %p) TX complete\n",
  					    macb_tx_ring_wrap(bp, tail),
  					    skb->data);
@@ -1024,7 +1041,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  			}
  
  			/* Now we can safely release resources */
-@@ -1017,11 +1867,20 @@ static void macb_tx_interrupt(struct mac
+@@ -1017,11 +1872,20 @@ static void macb_tx_interrupt(struct mac
  		}
  	}
  
@@ -1045,7 +1062,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  }
  
  static void gem_rx_refill(struct macb_queue *queue)
-@@ -1118,6 +1977,13 @@ static int gem_rx(struct macb_queue *que
+@@ -1118,6 +1982,13 @@ static int gem_rx(struct macb_queue *que
  	struct macb_dma_desc	*desc;
  	int			count = 0;
  
@@ -1059,7 +1076,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	while (count < budget) {
  		u32 ctrl;
  		dma_addr_t addr;
-@@ -1168,6 +2034,24 @@ static int gem_rx(struct macb_queue *que
+@@ -1168,6 +2039,24 @@ static int gem_rx(struct macb_queue *que
  		dma_unmap_single(&bp->pdev->dev, addr,
  				 bp->rx_buffer_size, DMA_FROM_DEVICE);
  
@@ -1084,7 +1101,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  		skb->protocol = eth_type_trans(skb, bp->dev);
  		skb_checksum_none_assert(skb);
  		if (bp->dev->features & NETIF_F_RXCSUM &&
-@@ -1192,6 +2076,12 @@ static int gem_rx(struct macb_queue *que
+@@ -1192,6 +2081,12 @@ static int gem_rx(struct macb_queue *que
  #endif
  
  		napi_gro_receive(napi, skb);
@@ -1097,7 +1114,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	}
  
  	gem_rx_refill(queue);
-@@ -1209,6 +2099,13 @@ static int macb_rx_frame(struct macb_que
+@@ -1209,6 +2104,13 @@ static int macb_rx_frame(struct macb_que
  	struct macb_dma_desc *desc;
  	struct macb *bp = queue->bp;
  
@@ -1111,7 +1128,19 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	desc = macb_rx_desc(queue, last_frag);
  	len = desc->ctrl & bp->rx_frm_len_mask;
  
-@@ -1270,6 +2167,24 @@ static int macb_rx_frame(struct macb_que
+@@ -1216,6 +2118,11 @@ static int macb_rx_frame(struct macb_que
+ 		macb_rx_ring_wrap(bp, first_frag),
+ 		macb_rx_ring_wrap(bp, last_frag), len);
+ 
++#ifdef CONFIG_KSZ_SWITCH
++        /* Remove CRC */
++        len -= 4;
++#endif
++
+ 	/* The ethernet header starts NET_IP_ALIGN bytes into the
+ 	 * first buffer. Since the header is 14 bytes, this makes the
+ 	 * payload word-aligned.
+@@ -1270,6 +2177,24 @@ static int macb_rx_frame(struct macb_que
  	wmb();
  
  	__skb_pull(skb, NET_IP_ALIGN);
@@ -1136,7 +1165,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	skb->protocol = eth_type_trans(skb, bp->dev);
  
  	bp->dev->stats.rx_packets++;
-@@ -1480,6 +2395,8 @@ static irqreturn_t macb_interrupt(int ir
+@@ -1480,6 +2405,8 @@ static irqreturn_t macb_interrupt(int ir
  	spin_lock(&bp->lock);
  
  	while (status) {
@@ -1145,7 +1174,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  		/* close possible race with dev_close */
  		if (unlikely(!netif_running(dev))) {
  			queue_writel(queue, IDR, -1);
-@@ -1487,6 +2404,7 @@ static irqreturn_t macb_interrupt(int ir
+@@ -1487,6 +2414,7 @@ static irqreturn_t macb_interrupt(int ir
  				queue_writel(queue, ISR, -1);
  			break;
  		}
@@ -1153,7 +1182,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  
  		netdev_vdbg(bp->dev, "queue = %u, isr = 0x%08lx\n",
  			    (unsigned int)(queue - bp->queues),
-@@ -1729,9 +2647,11 @@ static unsigned int macb_tx_map(struct m
+@@ -1729,9 +2657,11 @@ static unsigned int macb_tx_map(struct m
  		if (i == queue->tx_head) {
  			ctrl |= MACB_BF(TX_LSO, lso_ctrl);
  			ctrl |= MACB_BF(TX_TCP_SEQ_SRC, seq_ctrl);
@@ -1165,7 +1194,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  		} else
  			/* Only set MSS/MFS on payload descriptors
  			 * (second or later descriptor)
-@@ -1816,6 +2736,7 @@ static inline int macb_clear_csum(struct
+@@ -1816,6 +2746,7 @@ static inline int macb_clear_csum(struct
  	return 0;
  }
  
@@ -1173,7 +1202,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  static int macb_pad_and_fcs(struct sk_buff **skb, struct net_device *ndev)
  {
  	bool cloned = skb_cloned(*skb) || skb_header_cloned(*skb) ||
-@@ -1873,6 +2794,7 @@ add_fcs:
+@@ -1873,6 +2804,7 @@ add_fcs:
  
  	return 0;
  }
@@ -1181,7 +1210,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  
  static netdev_tx_t macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
  {
-@@ -1885,15 +2807,40 @@ static netdev_tx_t macb_start_xmit(struc
+@@ -1885,15 +2817,40 @@ static netdev_tx_t macb_start_xmit(struc
  	bool is_lso, is_udp = 0;
  	netdev_tx_t ret = NETDEV_TX_OK;
  
@@ -1222,7 +1251,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  
  	is_lso = (skb_shinfo(skb)->gso_size != 0);
  
-@@ -1944,6 +2891,10 @@ static netdev_tx_t macb_start_xmit(struc
+@@ -1944,6 +2901,10 @@ static netdev_tx_t macb_start_xmit(struc
  	if (CIRC_SPACE(queue->tx_head, queue->tx_tail,
  		       bp->tx_ring_size) < desc_cnt) {
  		netif_stop_subqueue(dev, queue_index);
@@ -1233,7 +1262,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  		spin_unlock_irqrestore(&bp->lock, flags);
  		netdev_dbg(bp->dev, "tx_head = %u, tx_tail = %u\n",
  			   queue->tx_head, queue->tx_tail);
-@@ -1965,6 +2916,12 @@ static netdev_tx_t macb_start_xmit(struc
+@@ -1965,6 +2926,12 @@ static netdev_tx_t macb_start_xmit(struc
  	if (CIRC_SPACE(queue->tx_head, queue->tx_tail, bp->tx_ring_size) < 1)
  		netif_stop_subqueue(dev, queue_index);
  
@@ -1246,7 +1275,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  unlock:
  	spin_unlock_irqrestore(&bp->lock, flags);
  
-@@ -2216,6 +3173,26 @@ static u32 gem_mdc_clk_div(struct macb *
+@@ -2216,6 +3183,26 @@ static u32 gem_mdc_clk_div(struct macb *
  	u32 config;
  	unsigned long pclk_hz = clk_get_rate(bp->pclk);
  
@@ -1273,7 +1302,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if (pclk_hz <= 20000000)
  		config = GEM_BF(CLK, GEM_CLK_DIV8);
  	else if (pclk_hz <= 40000000)
-@@ -2340,6 +3317,16 @@ static void macb_init_hw(struct macb *bp
+@@ -2340,6 +3327,16 @@ static void macb_init_hw(struct macb *bp
  		config |= MACB_BIT(JFRAME);	/* Enable jumbo frames */
  	else
  		config |= MACB_BIT(BIG);	/* Receive oversized frames */
@@ -1290,7 +1319,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if (bp->dev->flags & IFF_PROMISC)
  		config |= MACB_BIT(CAF);	/* Copy All Frames */
  	else if (macb_is_gem(bp) && bp->dev->features & NETIF_F_RXCSUM)
-@@ -2433,12 +3420,80 @@ static void macb_sethashtable(struct net
+@@ -2433,12 +3430,80 @@ static void macb_sethashtable(struct net
  	macb_or_gem_writel(bp, HRT, mc_filter[1]);
  }
  
@@ -1371,7 +1400,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	cfg = macb_readl(bp, NCFGR);
  
  	if (dev->flags & IFF_PROMISC) {
-@@ -2476,6 +3531,303 @@ static void macb_set_rx_mode(struct net_
+@@ -2476,6 +3541,303 @@ static void macb_set_rx_mode(struct net_
  	macb_writel(bp, NCFGR, cfg);
  }
  
@@ -1675,7 +1704,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  static int macb_open(struct net_device *dev)
  {
  	size_t bufsz = dev->mtu + ETH_HLEN + ETH_FCS_LEN + NET_IP_ALIGN;
-@@ -2484,6 +3836,35 @@ static int macb_open(struct net_device *
+@@ -2484,6 +3846,35 @@ static int macb_open(struct net_device *
  	unsigned int q;
  	int err;
  
@@ -1711,7 +1740,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	netdev_dbg(bp->dev, "open\n");
  
  	err = pm_runtime_get_sync(&bp->pdev->dev);
-@@ -2505,6 +3886,26 @@ static int macb_open(struct net_device *
+@@ -2505,6 +3896,26 @@ static int macb_open(struct net_device *
  
  	macb_init_hw(bp);
  
@@ -1738,7 +1767,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	err = macb_phylink_connect(bp);
  	if (err)
  		goto reset_hw;
-@@ -2514,9 +3915,22 @@ static int macb_open(struct net_device *
+@@ -2514,9 +3925,22 @@ static int macb_open(struct net_device *
  	if (bp->ptp_info)
  		bp->ptp_info->ptp_init(dev);
  
@@ -1761,7 +1790,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	macb_reset_hw(bp);
  	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
  		napi_disable(&queue->napi);
-@@ -2535,14 +3949,78 @@ static int macb_close(struct net_device
+@@ -2535,14 +3959,78 @@ static int macb_close(struct net_device
  	unsigned long flags;
  	unsigned int q;
  
@@ -1840,7 +1869,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	spin_lock_irqsave(&bp->lock, flags);
  	macb_reset_hw(bp);
  	netif_carrier_off(dev);
-@@ -2563,6 +4041,40 @@ static int macb_change_mtu(struct net_de
+@@ -2563,6 +4051,40 @@ static int macb_change_mtu(struct net_de
  	if (netif_running(dev))
  		return -EBUSY;
  
@@ -1881,7 +1910,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	dev->mtu = new_mtu;
  
  	return 0;
-@@ -2641,6 +4153,9 @@ static void gem_get_ethtool_stats(struct
+@@ -2641,6 +4163,9 @@ static void gem_get_ethtool_stats(struct
  	struct macb *bp;
  
  	bp = netdev_priv(dev);
@@ -1891,7 +1920,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	gem_update_stats(bp);
  	memcpy(data, &bp->ethtool_stats, sizeof(u64)
  			* (GEM_STATS_LEN + QUEUE_STATS_LEN * MACB_MAX_QUEUES));
-@@ -2689,6 +4204,12 @@ static struct net_device_stats *macb_get
+@@ -2689,6 +4214,12 @@ static struct net_device_stats *macb_get
  	struct net_device_stats *nstat = &bp->dev->stats;
  	struct macb_stats *hwstat = &bp->hw_stats.macb;
  
@@ -1904,7 +1933,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if (macb_is_gem(bp))
  		return gem_get_stats(bp);
  
-@@ -2730,6 +4251,38 @@ static struct net_device_stats *macb_get
+@@ -2730,6 +4261,38 @@ static struct net_device_stats *macb_get
  	return nstat;
  }
  
@@ -1943,7 +1972,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  static int macb_get_regs_len(struct net_device *netdev)
  {
  	return MACB_GREGS_NBR * sizeof(u32);
-@@ -2742,6 +4295,10 @@ static void macb_get_regs(struct net_dev
+@@ -2742,6 +4305,10 @@ static void macb_get_regs(struct net_dev
  	unsigned int tail, head;
  	u32 *regs_buff = p;
  
@@ -1954,7 +1983,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	regs->version = (macb_readl(bp, MID) & ((1 << MACB_REV_SIZE) - 1))
  			| MACB_GREGS_VERSION;
  
-@@ -2775,6 +4332,10 @@ static void macb_get_wol(struct net_devi
+@@ -2775,6 +4342,10 @@ static void macb_get_wol(struct net_devi
  	wol->supported = 0;
  	wol->wolopts = 0;
  
@@ -1965,7 +1994,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if (bp->wol & MACB_WOL_HAS_MAGIC_PACKET)
  		phylink_ethtool_get_wol(bp->phylink, wol);
  }
-@@ -2784,6 +4345,11 @@ static int macb_set_wol(struct net_devic
+@@ -2784,6 +4355,11 @@ static int macb_set_wol(struct net_devic
  	struct macb *bp = netdev_priv(netdev);
  	int ret;
  
@@ -1977,7 +2006,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	ret = phylink_ethtool_set_wol(bp->phylink, wol);
  	if (!ret)
  		return 0;
-@@ -2823,6 +4389,10 @@ static void macb_get_ringparam(struct ne
+@@ -2823,6 +4399,10 @@ static void macb_get_ringparam(struct ne
  {
  	struct macb *bp = netdev_priv(netdev);
  
@@ -1988,7 +2017,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	ring->rx_max_pending = MAX_RX_RING_SIZE;
  	ring->tx_max_pending = MAX_TX_RING_SIZE;
  
-@@ -2837,6 +4407,11 @@ static int macb_set_ringparam(struct net
+@@ -2837,6 +4417,11 @@ static int macb_set_ringparam(struct net
  	u32 new_rx_size, new_tx_size;
  	unsigned int reset = 0;
  
@@ -2000,7 +2029,24 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if ((ring->rx_mini_pending) || (ring->rx_jumbo_pending))
  		return -EINVAL;
  
-@@ -3199,6 +4774,10 @@ static int gem_get_rxnfc(struct net_devi
+@@ -2937,6 +4522,16 @@ static int macb_get_ts_info(struct net_d
+ {
+ 	struct macb *bp = netdev_priv(netdev);
+ 
++#ifdef CONFIG_1588_PTP
++	struct ksz_sw *sw = bp->port.sw;
++
++	if (sw_is_switch(sw)) {
++		struct ptp_info *ptp = &sw->ptp_hw;
++
++		return ptp->ops->get_ts_info(ptp, netdev, info);
++	}
++#endif
++
+ 	if (bp->ptp_info)
+ 		return bp->ptp_info->get_ts_info(netdev, info);
+ 
+@@ -3199,6 +4794,10 @@ static int gem_get_rxnfc(struct net_devi
  	struct macb *bp = netdev_priv(netdev);
  	int ret = 0;
  
@@ -2011,7 +2057,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	switch (cmd->cmd) {
  	case ETHTOOL_GRXRINGS:
  		cmd->data = bp->num_queues;
-@@ -3226,6 +4805,11 @@ static int gem_set_rxnfc(struct net_devi
+@@ -3226,6 +4825,11 @@ static int gem_set_rxnfc(struct net_devi
  	struct macb *bp = netdev_priv(netdev);
  	int ret;
  
@@ -2023,7 +2069,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	switch (cmd->cmd) {
  	case ETHTOOL_SRXCLSRLINS:
  		if ((cmd->fs.location >= bp->max_tuples)
-@@ -3251,7 +4835,14 @@ static const struct ethtool_ops macb_eth
+@@ -3251,7 +4855,14 @@ static const struct ethtool_ops macb_eth
  	.get_regs_len		= macb_get_regs_len,
  	.get_regs		= macb_get_regs,
  	.get_link		= ethtool_op_get_link,
@@ -2038,7 +2084,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	.get_wol		= macb_get_wol,
  	.set_wol		= macb_set_wol,
  	.get_link_ksettings     = macb_get_link_ksettings,
-@@ -3276,10 +4867,66 @@ static const struct ethtool_ops gem_etht
+@@ -3276,10 +4887,66 @@ static const struct ethtool_ops gem_etht
  	.set_rxnfc			= gem_set_rxnfc,
  };
  
@@ -2105,7 +2151,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if (!netif_running(dev))
  		return -EINVAL;
  
-@@ -3345,6 +4992,12 @@ static int macb_set_features(struct net_
+@@ -3345,6 +5012,12 @@ static int macb_set_features(struct net_
  	struct macb *bp = netdev_priv(netdev);
  	netdev_features_t changed = features ^ netdev->features;
  
@@ -2118,7 +2164,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	/* TX checksum offload */
  	if (changed & NETIF_F_HW_CSUM)
  		macb_set_txcsum_feature(bp, features);
-@@ -3365,6 +5018,12 @@ static void macb_restore_features(struct
+@@ -3365,6 +5038,12 @@ static void macb_restore_features(struct
  	struct net_device *netdev = bp->dev;
  	netdev_features_t features = netdev->features;
  
@@ -2131,7 +2177,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	/* TX checksum offload */
  	macb_set_txcsum_feature(bp, features);
  
-@@ -3384,12 +5043,20 @@ static const struct net_device_ops macb_
+@@ -3384,12 +5063,20 @@ static const struct net_device_ops macb_
  	.ndo_do_ioctl		= macb_ioctl,
  	.ndo_validate_addr	= eth_validate_addr,
  	.ndo_change_mtu		= macb_change_mtu,
@@ -2152,7 +2198,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  };
  
  /* Configure peripheral capabilities according to device tree
-@@ -3412,6 +5079,10 @@ static void macb_configure_caps(struct m
+@@ -3412,6 +5099,10 @@ static void macb_configure_caps(struct m
  		dcfg = gem_readl(bp, DCFG2);
  		if ((dcfg & (GEM_BIT(RX_PKT_BUFF) | GEM_BIT(TX_PKT_BUFF))) == 0)
  			bp->caps |= MACB_CAPS_FIFO_MODE;
@@ -2163,7 +2209,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  #ifdef CONFIG_MACB_USE_HWSTAMP
  		if (gem_has_ptp(bp)) {
  			if (!GEM_BFEXT(TSU, gem_readl(bp, DCFG5)))
-@@ -3653,6 +5324,13 @@ static int macb_init(struct platform_dev
+@@ -3653,6 +5344,13 @@ static int macb_init(struct platform_dev
  		dev->hw_features |= NETIF_F_HW_CSUM | NETIF_F_RXCSUM;
  	if (bp->caps & MACB_CAPS_SG_DISABLED)
  		dev->hw_features &= ~NETIF_F_SG;
@@ -2177,7 +2223,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	dev->features = dev->hw_features;
  
  	/* Check RX Flow Filters support.
-@@ -3681,7 +5359,7 @@ static int macb_init(struct platform_dev
+@@ -3681,7 +5379,7 @@ static int macb_init(struct platform_dev
  
  	if (!(bp->caps & MACB_CAPS_USRIO_DISABLED)) {
  		val = 0;
@@ -2186,7 +2232,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  			val = GEM_BIT(RGMII);
  		else if (bp->phy_interface == PHY_INTERFACE_MODE_RMII &&
  			 (bp->caps & MACB_CAPS_USRIO_DEFAULT_IS_MII_GMII))
-@@ -4371,6 +6049,11 @@ static int macb_probe(struct platform_de
+@@ -4371,6 +6069,11 @@ static int macb_probe(struct platform_de
  	else
  		dev->max_mtu = ETH_DATA_LEN;
  
@@ -2198,7 +2244,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if (bp->caps & MACB_CAPS_BD_RD_PREFETCH) {
  		val = GEM_BFEXT(RXBD_RDBUFF, gem_readl(bp, DCFG10));
  		if (val)
-@@ -4411,6 +6094,19 @@ static int macb_probe(struct platform_de
+@@ -4411,6 +6114,19 @@ static int macb_probe(struct platform_de
  	if (err)
  		goto err_out_free_netdev;
  
@@ -2218,7 +2264,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	err = macb_mii_init(bp);
  	if (err)
  		goto err_out_free_netdev;
-@@ -4426,6 +6122,22 @@ static int macb_probe(struct platform_de
+@@ -4426,6 +6142,22 @@ static int macb_probe(struct platform_de
  	tasklet_init(&bp->hresp_err_tasklet, macb_hresp_error_task,
  		     (unsigned long)bp);
  
@@ -2241,7 +2287,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	netdev_info(dev, "Cadence %s rev 0x%08x at 0x%08lx irq %d (%pM)\n",
  		    macb_is_gem(bp) ? "GEM" : "MACB", macb_readl(bp, MID),
  		    dev->base_addr, dev->irq, dev->dev_addr);
-@@ -4455,6 +6167,95 @@ err_disable_clocks:
+@@ -4455,6 +6187,95 @@ err_disable_clocks:
  	return err;
  }
  
@@ -2337,7 +2383,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  static int macb_remove(struct platform_device *pdev)
  {
  	struct net_device *dev;
-@@ -4464,6 +6265,10 @@ static int macb_remove(struct platform_d
+@@ -4464,6 +6285,10 @@ static int macb_remove(struct platform_d
  
  	if (dev) {
  		bp = netdev_priv(dev);
@@ -2348,7 +2394,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  		mdiobus_unregister(bp->mii_bus);
  		mdiobus_free(bp->mii_bus);
  
-@@ -4497,6 +6302,11 @@ static int __maybe_unused macb_suspend(s
+@@ -4497,6 +6322,11 @@ static int __maybe_unused macb_suspend(s
  	if (!netif_running(netdev))
  		return 0;
  
@@ -2360,7 +2406,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if (bp->wol & MACB_WOL_ENABLED) {
  		macb_writel(bp, IER, MACB_BIT(WOL));
  		macb_writel(bp, WOL, MACB_BIT(MAG));
-@@ -4543,6 +6353,11 @@ static int __maybe_unused macb_resume(st
+@@ -4543,6 +6373,11 @@ static int __maybe_unused macb_resume(st
  	if (!device_may_wakeup(dev))
  		pm_runtime_force_resume(dev);
  
@@ -2372,7 +2418,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/cadence/macb_
  	if (bp->wol & MACB_WOL_ENABLED) {
  		macb_writel(bp, IDR, MACB_BIT(WOL));
  		macb_writel(bp, WOL, 0);
-@@ -4614,6 +6429,9 @@ static const struct dev_pm_ops macb_pm_o
+@@ -4614,6 +6449,9 @@ static const struct dev_pm_ops macb_pm_o
  static struct platform_driver macb_driver = {
  	.probe		= macb_probe,
  	.remove		= macb_remove,

@@ -319,9 +319,9 @@ lappend u_boot_variables \
     "serverip=192.168.0.100" \
     "subst_var=0" \
     "prep_boot=setenv -f subst_var 1; setenv -f bootargs \"\${_bootargs}\"" \
-    "_chip=9897" \
+    "_chip=ksz9897" \
     "_drvmode=spi" \
-    "_drvname=\${_drvmode}-ksz\${_chip}" \
+    "_drvname=\${_drvmode}-\${_chip}" \
     "extra_param=\${param1} \${param2} \${param3} \${param4} \${param5} \${param6} \${param7} \${param8} \${param9} \${param10} \${param11}" \
     "param1=\${_drvname}.authen=\${authen}" \
     "param2=\${_drvname}.multi_dev=\${multi_dev}" \
@@ -343,8 +343,6 @@ lappend u_boot_variables \
     "dev3_ports=\${_drvname}.eth3_ports=\${eth3_ports}" \
     "dev3_vlan=\${_drvname}.eth3_vlan=\${eth3_vlan}" \
     "dev3_proto=\${_drvname}.eth3_proto=\${eth3_proto}" \
-    "_avb=1" \
-    "_iba=1" \
     "$loadDts" \
     "$bootCmd"
 

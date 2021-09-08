@@ -16012,16 +16012,6 @@ static void link_update_work(struct work_struct *work)
 	if (!sw->dev_offset || port != sw->netport[0])
 		sw_report_link(sw, port, port->linked);
 
-	/* There is an extra network device for the main device. */
-	/* The switch is always linked; speed and duplex are also fixed. */
-	if (sw->dev_offset) {
-		port = sw->netport[0];
-		if (port && netif_running(port->netdev)) {
-			info = get_port_info(sw, sw->HOST_PORT);
-			sw_report_link(sw, port, info);
-		}
-	}
-
 #ifdef CONFIG_KSZ_STP
 	if (sw->features & STP_SUPPORT) {
 		struct ksz_stp_info *stp = &sw->info->rstp;
@@ -16074,6 +16064,16 @@ static void link_update_work(struct work_struct *work)
 #endif
 	}
 	port->link_ports = 0;
+
+	/* There is an extra network device for the main device. */
+	/* The switch is always linked; speed and duplex are also fixed. */
+	if (sw->dev_offset) {
+		port = sw->netport[0];
+		if (port && netif_running(port->netdev)) {
+			info = get_port_info(sw, sw->HOST_PORT);
+			sw_report_link(sw, port, info);
+		}
+	}
 
 #ifdef CONFIG_KSZ_HSR
 	if (sw->features & HSR_HW) {

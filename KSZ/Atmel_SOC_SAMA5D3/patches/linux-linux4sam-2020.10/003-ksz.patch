@@ -86459,7 +86459,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-09-03 07:23:04.637279100 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-09-08 13:28:49.828414174 -0700
 @@ -0,0 +1,19147 @@
 +/**
 + * Microchip gigabit switch common code
@@ -102475,16 +102475,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (!sw->dev_offset || port != sw->netport[0])
 +		sw_report_link(sw, port, port->linked);
 +
-+	/* There is an extra network device for the main device. */
-+	/* The switch is always linked; speed and duplex are also fixed. */
-+	if (sw->dev_offset) {
-+		port = sw->netport[0];
-+		if (port && netif_running(port->netdev)) {
-+			info = get_port_info(sw, sw->HOST_PORT);
-+			sw_report_link(sw, port, info);
-+		}
-+	}
-+
 +#ifdef CONFIG_KSZ_STP
 +	if (sw->features & STP_SUPPORT) {
 +		struct ksz_stp_info *stp = &sw->info->rstp;
@@ -102537,6 +102527,16 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 +	}
 +	port->link_ports = 0;
++
++	/* There is an extra network device for the main device. */
++	/* The switch is always linked; speed and duplex are also fixed. */
++	if (sw->dev_offset) {
++		port = sw->netport[0];
++		if (port && netif_running(port->netdev)) {
++			info = get_port_info(sw, sw->HOST_PORT);
++			sw_report_link(sw, port, info);
++		}
++	}
 +
 +#ifdef CONFIG_KSZ_HSR
 +	if (sw->features & HSR_HW) {
@@ -107103,7 +107103,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c	2021-09-03 05:15:52.672863700 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c	2021-09-08 13:29:08.268414946 -0700
 @@ -0,0 +1,10228 @@
 +/**
 + * Microchip switch common code
@@ -115504,6 +115504,15 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (!sw->dev_offset || port != sw->netport[0])
 +		sw_report_link(sw, port, port->linked);
 +
++#ifdef CONFIG_KSZ_STP
++	if (sw->features & STP_SUPPORT) {
++		struct ksz_stp_info *stp = &sw->info->rstp;
++
++		stp->ops->link_change(stp, true);
++	}
++#endif
++	port->link_ports = 0;
++
 +	/* There is an extra network device for the main device. */
 +	/* The switch is always linked; speed and duplex are also fixed. */
 +	if (sw->dev_offset) {
@@ -115513,15 +115522,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			sw_report_link(sw, port, info);
 +		}
 +	}
-+
-+#ifdef CONFIG_KSZ_STP
-+	if (sw->features & STP_SUPPORT) {
-+		struct ksz_stp_info *stp = &sw->info->rstp;
-+
-+		stp->ops->link_change(stp, true);
-+	}
-+#endif
-+	port->link_ports = 0;
 +
 +#ifdef CONFIG_KSZ_HSR
 +	if (sw->features & HSR_HW) {

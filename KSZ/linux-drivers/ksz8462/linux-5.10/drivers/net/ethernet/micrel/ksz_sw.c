@@ -3552,6 +3552,331 @@ static void sw_notify_link_change(struct ksz_sw *sw, uint ports)
 	}
 }  /* sw_notify_link_change */
 
+#ifndef NO_PHYDEV
+#ifdef CONFIG_HAVE_KSZ8463
+#define KSZ8463_ID_HI		0x0022
+
+#define KSZ8463_SW_ID		0x8463
+#define PHY_ID_KSZ_SW		((KSZ8463_ID_HI << 16) | KSZ8463_SW_ID)
+
+static char *kszsw_phy_driver_names[] = {
+	"Microchip KSZ8463 Switch",
+};
+#endif
+
+#ifdef CONFIG_HAVE_KSZ8863
+#define KSZ8863_SW_ID		0x8863
+#define PHY_ID_KSZ_SW		((KSZ8863_ID_HI << 16) | KSZ8863_SW_ID)
+
+static char *kszsw_phy_driver_names[] = {
+	"Microchip KSZ8863 Switch",
+	"Microchip KSZ8873 Switch",
+};
+#endif
+
+#ifdef CONFIG_HAVE_KSZ8463
+/*
+ * Tha  2011/03/11
+ * The hardware register reads low word first of PHY id instead of high word.
+ */
+static inline int actual_reg(int regnum)
+{
+	if (2 == regnum)
+		regnum = 3;
+	else if (3 == regnum)
+		regnum = 2;
+	return regnum;
+}
+
+/**
+ * sw_r_phy - read data from PHY register
+ * @sw:		The switch instance.
+ * @phy:	PHY address to read.
+ * @reg:	PHY register to read.
+ * @val:	Buffer to store the read data.
+ *
+ * This routine reads data from the PHY register.
+ */
+static void sw_r_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 *val)
+{
+	u16 base;
+	u16 data = 0;
+
+	reg = actual_reg(reg);
+	if (2 == phy)
+		base = PHY2_REG_CTRL;
+	else
+		base = PHY1_REG_CTRL;
+	data = sw->reg->r16(sw, base + reg * 2);
+	if (2 == reg)
+		data = KSZ8463_SW_ID;
+	*val = data;
+}  /* sw_r_phy */
+
+/**
+ * sw_w_phy - write data to PHY register
+ * @hw:		The switch instance.
+ * @phy:	PHY address to write.
+ * @reg:	PHY register to write.
+ * @val:	Word data to write.
+ *
+ * This routine writes data to the PHY register.
+ */
+static void sw_w_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 val)
+{
+	u16 base;
+
+	if (2 == phy)
+		base = PHY2_REG_CTRL;
+	else
+		base = PHY1_REG_CTRL;
+	sw->reg->w16(sw, base + reg * 2, val);
+}  /* sw_w_phy */
+#endif
+
+#ifdef CONFIG_HAVE_KSZ8863
+/**
+ * sw_r_phy - read data from PHY register
+ * @sw:		The switch instance.
+ * @phy:	PHY address to read.
+ * @reg:	PHY register to read.
+ * @val:	Buffer to store the read data.
+ *
+ * This routine reads data from the PHY register.
+ */
+static void sw_r_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 *val)
+{
+	u8 ctrl;
+	u8 restart;
+	u8 link;
+	u8 speed;
+	u8 p;
+	u16 data = 0;
+
+	if (phy) {
+		p = phy - 1;
+	} else {
+		switch (reg) {
+		case PHY_REG_CTRL:
+			data = 0x1140;
+			break;
+		case PHY_REG_STATUS:
+			data = 0x7808;
+			break;
+		case PHY_REG_ID_1:
+			data = KSZ8863_ID_HI;
+			break;
+		case PHY_REG_ID_2:
+			data = KSZ8863_SW_ID;
+			break;
+		case PHY_REG_AUTO_NEGOTIATION:
+			data = 0x05e1;
+			break;
+		case PHY_REG_REMOTE_CAPABILITY:
+			data = 0xc5e1;
+			break;
+		}
+		*val = data;
+		return;
+	}
+	switch (reg) {
+	case PHY_REG_CTRL:
+		port_r(sw, p, P_PHY_CTRL, &ctrl);
+		port_r(sw, p, P_NEG_RESTART_CTRL, &restart);
+		port_r(sw, p, P_SPEED_STATUS, &speed);
+		if (restart & PORT_LOOPBACK)
+			data |= PHY_LOOPBACK;
+		if (ctrl & PORT_FORCE_100_MBIT)
+			data |= PHY_SPEED_100MBIT;
+		if (ctrl & PORT_AUTO_NEG_ENABLE)
+			data |= PHY_AUTO_NEG_ENABLE;
+		if (restart & PORT_POWER_DOWN)
+			data |= PHY_POWER_DOWN;
+		if (restart & PORT_AUTO_NEG_RESTART)
+			data |= PHY_AUTO_NEG_RESTART;
+		if (ctrl & PORT_FORCE_FULL_DUPLEX)
+			data |= PHY_FULL_DUPLEX;
+		if (speed & PORT_HP_MDIX)
+			data |= PHY_HP_MDIX;
+		if (restart & PORT_FORCE_MDIX)
+			data |= PHY_FORCE_MDIX;
+		if (restart & PORT_AUTO_MDIX_DISABLE)
+			data |= PHY_AUTO_MDIX_DISABLE;
+		if (restart & PORT_REMOTE_FAULT_DISABLE)
+			data |= PHY_REMOTE_FAULT_DISABLE;
+		if (restart & PORT_TX_DISABLE)
+			data |= PHY_TRANSMIT_DISABLE;
+		if (restart & PORT_LED_OFF)
+			data |= PHY_LED_DISABLE;
+		break;
+	case PHY_REG_STATUS:
+		port_r(sw, p, P_LINK_STATUS, &link);
+		port_r(sw, p, P_SPEED_STATUS, &speed);
+		data = PHY_100BTX_FD_CAPABLE |
+			PHY_100BTX_CAPABLE |
+			PHY_10BT_FD_CAPABLE |
+			PHY_10BT_CAPABLE |
+			PHY_AUTO_NEG_CAPABLE;
+		if (link & PORT_AUTO_NEG_COMPLETE)
+			data |= PHY_AUTO_NEG_ACKNOWLEDGE;
+		if (link & PORT_STATUS_LINK_GOOD)
+			data |= PHY_LINK_STATUS;
+		if (speed & PORT_REMOTE_FAULT)
+			data |= PHY_REMOTE_FAULT;
+		break;
+	case PHY_REG_ID_1:
+		data = 0x0022;
+		break;
+	case PHY_REG_ID_2:
+		/* Use unique switch id to differentiate from regular PHY. */
+		data = KSZ8863_SW_ID;
+		break;
+	case PHY_REG_AUTO_NEGOTIATION:
+		port_r(sw, p, P_PHY_CTRL, &ctrl);
+		data = PHY_AUTO_NEG_802_3;
+		if (ctrl & PORT_AUTO_NEG_SYM_PAUSE)
+			data |= PHY_AUTO_NEG_SYM_PAUSE;
+		if (ctrl & PORT_AUTO_NEG_100BTX_FD)
+			data |= PHY_AUTO_NEG_100BTX_FD;
+		if (ctrl & PORT_AUTO_NEG_100BTX)
+			data |= PHY_AUTO_NEG_100BTX;
+		if (ctrl & PORT_AUTO_NEG_10BT_FD)
+			data |= PHY_AUTO_NEG_10BT_FD;
+		if (ctrl & PORT_AUTO_NEG_10BT)
+			data |= PHY_AUTO_NEG_10BT;
+		break;
+	case PHY_REG_REMOTE_CAPABILITY:
+		port_r(sw, p, P_LINK_STATUS, &link);
+		data = PHY_AUTO_NEG_802_3;
+		if (link & PORT_REMOTE_SYM_PAUSE)
+			data |= PHY_AUTO_NEG_SYM_PAUSE;
+		if (link & PORT_REMOTE_100BTX_FD)
+			data |= PHY_AUTO_NEG_100BTX_FD;
+		if (link & PORT_REMOTE_100BTX)
+			data |= PHY_AUTO_NEG_100BTX;
+		if (link & PORT_REMOTE_10BT_FD)
+			data |= PHY_AUTO_NEG_10BT_FD;
+		if (link & PORT_REMOTE_10BT)
+			data |= PHY_AUTO_NEG_10BT;
+		break;
+	default:
+		break;
+	}
+	*val = data;
+}  /* sw_r_phy */
+
+/**
+ * sw_w_phy - write data to PHY register
+ * @hw:		The switch instance.
+ * @phy:	PHY address to write.
+ * @reg:	PHY register to write.
+ * @val:	Word data to write.
+ *
+ * This routine writes data to the PHY register.
+ */
+static void sw_w_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 val)
+{
+	u8 ctrl;
+	u8 restart;
+	u8 speed;
+	u8 data;
+	u8 p;
+
+	if (phy)
+		p = phy - 1;
+	else
+		return;
+	switch (reg) {
+	case PHY_REG_CTRL:
+		port_r(sw, p, P_SPEED_STATUS, &speed);
+		data = speed;
+		if (val & PHY_HP_MDIX)
+			data |= PORT_HP_MDIX;
+		else
+			data &= ~PORT_HP_MDIX;
+		if (data != speed)
+			port_w(sw, p, P_SPEED_STATUS, data);
+		port_r(sw, p, P_PHY_CTRL, &ctrl);
+		data = ctrl;
+		if (val & PHY_AUTO_NEG_ENABLE)
+			data |= PORT_AUTO_NEG_ENABLE;
+		else
+			data &= ~PORT_AUTO_NEG_ENABLE;
+		if (val & PHY_SPEED_100MBIT)
+			data |= PORT_FORCE_100_MBIT;
+		else
+			data &= ~PORT_FORCE_100_MBIT;
+		if (val & PHY_FULL_DUPLEX)
+			data |= PORT_FORCE_FULL_DUPLEX;
+		else
+			data &= ~PORT_FORCE_FULL_DUPLEX;
+		if (data != ctrl)
+			port_w(sw, p, P_PHY_CTRL, data);
+		port_r(sw, p, P_NEG_RESTART_CTRL, &restart);
+		data = restart;
+		if (val & PHY_LED_DISABLE)
+			data |= PORT_LED_OFF;
+		else
+			data &= ~PORT_LED_OFF;
+		if (val & PHY_TRANSMIT_DISABLE)
+			data |= PORT_TX_DISABLE;
+		else
+			data &= ~PORT_TX_DISABLE;
+		if (val & PHY_AUTO_NEG_RESTART)
+			data |= PORT_AUTO_NEG_RESTART;
+		else
+			data &= ~(PORT_AUTO_NEG_RESTART);
+		if (val & PHY_REMOTE_FAULT_DISABLE)
+			data |= PORT_REMOTE_FAULT_DISABLE;
+		else
+			data &= ~PORT_REMOTE_FAULT_DISABLE;
+		if (val & PHY_POWER_DOWN)
+			data |= PORT_POWER_DOWN;
+		else
+			data &= ~PORT_POWER_DOWN;
+		if (val & PHY_AUTO_MDIX_DISABLE)
+			data |= PORT_AUTO_MDIX_DISABLE;
+		else
+			data &= ~PORT_AUTO_MDIX_DISABLE;
+		if (val & PHY_FORCE_MDIX)
+			data |= PORT_FORCE_MDIX;
+		else
+			data &= ~PORT_FORCE_MDIX;
+		if (val & PHY_LOOPBACK)
+			data |= PORT_LOOPBACK;
+		else
+			data &= ~PORT_LOOPBACK;
+		if (data != restart)
+			port_w(sw, p, P_NEG_RESTART_CTRL, data);
+		break;
+	case PHY_REG_AUTO_NEGOTIATION:
+		port_r(sw, p, P_PHY_CTRL, &ctrl);
+		data = ctrl;
+		data &= ~(PORT_AUTO_NEG_SYM_PAUSE |
+			PORT_AUTO_NEG_100BTX_FD |
+			PORT_AUTO_NEG_100BTX |
+			PORT_AUTO_NEG_10BT_FD |
+			PORT_AUTO_NEG_10BT);
+		if (val & PHY_AUTO_NEG_SYM_PAUSE)
+			data |= PORT_AUTO_NEG_SYM_PAUSE;
+		if (val & PHY_AUTO_NEG_100BTX_FD)
+			data |= PORT_AUTO_NEG_100BTX_FD;
+		if (val & PHY_AUTO_NEG_100BTX)
+			data |= PORT_AUTO_NEG_100BTX;
+		if (val & PHY_AUTO_NEG_10BT_FD)
+			data |= PORT_AUTO_NEG_10BT_FD;
+		if (val & PHY_AUTO_NEG_10BT)
+			data |= PORT_AUTO_NEG_10BT;
+		if (data != ctrl)
+			port_w(sw, p, P_PHY_CTRL, data);
+		break;
+	default:
+		break;
+	}
+}  /* sw_w_phy */
+#endif
+#endif
+
 static int port_chk_force_link(struct ksz_sw *sw, uint p, SW_D data,
 	SW_D status)
 {
@@ -3685,6 +4010,10 @@ static int port_get_link_speed(struct ksz_port *port)
 				change |= 1 << i;
 			}
 			info->state = media_connected;
+#ifndef NO_PHYDEV
+			sw_r_phy(sw, p + 1, PHY_REG_REMOTE_CAPABILITY,
+				 &info->lpa);
+#endif
 		} else {
 			if (media_disconnected != info->state) {
 				change |= 1 << i;
@@ -3711,7 +4040,7 @@ static int port_get_link_speed(struct ksz_port *port)
 		schedule_work(&port->link_update);
 	}
 	return change;
-}
+}  /* port_get_link_speed */
 
 /**
  * port_set_link_speed - set port speed
@@ -7335,7 +7664,6 @@ static void sw_port_phylink_validate(struct phylink_config *config,
 dbg_msg(" validate: %d\n", state->interface);
 	if ((sw->dev_offset && p->port_cnt > 1) ||
 	    (!sw->dev_offset && !sw->phy_offset)) {
-dbg_msg(" first\n");
 		if (sw->phylink_ops)
 			sw->phylink_ops->validate(config, supported, state);
 	} else {
@@ -8357,8 +8685,7 @@ static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
 	struct ksz_port_info *linked = port->linked;
 	struct phy_device *phydev = port->phydev;
 	struct net_device *dev = port->netdev;
-	int lpa = info->partner & 0xffff;
-	int lpagb = info->partner >> 16;
+	int lpa = info->lpa;
 	int phy_link = 0;
 	int link;
 
@@ -8386,8 +8713,6 @@ static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
 
 	/* Update link partner capabilities. */
 	if (lpa) {
-		mii_stat1000_mod_linkmode_lpa_t(phydev->lp_advertising,
-						lpagb);
 		mii_lpa_mod_linkmode_lpa_t(phydev->lp_advertising, lpa);
 #if 0
 dbg_msg(" %*pb\n", __ETHTOOL_LINK_MODE_MASK_NBITS, phydev->advertising);
@@ -9124,27 +9449,6 @@ static void sw_init_phydev(struct ksz_sw *sw, struct phy_device *phydev)
 	phydev->pause = 1;
 }  /* sw_init_phydev */
 
-#ifdef CONFIG_HAVE_KSZ8463
-#define KSZ8463_ID_HI		0x0022
-
-#define KSZ8463_SW_ID		0x8463
-#define PHY_ID_KSZ_SW		((KSZ8463_ID_HI << 16) | KSZ8463_SW_ID)
-
-static char *kszsw_phy_driver_names[] = {
-	"Microchip KSZ8463 Switch",
-};
-#endif
-
-#ifdef CONFIG_HAVE_KSZ8863
-#define KSZ8863_SW_ID		0x8863
-#define PHY_ID_KSZ_SW		((KSZ8863_ID_HI << 16) | KSZ8863_SW_ID)
-
-static char *kszsw_phy_driver_names[] = {
-	"Microchip KSZ8863 Switch",
-	"Microchip KSZ8873 Switch",
-};
-#endif
-
 static int kszphy_probe(struct phy_device *phydev)
 {
 	struct mii_bus *bus = phydev->mdio.bus;
@@ -9206,307 +9510,6 @@ static struct phy_driver kszsw_phy_driver = {
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
 };
-
-#ifdef CONFIG_HAVE_KSZ8463
-/*
- * Tha  2011/03/11
- * The hardware register reads low word first of PHY id instead of high word.
- */
-static inline int actual_reg(int regnum)
-{
-	if (2 == regnum)
-		regnum = 3;
-	else if (3 == regnum)
-		regnum = 2;
-	return regnum;
-}
-
-/**
- * sw_r_phy - read data from PHY register
- * @sw:		The switch instance.
- * @phy:	PHY address to read.
- * @reg:	PHY register to read.
- * @val:	Buffer to store the read data.
- *
- * This routine reads data from the PHY register.
- */
-static void sw_r_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 *val)
-{
-	u16 base;
-	u16 data = 0;
-
-	reg = actual_reg(reg);
-	if (2 == phy)
-		base = PHY2_REG_CTRL;
-	else
-		base = PHY1_REG_CTRL;
-	data = sw->reg->r16(sw, base + reg * 2);
-	if (2 == reg)
-		data = KSZ8463_SW_ID;
-	*val = data;
-}  /* sw_r_phy */
-
-/**
- * sw_w_phy - write data to PHY register
- * @hw:		The switch instance.
- * @phy:	PHY address to write.
- * @reg:	PHY register to write.
- * @val:	Word data to write.
- *
- * This routine writes data to the PHY register.
- */
-static void sw_w_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 val)
-{
-	u16 base;
-
-	if (2 == phy)
-		base = PHY2_REG_CTRL;
-	else
-		base = PHY1_REG_CTRL;
-	sw->reg->w16(sw, base + reg * 2, val);
-}  /* sw_w_phy */
-#endif
-
-#ifdef CONFIG_HAVE_KSZ8863
-/**
- * sw_r_phy - read data from PHY register
- * @sw:		The switch instance.
- * @phy:	PHY address to read.
- * @reg:	PHY register to read.
- * @val:	Buffer to store the read data.
- *
- * This routine reads data from the PHY register.
- */
-static void sw_r_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 *val)
-{
-	u8 ctrl;
-	u8 restart;
-	u8 link;
-	u8 speed;
-	u8 p;
-	u16 data = 0;
-
-	if (phy) {
-		p = phy - 1;
-	} else {
-		switch (reg) {
-		case PHY_REG_CTRL:
-			data = 0x1140;
-			break;
-		case PHY_REG_STATUS:
-			data = 0x796d;
-			break;
-		case PHY_REG_ID_1:
-			data = KSZ8863_ID_HI;
-			break;
-		case PHY_REG_ID_2:
-			data = KSZ8863_SW_ID;
-			break;
-		case PHY_REG_AUTO_NEGOTIATION:
-			data = 0x05e1;
-			break;
-		case PHY_REG_REMOTE_CAPABILITY:
-			data = 0xc5e1;
-			break;
-		}
-		return;
-	}
-	switch (reg) {
-	case PHY_REG_CTRL:
-		port_r(sw, p, P_PHY_CTRL, &ctrl);
-		port_r(sw, p, P_NEG_RESTART_CTRL, &restart);
-		port_r(sw, p, P_SPEED_STATUS, &speed);
-		if (restart & PORT_LOOPBACK)
-			data |= PHY_LOOPBACK;
-		if (ctrl & PORT_FORCE_100_MBIT)
-			data |= PHY_SPEED_100MBIT;
-		if (ctrl & PORT_AUTO_NEG_ENABLE)
-			data |= PHY_AUTO_NEG_ENABLE;
-		if (restart & PORT_POWER_DOWN)
-			data |= PHY_POWER_DOWN;
-		if (restart & PORT_AUTO_NEG_RESTART)
-			data |= PHY_AUTO_NEG_RESTART;
-		if (ctrl & PORT_FORCE_FULL_DUPLEX)
-			data |= PHY_FULL_DUPLEX;
-		if (speed & PORT_HP_MDIX)
-			data |= PHY_HP_MDIX;
-		if (restart & PORT_FORCE_MDIX)
-			data |= PHY_FORCE_MDIX;
-		if (restart & PORT_AUTO_MDIX_DISABLE)
-			data |= PHY_AUTO_MDIX_DISABLE;
-		if (restart & PORT_REMOTE_FAULT_DISABLE)
-			data |= PHY_REMOTE_FAULT_DISABLE;
-		if (restart & PORT_TX_DISABLE)
-			data |= PHY_TRANSMIT_DISABLE;
-		if (restart & PORT_LED_OFF)
-			data |= PHY_LED_DISABLE;
-		break;
-	case PHY_REG_STATUS:
-		port_r(sw, p, P_LINK_STATUS, &link);
-		port_r(sw, p, P_SPEED_STATUS, &speed);
-		data = PHY_100BTX_FD_CAPABLE |
-			PHY_100BTX_CAPABLE |
-			PHY_10BT_FD_CAPABLE |
-			PHY_10BT_CAPABLE |
-			PHY_AUTO_NEG_CAPABLE;
-		if (link & PORT_AUTO_NEG_COMPLETE)
-			data |= PHY_AUTO_NEG_ACKNOWLEDGE;
-		if (link & PORT_STATUS_LINK_GOOD)
-			data |= PHY_LINK_STATUS;
-		if (speed & PORT_REMOTE_FAULT)
-			data |= PHY_REMOTE_FAULT;
-		break;
-	case PHY_REG_ID_1:
-		data = 0x0022;
-		break;
-	case PHY_REG_ID_2:
-		/* Use unique switch id to differentiate from regular PHY. */
-		data = KSZ8863_SW_ID;
-		break;
-	case PHY_REG_AUTO_NEGOTIATION:
-		port_r(sw, p, P_PHY_CTRL, &ctrl);
-		data = PHY_AUTO_NEG_802_3;
-		if (ctrl & PORT_AUTO_NEG_SYM_PAUSE)
-			data |= PHY_AUTO_NEG_SYM_PAUSE;
-		if (ctrl & PORT_AUTO_NEG_100BTX_FD)
-			data |= PHY_AUTO_NEG_100BTX_FD;
-		if (ctrl & PORT_AUTO_NEG_100BTX)
-			data |= PHY_AUTO_NEG_100BTX;
-		if (ctrl & PORT_AUTO_NEG_10BT_FD)
-			data |= PHY_AUTO_NEG_10BT_FD;
-		if (ctrl & PORT_AUTO_NEG_10BT)
-			data |= PHY_AUTO_NEG_10BT;
-		break;
-	case PHY_REG_REMOTE_CAPABILITY:
-		port_r(sw, p, P_LINK_STATUS, &link);
-		data = PHY_AUTO_NEG_802_3;
-		if (link & PORT_REMOTE_SYM_PAUSE)
-			data |= PHY_AUTO_NEG_SYM_PAUSE;
-		if (link & PORT_REMOTE_100BTX_FD)
-			data |= PHY_AUTO_NEG_100BTX_FD;
-		if (link & PORT_REMOTE_100BTX)
-			data |= PHY_AUTO_NEG_100BTX;
-		if (link & PORT_REMOTE_10BT_FD)
-			data |= PHY_AUTO_NEG_10BT_FD;
-		if (link & PORT_REMOTE_10BT)
-			data |= PHY_AUTO_NEG_10BT;
-		break;
-	default:
-		break;
-	}
-	*val = data;
-}  /* sw_r_phy */
-
-/**
- * sw_w_phy - write data to PHY register
- * @hw:		The switch instance.
- * @phy:	PHY address to write.
- * @reg:	PHY register to write.
- * @val:	Word data to write.
- *
- * This routine writes data to the PHY register.
- */
-static void sw_w_phy(struct ksz_sw *sw, u16 phy, u16 reg, u16 val)
-{
-	u8 ctrl;
-	u8 restart;
-	u8 speed;
-	u8 data;
-	u8 p;
-
-	if (phy)
-		p = phy - 1;
-	else
-		return;
-	switch (reg) {
-	case PHY_REG_CTRL:
-		port_r(sw, p, P_SPEED_STATUS, &speed);
-		data = speed;
-		if (val & PHY_HP_MDIX)
-			data |= PORT_HP_MDIX;
-		else
-			data &= ~PORT_HP_MDIX;
-		if (data != speed)
-			port_w(sw, p, P_SPEED_STATUS, data);
-		port_r(sw, p, P_PHY_CTRL, &ctrl);
-		data = ctrl;
-		if (val & PHY_AUTO_NEG_ENABLE)
-			data |= PORT_AUTO_NEG_ENABLE;
-		else
-			data &= ~PORT_AUTO_NEG_ENABLE;
-		if (val & PHY_SPEED_100MBIT)
-			data |= PORT_FORCE_100_MBIT;
-		else
-			data &= ~PORT_FORCE_100_MBIT;
-		if (val & PHY_FULL_DUPLEX)
-			data |= PORT_FORCE_FULL_DUPLEX;
-		else
-			data &= ~PORT_FORCE_FULL_DUPLEX;
-		if (data != ctrl)
-			port_w(sw, p, P_PHY_CTRL, data);
-		port_r(sw, p, P_NEG_RESTART_CTRL, &restart);
-		data = restart;
-		if (val & PHY_LED_DISABLE)
-			data |= PORT_LED_OFF;
-		else
-			data &= ~PORT_LED_OFF;
-		if (val & PHY_TRANSMIT_DISABLE)
-			data |= PORT_TX_DISABLE;
-		else
-			data &= ~PORT_TX_DISABLE;
-		if (val & PHY_AUTO_NEG_RESTART)
-			data |= PORT_AUTO_NEG_RESTART;
-		else
-			data &= ~(PORT_AUTO_NEG_RESTART);
-		if (val & PHY_REMOTE_FAULT_DISABLE)
-			data |= PORT_REMOTE_FAULT_DISABLE;
-		else
-			data &= ~PORT_REMOTE_FAULT_DISABLE;
-		if (val & PHY_POWER_DOWN)
-			data |= PORT_POWER_DOWN;
-		else
-			data &= ~PORT_POWER_DOWN;
-		if (val & PHY_AUTO_MDIX_DISABLE)
-			data |= PORT_AUTO_MDIX_DISABLE;
-		else
-			data &= ~PORT_AUTO_MDIX_DISABLE;
-		if (val & PHY_FORCE_MDIX)
-			data |= PORT_FORCE_MDIX;
-		else
-			data &= ~PORT_FORCE_MDIX;
-		if (val & PHY_LOOPBACK)
-			data |= PORT_LOOPBACK;
-		else
-			data &= ~PORT_LOOPBACK;
-		if (data != restart)
-			port_w(sw, p, P_NEG_RESTART_CTRL, data);
-		break;
-	case PHY_REG_AUTO_NEGOTIATION:
-		port_r(sw, p, P_PHY_CTRL, &ctrl);
-		data = ctrl;
-		data &= ~(PORT_AUTO_NEG_SYM_PAUSE |
-			PORT_AUTO_NEG_100BTX_FD |
-			PORT_AUTO_NEG_100BTX |
-			PORT_AUTO_NEG_10BT_FD |
-			PORT_AUTO_NEG_10BT);
-		if (val & PHY_AUTO_NEG_SYM_PAUSE)
-			data |= PORT_AUTO_NEG_SYM_PAUSE;
-		if (val & PHY_AUTO_NEG_100BTX_FD)
-			data |= PORT_AUTO_NEG_100BTX_FD;
-		if (val & PHY_AUTO_NEG_100BTX)
-			data |= PORT_AUTO_NEG_100BTX;
-		if (val & PHY_AUTO_NEG_10BT_FD)
-			data |= PORT_AUTO_NEG_10BT_FD;
-		if (val & PHY_AUTO_NEG_10BT)
-			data |= PORT_AUTO_NEG_10BT;
-		if (data != ctrl)
-			port_w(sw, p, P_PHY_CTRL, data);
-		break;
-	default:
-		break;
-	}
-}  /* sw_w_phy */
-#endif
 
 static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 {
@@ -10093,6 +10096,7 @@ dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 	sw->interface = PHY_INTERFACE_MODE_MII;
 	info = get_port_info(sw, pi);
 	info->state = media_connected;
+	info->lpa = 0x05e1;
 
 	sw_init_phy_priv(ks);
 	setup_device_node(sw);

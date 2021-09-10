@@ -17384,6 +17384,7 @@ static void sw_init_phy_priv(struct sw_priv *ks)
 		if (!n) {
 			port->port_cnt = sw->mib_port_cnt;
 			port->mib_port_cnt = sw->mib_port_cnt;
+			p = 1;
 		}
 		port->first_port = p;
 		p = get_phy_port(sw, p);

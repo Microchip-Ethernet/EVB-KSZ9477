@@ -1,6 +1,6 @@
-diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec.h linux-at91-linux4sam-2020.10/drivers/net/ethernet/freescale/fec.h
---- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec.h	2021-01-14 04:54:56.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/freescale/fec.h	2021-08-31 22:59:36.501854303 -0700
+diff -Napur linux-5.4.130-orig/drivers/net/ethernet/freescale/fec.h linux-5.4.130/drivers/net/ethernet/freescale/fec.h
+--- linux-5.4.130-orig/drivers/net/ethernet/freescale/fec.h	2021-07-07 05:29:57.000000000 -0700
++++ linux-5.4.130/drivers/net/ethernet/freescale/fec.h	2021-09-24 11:50:16.462086915 -0700
 @@ -19,6 +19,32 @@
  #include <linux/ptp_clock_kernel.h>
  #include <linux/timecounter.h>
@@ -60,9 +60,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  
  	u64 ethtool_stats[0];
  };
-diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec_main.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/freescale/fec_main.c
---- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec_main.c	2021-01-14 04:54:56.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/freescale/fec_main.c	2021-08-31 22:59:43.689863216 -0700
+diff -Napur linux-5.4.130-orig/drivers/net/ethernet/freescale/fec_main.c linux-5.4.130/drivers/net/ethernet/freescale/fec_main.c
+--- linux-5.4.130-orig/drivers/net/ethernet/freescale/fec_main.c	2021-07-07 05:29:57.000000000 -0700
++++ linux-5.4.130/drivers/net/ethernet/freescale/fec_main.c	2021-09-24 11:50:16.466086914 -0700
 @@ -70,6 +70,396 @@
  
  #include "fec.h"
@@ -1746,7 +1746,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  };
  
  static const unsigned short offset_des_active_rxq[] = {
-@@ -3350,6 +4622,18 @@ static int fec_enet_init(struct net_devi
+@@ -3353,6 +4625,18 @@ static int fec_enet_init(struct net_devi
  		fep->rx_align = 0x3f;
  	}
  
@@ -1765,7 +1765,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  	ndev->hw_features = ndev->features;
  
  	fec_restart(ndev);
-@@ -3671,8 +4955,10 @@ fec_probe(struct platform_device *pdev)
+@@ -3677,8 +4961,10 @@ fec_probe(struct platform_device *pdev)
  		goto failed_reset;
  
  	irq_cnt = fec_enet_get_irq_cnt(pdev);
@@ -1776,7 +1776,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  
  	ret = fec_enet_init(ndev);
  	if (ret)
-@@ -3700,6 +4986,40 @@ fec_probe(struct platform_device *pdev)
+@@ -3706,6 +4992,40 @@ fec_probe(struct platform_device *pdev)
  	if (ret)
  		goto failed_mii_init;
  
@@ -1817,7 +1817,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  	/* Carrier starts down, phylib will bring it up */
  	netif_carrier_off(ndev);
  	fec_enet_clk_enable(ndev, false);
-@@ -3712,12 +5032,21 @@ fec_probe(struct platform_device *pdev)
+@@ -3718,12 +5038,21 @@ fec_probe(struct platform_device *pdev)
  	device_init_wakeup(&ndev->dev, fep->wol_flag &
  			   FEC_WOL_HAS_MAGIC_PACKET);
  
@@ -1839,7 +1839,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  	pm_runtime_mark_last_busy(&pdev->dev);
  	pm_runtime_put_autosuspend(&pdev->dev);
  
-@@ -3753,6 +5082,91 @@ failed_ioremap:
+@@ -3759,6 +5088,91 @@ failed_ioremap:
  	return ret;
  }
  
@@ -1931,7 +1931,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  static int
  fec_drv_remove(struct platform_device *pdev)
  {
-@@ -3765,6 +5179,10 @@ fec_drv_remove(struct platform_device *p
+@@ -3771,6 +5185,10 @@ fec_drv_remove(struct platform_device *p
  	if (ret < 0)
  		return ret;
  
@@ -1942,7 +1942,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  	cancel_work_sync(&fep->tx_timeout_work);
  	fec_ptp_stop(pdev);
  	unregister_netdev(ndev);
-@@ -3910,6 +5328,9 @@ static struct platform_driver fec_driver
+@@ -3916,6 +5334,9 @@ static struct platform_driver fec_driver
  	.id_table = fec_devtype,
  	.probe	= fec_probe,
  	.remove	= fec_drv_remove,

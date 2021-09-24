@@ -1589,11 +1589,16 @@ static void macb_update_stats(struct macb *bp)
 	u32 *p = &bp->hw_stats.macb.rx_pause_frames;
 	u32 *end = &bp->hw_stats.macb.tx_pause_frames + 1;
 	int offset = MACB_PFR;
+	int i;
+	u32 val;
 
 	WARN_ON((unsigned long)(end - p - 1) != (MACB_TPF - MACB_PFR) / 4);
 
-	for (; p < end; p++, offset += 4)
-		*p += bp->macb_reg_readl(bp, offset);
+	for (i = 0; p < end; i++, p++, offset += 4) {
+		val = bp->macb_reg_readl(bp, offset);
+		*p += val;
+		bp->ethtool_stats[i] += val;
+	}
 }
 
 static int macb_halt_tx(struct macb *bp)
@@ -2112,6 +2117,11 @@ static int macb_rx_frame(struct macb_queue *queue, struct napi_struct *napi,
 	netdev_vdbg(bp->dev, "macb_rx_frame frags %u - %u (len %u)\n",
 		macb_rx_ring_wrap(bp, first_frag),
 		macb_rx_ring_wrap(bp, last_frag), len);
+
+#ifdef CONFIG_KSZ_SWITCH
+        /* Remove CRC */
+        len -= 4;
+#endif
 
 	/* The ethernet header starts NET_IP_ALIGN bytes into the
 	 * first buffer. Since the header is 14 bytes, this makes the
@@ -4511,6 +4521,16 @@ static int macb_get_ts_info(struct net_device *netdev,
 			    struct ethtool_ts_info *info)
 {
 	struct macb *bp = netdev_priv(netdev);
+
+#ifdef CONFIG_1588_PTP
+	struct ksz_sw *sw = bp->port.sw;
+
+	if (sw_is_switch(sw)) {
+		struct ptp_info *ptp = &sw->ptp_hw;
+
+		return ptp->ops->get_ts_info(ptp, netdev, info);
+	}
+#endif
 
 	if (bp->ptp_info)
 		return bp->ptp_info->get_ts_info(netdev, info);

@@ -107,16 +107,26 @@ diff -purN u-boot-at91-linux4sam-2020.10.1.orig/cmd/Makefile u-boot-at91-linux4s
  obj-$(CONFIG_CMD_SYSBOOT) += sysboot.o pxe_utils.o
 diff -purN u-boot-at91-linux4sam-2020.10.1.orig/drivers/net/macb.c u-boot-at91-linux4sam-2020.10.1/drivers/net/macb.c
 --- u-boot-at91-linux4sam-2020.10.1.orig/drivers/net/macb.c	2021-01-14 23:11:03.000000000 -0800
-+++ u-boot-at91-linux4sam-2020.10.1/drivers/net/macb.c	2021-06-06 22:07:33.145737598 -0700
-@@ -465,6 +465,7 @@ static void macb_phy_reset(struct macb_d
++++ u-boot-at91-linux4sam-2020.10.1/drivers/net/macb.c	2021-09-21 18:37:14.660075368 -0700
+@@ -440,6 +440,7 @@ static int _macb_recv(struct macb_device
+ 	}
+ }
+ 
++#ifndef CONFIG_PHY_FIXED
+ static void macb_phy_reset(struct macb_device *macb, const char *name)
+ {
+ 	int i;
+@@ -464,7 +465,9 @@ static void macb_phy_reset(struct macb_d
+ 		printf("%s: Autonegotiation timed out (status=0x%04x)\n",
  		       name, status);
  }
++#endif
  
 +#ifndef CONFIG_PHY_FIXED
  static int macb_phy_find(struct macb_device *macb, const char *name)
  {
  	int i;
-@@ -485,6 +486,7 @@ static int macb_phy_find(struct macb_dev
+@@ -485,6 +488,7 @@ static int macb_phy_find(struct macb_dev
  
  	return -ENODEV;
  }
@@ -124,15 +134,26 @@ diff -purN u-boot-at91-linux4sam-2020.10.1.orig/drivers/net/macb.c u-boot-at91-l
  
  /**
   * macb_linkspd_cb - Linkspeed change callback function
-@@ -585,6 +587,7 @@ static int macb_phy_init(struct macb_dev
- 	int i;
+@@ -579,12 +583,17 @@ static int macb_phy_init(struct macb_dev
+ 	struct macb_device *macb = dev_get_priv(dev);
+ #endif
+ 	u32 ncfgr;
++#ifndef CONFIG_PHY_FIXED
+ 	u16 phy_id, status, adv, lpa;
+ 	int media, speed, duplex;
++#else
++	u16 phy_id, lpa;
++	int speed, duplex;
++#endif
+ 	int ret;
+-	int i;
  
  	arch_get_mdio_control(name);
 +#ifndef CONFIG_PHY_FIXED
  	/* Auto-detect phy_addr */
  	ret = macb_phy_find(macb, name);
  	if (ret)
-@@ -596,6 +599,9 @@ static int macb_phy_init(struct macb_dev
+@@ -596,6 +605,9 @@ static int macb_phy_init(struct macb_dev
  		printf("%s: No PHY present\n", name);
  		return -ENODEV;
  	}
@@ -142,3 +163,59 @@ diff -purN u-boot-at91-linux4sam-2020.10.1.orig/drivers/net/macb.c u-boot-at91-l
  
  #ifdef CONFIG_PHYLIB
  #ifdef CONFIG_DM_ETH
+@@ -612,10 +624,16 @@ static int macb_phy_init(struct macb_dev
+ 	}
+ 
+ 	phy_config(macb->phydev);
++#ifdef CONFIG_PHY_FIXED
++	phy_startup(macb->phydev);
++#endif
+ #endif
+ 
++#ifndef CONFIG_PHY_FIXED
+ 	status = macb_mdio_read(macb, macb->phy_addr, MII_BMSR);
+ 	if (!(status & BMSR_LSTATUS)) {
++		int i;
++
+ 		/* Try to re-negotiate if we don't have link already. */
+ 		macb_phy_reset(macb, name);
+ 
+@@ -638,10 +656,18 @@ static int macb_phy_init(struct macb_dev
+ 		       name, status);
+ 		return -ENETDOWN;
+ 	}
++#endif
+ 
+ 	/* First check for GMAC and that it is GiB capable */
+ 	if (gem_is_gigabit_capable(macb)) {
++#ifndef CONFIG_PHY_FIXED
+ 		lpa = macb_mdio_read(macb, macb->phy_addr, MII_STAT1000);
++#else
++		if (macb->phydev->speed == SPEED_1000)
++			lpa = 0x7800;
++		else
++			lpa = 0x0000;
++#endif
+ 
+ 		if (lpa & (LPA_1000FULL | LPA_1000HALF | LPA_1000XFULL |
+ 					LPA_1000XHALF)) {
+@@ -674,6 +700,7 @@ static int macb_phy_init(struct macb_dev
+ 		}
+ 	}
+ 
++#ifndef CONFIG_PHY_FIXED
+ 	/* fall back for EMAC checking */
+ 	adv = macb_mdio_read(macb, macb->phy_addr, MII_ADVERTISE);
+ 	lpa = macb_mdio_read(macb, macb->phy_addr, MII_LPA);
+@@ -681,6 +708,11 @@ static int macb_phy_init(struct macb_dev
+ 	speed = (media & (ADVERTISE_100FULL | ADVERTISE_100HALF)
+ 		 ? 1 : 0);
+ 	duplex = (media & ADVERTISE_FULL) ? 1 : 0;
++#else
++	speed = macb->phydev->speed == SPEED_100;
++	duplex = macb->phydev->duplex;
++	lpa = 0x05e1;
++#endif
+ 	printf("%s: link up, %sMbps %s-duplex (lpa: 0x%04x)\n",
+ 	       name,
+ 	       speed ? "100" : "10",

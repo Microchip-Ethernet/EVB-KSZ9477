@@ -25,7 +25,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/platform_data/macb.h>
 #include <linux/platform_device.h>
-#include <linux/phylink.h>
+#include <linux/phy.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
@@ -38,6 +38,10 @@
 #include <linux/pm_runtime.h>
 #include "macb.h"
 
+#if 0
+/* Need this for TCP transmit performance. */
+#define FAKE_SG
+#endif
 #if 1
 /* No hardware checksumming means no fix for such feature. */
 #define NO_HW_CSUM
@@ -874,27 +878,6 @@ mdio_pm_exit:
 	return status;
 }
 
-static void macb_init_buffers(struct macb *bp)
-{
-	struct macb_queue *queue;
-	unsigned int q;
-
-	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue) {
-		queue_writel(queue, RBQP, lower_32_bits(queue->rx_ring_dma));
-#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
-		if (bp->hw_dma_cap & HW_DMA_CAP_64B)
-			queue_writel(queue, RBQPH,
-				     upper_32_bits(queue->rx_ring_dma));
-#endif
-		queue_writel(queue, TBQP, lower_32_bits(queue->tx_ring_dma));
-#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
-		if (bp->hw_dma_cap & HW_DMA_CAP_64B)
-			queue_writel(queue, TBQPH,
-				     upper_32_bits(queue->tx_ring_dma));
-#endif
-	}
-}
-
 /**
  * macb_set_tx_clk() - Set a clock to a new frequency
  * @clk		Pointer to the clock to change
@@ -939,268 +922,82 @@ static void macb_set_tx_clk(struct clk *clk, int speed, struct net_device *dev)
 		netdev_err(dev, "adjusting tx_clk failed.\n");
 }
 
-static void macb_validate(struct phylink_config *config,
-			  unsigned long *supported,
-			  struct phylink_link_state *state)
+static void macb_handle_link_change(struct net_device *dev)
 {
-	struct net_device *ndev = to_net_dev(config->dev);
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
-	struct macb *bp = netdev_priv(ndev);
-
-	/* We only support MII, RMII, GMII, RGMII & SGMII. */
-	if (state->interface != PHY_INTERFACE_MODE_NA &&
-	    state->interface != PHY_INTERFACE_MODE_MII &&
-	    state->interface != PHY_INTERFACE_MODE_RMII &&
-	    state->interface != PHY_INTERFACE_MODE_GMII &&
-	    state->interface != PHY_INTERFACE_MODE_SGMII &&
-	    !phy_interface_mode_is_rgmii(state->interface)) {
-		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
-		return;
-	}
-
-	if (!macb_is_gem(bp) &&
-	    (state->interface == PHY_INTERFACE_MODE_GMII ||
-	     phy_interface_mode_is_rgmii(state->interface))) {
-		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
-		return;
-	}
-
-	phylink_set_port_modes(mask);
-	phylink_set(mask, Autoneg);
-	phylink_set(mask, Asym_Pause);
-#ifdef CONFIG_KSZ_SWITCH
-	/* MAC supports rx flow control but not tx.  Need both to enable
-	 * rx flow control even though MAC does not send PAUSE frames.
-	 */
-	phylink_set(mask, Pause);
-#endif
-
-	phylink_set(mask, 10baseT_Half);
-	phylink_set(mask, 10baseT_Full);
-	phylink_set(mask, 100baseT_Half);
-	phylink_set(mask, 100baseT_Full);
-
-	if (bp->caps & MACB_CAPS_GIGABIT_MODE_AVAILABLE &&
-	    (state->interface == PHY_INTERFACE_MODE_NA ||
-	     state->interface == PHY_INTERFACE_MODE_GMII ||
-	     state->interface == PHY_INTERFACE_MODE_SGMII ||
-	     phy_interface_mode_is_rgmii(state->interface))) {
-		phylink_set(mask, 1000baseT_Full);
-		phylink_set(mask, 1000baseX_Full);
-
-		if (!(bp->caps & MACB_CAPS_NO_GIGABIT_HALF))
-			phylink_set(mask, 1000baseT_Half);
-	}
-
-	bitmap_and(supported, supported, mask, __ETHTOOL_LINK_MODE_MASK_NBITS);
-	bitmap_and(state->advertising, state->advertising, mask,
-		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-}
-
-static void macb_mac_pcs_get_state(struct phylink_config *config,
-				   struct phylink_link_state *state)
-{
-	state->link = 0;
-}
-
-static void macb_mac_an_restart(struct phylink_config *config)
-{
-	/* Not supported */
-}
-
-static void macb_mac_config(struct phylink_config *config, unsigned int mode,
-			    const struct phylink_link_state *state)
-{
-	struct net_device *ndev = to_net_dev(config->dev);
-	struct macb *bp = netdev_priv(ndev);
+	struct macb *bp = netdev_priv(dev);
+	struct phy_device *phydev = dev->phydev;
 	unsigned long flags;
-	u32 old_ctrl, ctrl;
+	int status_change = 0;
 
 	spin_lock_irqsave(&bp->lock, flags);
 
-	old_ctrl = ctrl = macb_or_gem_readl(bp, NCFGR);
+	if (phydev->link) {
+		if ((bp->speed != phydev->speed) ||
+		    (bp->duplex != phydev->duplex)) {
+			u32 reg;
 
-	/* Clear all the bits we might set later */
-	ctrl &= ~(MACB_BIT(SPD) | MACB_BIT(FD) | MACB_BIT(PAE));
+			reg = macb_readl(bp, NCFGR);
+			reg &= ~(MACB_BIT(SPD) | MACB_BIT(FD));
+			if (macb_is_gem(bp))
+				reg &= ~GEM_BIT(GBE);
 
-	if (bp->caps & MACB_CAPS_MACB_IS_EMAC) {
-		if (state->interface == PHY_INTERFACE_MODE_RMII)
-			ctrl |= MACB_BIT(RM9200_RMII);
-	} else {
-		ctrl &= ~(GEM_BIT(GBE) | GEM_BIT(SGMIIEN) | GEM_BIT(PCSSEL));
+			if (phydev->duplex)
+				reg |= MACB_BIT(FD);
+			if (phydev->speed == SPEED_100)
+				reg |= MACB_BIT(SPD);
+			if (phydev->speed == SPEED_1000 &&
+			    bp->caps & MACB_CAPS_GIGABIT_MODE_AVAILABLE)
+				reg |= GEM_BIT(GBE);
 
-		/* We do not support MLO_PAUSE_RX yet */
-		if (state->pause & MLO_PAUSE_TX)
-			ctrl |= MACB_BIT(PAE);
+			macb_or_gem_writel(bp, NCFGR, reg);
 
-		if (state->interface == PHY_INTERFACE_MODE_SGMII)
-			ctrl |= GEM_BIT(SGMIIEN) | GEM_BIT(PCSSEL);
+			bp->speed = phydev->speed;
+			bp->duplex = phydev->duplex;
+			status_change = 1;
+		}
+#ifdef CONFIG_KSZ_SWITCH
+		bp->port.ready = netif_running(dev);
+#endif
 	}
 
-	if (state->speed == SPEED_1000)
-		ctrl |= GEM_BIT(GBE);
-	else if (state->speed == SPEED_100)
-		ctrl |= MACB_BIT(SPD);
+	if (phydev->link != bp->link) {
+		if (!phydev->link) {
+			bp->speed = 0;
+			bp->duplex = -1;
+		}
+		bp->link = phydev->link;
 
-	if (state->duplex)
-		ctrl |= MACB_BIT(FD);
-
-	/* Apply the new configuration, if any */
-	if (old_ctrl ^ ctrl)
-		macb_or_gem_writel(bp, NCFGR, ctrl);
-
-	bp->speed = state->speed;
+		status_change = 1;
+	}
 
 	spin_unlock_irqrestore(&bp->lock, flags);
-}
 
-static void macb_mac_link_down(struct phylink_config *config, unsigned int mode,
-			       phy_interface_t interface)
-{
-	struct net_device *ndev = to_net_dev(config->dev);
-	struct macb *bp = netdev_priv(ndev);
-	struct macb_queue *queue;
-	unsigned int q;
-	u32 ctrl;
+	if (status_change) {
+		if (phydev->link) {
+			/* Update the TX clock rate if and only if the link is
+			 * up and there has been a link change.
+			 */
+			macb_set_tx_clk(bp->tx_clk, phydev->speed, dev);
 
+/* The switch driver will update the link notification. */
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 #ifdef CONFIG_KSZ_SWITCH
-	bp = bp->hw_priv;
-	if (sw_is_switch(bp->port.sw)) {
-
-#if defined(CONFIG_KSZ_IBA_ONLY)
-		/* Cannot turn off queue while IBA is being used. */
-		if (bp->port.need_mac)
-			return;
+			if (!sw_is_switch(bp->port.sw))
 #endif
-		if (interface == PHY_INTERFACE_MODE_INTERNAL) {
-			netif_tx_stop_all_queues(ndev);
-			return;
+			netif_carrier_on(dev);
+#endif
+			netdev_info(dev, "link up (%d/%s)\n",
+				    phydev->speed,
+				    phydev->duplex == DUPLEX_FULL ?
+				    "Full" : "Half");
+		} else {
+			netif_carrier_off(dev);
+			netdev_info(dev, "link down\n");
 		}
 	}
-	bp->port.ready = false;
-#endif
-	if (!(bp->caps & MACB_CAPS_MACB_IS_EMAC))
-		for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
-			queue_writel(queue, IDR,
-				     bp->rx_intr_mask | MACB_TX_INT_FLAGS | MACB_BIT(HRESP));
-
-	/* Disable Rx and Tx */
-	ctrl = macb_readl(bp, NCR) & ~(MACB_BIT(RE) | MACB_BIT(TE));
-	macb_writel(bp, NCR, ctrl);
-
-	netif_tx_stop_all_queues(ndev);
-}
-
-static void macb_mac_link_up(struct phylink_config *config, unsigned int mode,
-			     phy_interface_t interface, struct phy_device *phy)
-{
-	struct net_device *ndev = to_net_dev(config->dev);
-	struct macb *bp = netdev_priv(ndev);
-	struct macb_queue *queue;
-	unsigned int q;
-
-#ifdef CONFIG_KSZ_SWITCH
-	bp = bp->hw_priv;
-	if (sw_is_switch(bp->port.sw)) {
-		if (interface == PHY_INTERFACE_MODE_INTERNAL) {
-
-			/* Cannot change queue while IBA is being used. */
-			netif_tx_wake_all_queues(ndev);
-			return;
-		}
-	}
-
-	/* MAC is ready to send after function ends. */
-	bp->port.ready = true;
-#endif
-	if (!(bp->caps & MACB_CAPS_MACB_IS_EMAC)) {
-		macb_set_tx_clk(bp->tx_clk, bp->speed, ndev);
-
-		/* Initialize rings & buffers as clearing MACB_BIT(TE) in link down
-		 * cleared the pipeline and control registers.
-		 */
-		bp->macbgem_ops.mog_init_rings(bp);
-		macb_init_buffers(bp);
-
-		for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
-			queue_writel(queue, IER,
-				     bp->rx_intr_mask | MACB_TX_INT_FLAGS | MACB_BIT(HRESP));
-	}
-
-	/* Enable Rx and Tx */
-	macb_writel(bp, NCR, macb_readl(bp, NCR) | MACB_BIT(RE) | MACB_BIT(TE));
-
-	netif_tx_wake_all_queues(ndev);
-}
-
-static const struct phylink_mac_ops macb_phylink_ops = {
-	.validate = macb_validate,
-	.mac_pcs_get_state = macb_mac_pcs_get_state,
-	.mac_an_restart = macb_mac_an_restart,
-	.mac_config = macb_mac_config,
-	.mac_link_down = macb_mac_link_down,
-	.mac_link_up = macb_mac_link_up,
-};
-
-static bool macb_phy_handle_exists(struct device_node *dn)
-{
-	dn = of_parse_phandle(dn, "phy-handle", 0);
-	of_node_put(dn);
-	return dn != NULL;
-}
-
-static int macb_phylink_connect(struct macb *bp)
-{
-	struct device_node *dn = bp->pdev->dev.of_node;
-	struct net_device *dev = bp->dev;
-	struct phy_device *phydev;
-	int ret;
-
-#ifdef CONFIG_KSZ_SWITCH
-	if (bp->phylink) {
-		struct ksz_sw *sw = bp->port.sw;
-
-		if (sw_is_switch(sw)) {
-			phydev = bp->port.phydev;
-			ret = phylink_connect_phy(bp->phylink, phydev);
-			if (!ret) {
-				phylink_start(bp->phylink);
-
-				/* Do not want polling done. */
-				phy_stop_machine(phydev);
-			}
-			return ret;
-		}
-	}
-#endif
-	if (dn)
-		ret = phylink_of_phy_connect(bp->phylink, dn, 0);
-
-	if (!dn || (ret && !macb_phy_handle_exists(dn))) {
-		phydev = phy_find_first(bp->mii_bus);
-		if (!phydev) {
-			netdev_err(dev, "no PHY found\n");
-			return -ENXIO;
-		}
-
-		/* attach the mac to the phy */
-		ret = phylink_connect_phy(bp->phylink, phydev);
-	}
-
-	if (ret) {
-		netdev_err(dev, "Could not attach PHY (%d)\n", ret);
-		return ret;
-	}
-
-	phylink_start(bp->phylink);
-
-	return 0;
 }
 
 #ifdef CONFIG_KSZ_SMI
-/* These SMI access functions may require non-standard MDIO signal and so the
- * standard phy_read and phy_write functions cannot be used.
- */
 static int smi_read(struct mii_bus *bus, int phy_id, int regnum)
 {
 	return macb_mdio_read(bus, phy_id, regnum);
@@ -1216,67 +1013,80 @@ static int smi_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 static int macb_mii_probe(struct net_device *dev)
 {
 	struct macb *bp = netdev_priv(dev);
+	struct phy_device *phydev;
+	struct device_node *np;
+	int ret, i;
 
-	bp->phylink_config.dev = &dev->dev;
-	bp->phylink_config.type = PHYLINK_NETDEV;
+	np = bp->pdev->dev.of_node;
+	ret = 0;
 
-#if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
-	do {
-		int err = 0;
+	if (np) {
+		if (of_phy_is_fixed_link(np)) {
+			bp->phy_node = of_node_get(np);
+		} else {
+			bp->phy_node = of_parse_phandle(np, "phy-handle", 0);
+			/* fallback to standard phy registration if no
+			 * phy-handle was found nor any phy found during
+			 * dt phy registration
+			 */
+			if (!bp->phy_node && !phy_find_first(bp->mii_bus)) {
+				for (i = 0; i < PHY_MAX_ADDR; i++) {
+					phydev = mdiobus_scan(bp->mii_bus, i);
+					if (IS_ERR(phydev) &&
+					    PTR_ERR(phydev) != -ENODEV) {
+						ret = PTR_ERR(phydev);
+						break;
+					}
+				}
 
-#ifdef CONFIG_KSZ_SMI
-		int irq = get_sw_irq(bp, NULL);
-
-		err = smi_probe(&bp->sw_pdev, bp->mii_bus, irq,
-				smi_read, smi_write);
-#endif
-		if (!err)
-			err = macb_sw_chk(bp);
-
-		/* Switch driver defines its own phylink. */
-		if (!err)
-			return 0;
-	} while (0);
-#endif
-
-	bp->phylink = phylink_create(&bp->phylink_config, bp->pdev->dev.fwnode,
-				     bp->phy_interface, &macb_phylink_ops);
-	if (IS_ERR(bp->phylink)) {
-		netdev_err(dev, "Could not create a phylink instance (%ld)\n",
-			   PTR_ERR(bp->phylink));
-		return PTR_ERR(bp->phylink);
+				if (ret)
+					return -ENODEV;
+			}
+		}
 	}
+
+	if (bp->phy_node) {
+		phydev = of_phy_connect(dev, bp->phy_node,
+					&macb_handle_link_change, 0,
+					bp->phy_interface);
+		if (!phydev)
+			return -ENODEV;
+	} else {
+		phydev = phy_find_first(bp->mii_bus);
+		if (!phydev) {
+			netdev_err(dev, "no PHY found\n");
+			return -ENXIO;
+		}
+
+		/* attach the mac to the phy */
+		ret = phy_connect_direct(dev, phydev, &macb_handle_link_change,
+					 bp->phy_interface);
+		if (ret) {
+			netdev_err(dev, "Could not attach to PHY\n");
+			return ret;
+		}
+	}
+
+	/* mask with MAC supported features */
+	if (macb_is_gem(bp) && bp->caps & MACB_CAPS_GIGABIT_MODE_AVAILABLE)
+		phy_set_max_speed(phydev, SPEED_1000);
+	else
+		phy_set_max_speed(phydev, SPEED_100);
+
+	if (bp->caps & MACB_CAPS_NO_GIGABIT_HALF)
+		phy_remove_link_mode(phydev,
+				     ETHTOOL_LINK_MODE_1000baseT_Half_BIT);
+
+	bp->link = 0;
+	bp->speed = 0;
+	bp->duplex = -1;
 
 	return 0;
 }
 
-static int macb_mdiobus_register(struct macb *bp)
-{
-	struct device_node *child, *np = bp->pdev->dev.of_node;
-
-	if (of_phy_is_fixed_link(np))
-		return mdiobus_register(bp->mii_bus);
-
-	/* Only create the PHY from the device tree if at least one PHY is
-	 * described. Otherwise scan the entire MDIO bus. We do this to support
-	 * old device tree that did not follow the best practices and did not
-	 * describe their network PHYs.
-	 */
-	for_each_available_child_of_node(np, child)
-		if (of_mdiobus_child_is_phy(child)) {
-			/* The loop increments the child refcount,
-			 * decrement it before returning.
-			 */
-			of_node_put(child);
-
-			return of_mdiobus_register(bp->mii_bus, np);
-		}
-
-	return mdiobus_register(bp->mii_bus);
-}
-
 static int macb_mii_init(struct macb *bp)
 {
+	struct device_node *np;
 	int err = -ENXIO;
 
 	/* Enable management port */
@@ -1298,9 +1108,39 @@ static int macb_mii_init(struct macb *bp)
 
 	dev_set_drvdata(&bp->dev->dev, bp->mii_bus);
 
-	err = macb_mdiobus_register(bp);
+	np = bp->pdev->dev.of_node;
+	if (np && of_phy_is_fixed_link(np)) {
+		if (of_phy_register_fixed_link(np) < 0) {
+			dev_err(&bp->pdev->dev,
+				"broken fixed-link specification %pOF\n", np);
+			goto err_out_free_mdiobus;
+		}
+
+		err = mdiobus_register(bp->mii_bus);
+	} else {
+		err = of_mdiobus_register(bp->mii_bus, np);
+	}
+
 	if (err)
-		goto err_out_free_mdiobus;
+		goto err_out_free_fixed_link;
+
+#ifdef CONFIG_KSZ_SMI
+	if (!err) {
+		int irq = get_sw_irq(bp);
+
+		err = smi_probe(&bp->sw_pdev, bp->mii_bus, irq);
+
+		/* Return an error so that switch driver is connected. */
+		if (!err)
+			return -ENXIO;
+	}
+#endif
+#if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
+	/* Return an error so that switch driver is connected. */
+	err = macb_sw_chk(bp);
+	if (!err)
+		return -ENODEV;
+#endif
 
 	err = macb_mii_probe(bp->dev);
 	if (err)
@@ -1310,7 +1150,11 @@ static int macb_mii_init(struct macb *bp)
 
 err_out_unregister_bus:
 	mdiobus_unregister(bp->mii_bus);
+err_out_free_fixed_link:
+	if (np && of_phy_is_fixed_link(np))
+		of_phy_deregister_fixed_link(np);
 err_out_free_mdiobus:
+	of_node_put(bp->phy_node);
 	mdiobus_free(bp->mii_bus);
 err_out:
 	return err;
@@ -2118,11 +1962,6 @@ static int macb_rx_frame(struct macb_queue *queue, struct napi_struct *napi,
 		macb_rx_ring_wrap(bp, first_frag),
 		macb_rx_ring_wrap(bp, last_frag), len);
 
-#ifdef CONFIG_KSZ_SWITCH
-        /* Remove CRC */
-        len -= 4;
-#endif
-
 	/* The ethernet header starts NET_IP_ALIGN bytes into the
 	 * first buffer. Since the header is 14 bytes, this makes the
 	 * payload word-aligned.
@@ -2359,14 +2198,26 @@ static void macb_hresp_error_task(unsigned long data)
 	bp->macbgem_ops.mog_init_rings(bp);
 
 	/* Initialize TX and RX buffers */
-	macb_init_buffers(bp);
+	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue) {
+		queue_writel(queue, RBQP, lower_32_bits(queue->rx_ring_dma));
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
+		if (bp->hw_dma_cap & HW_DMA_CAP_64B)
+			queue_writel(queue, RBQPH,
+				     upper_32_bits(queue->rx_ring_dma));
+#endif
+		queue_writel(queue, TBQP, lower_32_bits(queue->tx_ring_dma));
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
+		if (bp->hw_dma_cap & HW_DMA_CAP_64B)
+			queue_writel(queue, TBQPH,
+				     upper_32_bits(queue->tx_ring_dma));
+#endif
 
-	/* Enable interrupts */
-	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
+		/* Enable interrupts */
 		queue_writel(queue, IER,
 			     bp->rx_intr_mask |
 			     MACB_TX_INT_FLAGS |
 			     MACB_BIT(HRESP));
+	}
 
 	ctrl |= MACB_BIT(RE) | MACB_BIT(TE);
 	macb_writel(bp, NCR, ctrl);
@@ -3315,13 +3166,19 @@ static void macb_configure_dma(struct macb *bp)
 
 static void macb_init_hw(struct macb *bp)
 {
+	struct macb_queue *queue;
+	unsigned int q;
+
 	u32 config;
 
 	macb_reset_hw(bp);
 	macb_set_hwaddr(bp);
 
 	config = macb_mdc_clk_div(bp);
+	if (bp->phy_interface == PHY_INTERFACE_MODE_SGMII)
+		config |= GEM_BIT(SGMIIEN) | GEM_BIT(PCSSEL);
 	config |= MACB_BF(RBOF, NET_IP_ALIGN);	/* Make eth data aligned */
+	config |= MACB_BIT(PAE);		/* PAuse Enable */
 	config |= MACB_BIT(DRFCS);		/* Discard Rx FCS */
 	if (bp->caps & MACB_CAPS_JUMBO)
 		config |= MACB_BIT(JFRAME);	/* Enable jumbo frames */
@@ -3347,11 +3204,36 @@ static void macb_init_hw(struct macb *bp)
 	macb_writel(bp, NCFGR, config);
 	if ((bp->caps & MACB_CAPS_JUMBO) && bp->jumbo_max_len)
 		gem_writel(bp, JML, bp->jumbo_max_len);
+	bp->speed = SPEED_10;
+	bp->duplex = DUPLEX_HALF;
 	bp->rx_frm_len_mask = MACB_RX_FRMLEN_MASK;
 	if (bp->caps & MACB_CAPS_JUMBO)
 		bp->rx_frm_len_mask = MACB_RX_JFRMLEN_MASK;
 
 	macb_configure_dma(bp);
+
+	/* Initialize TX and RX buffers */
+	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue) {
+		queue_writel(queue, RBQP, lower_32_bits(queue->rx_ring_dma));
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
+		if (bp->hw_dma_cap & HW_DMA_CAP_64B)
+			queue_writel(queue, RBQPH, upper_32_bits(queue->rx_ring_dma));
+#endif
+		queue_writel(queue, TBQP, lower_32_bits(queue->tx_ring_dma));
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
+		if (bp->hw_dma_cap & HW_DMA_CAP_64B)
+			queue_writel(queue, TBQPH, upper_32_bits(queue->tx_ring_dma));
+#endif
+
+		/* Enable interrupts */
+		queue_writel(queue, IER,
+			     bp->rx_intr_mask |
+			     MACB_TX_INT_FLAGS |
+			     MACB_BIT(HRESP));
+	}
+
+	/* Enable TX and RX */
+	macb_writel(bp, NCR, macb_readl(bp, NCR) | MACB_BIT(RE) | MACB_BIT(TE));
 }
 
 /* The hash address register is 64 bits long and takes up two
@@ -3542,6 +3424,9 @@ static void macb_set_rx_mode(struct net_device *dev)
 }
 
 #ifdef CONFIG_KSZ_SWITCH
+static void macb_adjust_link(struct net_device *dev)
+{}
+
 #if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 static int get_net_ready(struct net_device *dev)
 {
@@ -3562,18 +3447,27 @@ static void prep_sw_first(struct ksz_sw *sw, int *port_count,
 	sw->net_ops->get_ready = get_net_ready;
 #endif
 	sw->net_ops->setup_special(sw, port_count, mib_port_count, dev_count,
-				   &macb_phylink_ops);
+				   NULL);
 }  /* prep_sw_first */
 
 static void prep_sw_dev(struct ksz_sw *sw, struct macb *bp, int i,
 	int port_count, int mib_port_count, char *dev_name)
 {
+	int phy_mode;
+	char phy_id[MII_BUS_ID_SIZE];
+	char bus_id[MII_BUS_ID_SIZE];
+	struct phy_device *phydev;
+
 	bp->phy_addr = sw->net_ops->setup_dev(sw, bp->dev, dev_name, &bp->port,
 		i, port_count, mib_port_count);
 
-	/* Use the phylink created by the switch driver. */
-	if (!bp->phylink)
-		bp->phylink = bp->port.pl;
+	phy_mode = bp->phy_interface;
+	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", sw->id);
+	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, bp->phy_addr);
+	phydev = phy_attach(bp->dev, phy_id, phy_mode);
+	if (!IS_ERR(phydev)) {
+		bp->dev->phydev = phydev;
+	}
 }  /* prep_sw_dev */
 
 static int macb_sw_init(struct macb *bp)
@@ -3618,6 +3512,16 @@ static int macb_sw_init(struct macb *bp)
 #endif
 	prep_sw_dev(sw, bp, 0, port_count, mib_port_count, dev_label);
 
+	/* Only the main one needs to set adjust_link for configuration. */
+	if (bp->dev->phydev->mdio.bus &&
+	    !bp->dev->phydev->adjust_link) {
+		bp->dev->phydev->adjust_link = macb_handle_link_change;
+
+		bp->link = 0;
+		bp->speed = 0;
+		bp->duplex = -1;
+	}
+
 	INIT_DELAYED_WORK(&hw_priv->promisc_reset, promisc_reset_work);
 
 	for (i = 1; i < dev_count; i++) {
@@ -3632,6 +3536,12 @@ static int macb_sw_init(struct macb *bp)
 
 		bp->hw_priv = hw_priv;
 		bp->phy_interface = hw_priv->phy_interface;
+#if 0
+		dev->phydev = &bp->dummy_phy;
+		dev->phydev->duplex = 1;
+		dev->phydev->speed = SPEED_1000;
+		dev->phydev->autoneg = 1;
+#endif
 
 		spin_lock_init(&bp->lock);
 
@@ -3647,6 +3557,8 @@ static int macb_sw_init(struct macb *bp)
 		SET_NETDEV_DEV(dev, &pdev->dev);
 
 		prep_sw_dev(sw, bp, i, port_count, mib_port_count, dev_label);
+		if (bp->dev->phydev->mdio.bus)
+			bp->dev->phydev->adjust_link = macb_adjust_link;
 
 		err = register_netdev(dev);
 		if (err) {
@@ -3676,6 +3588,13 @@ static int macb_sw_init(struct macb *bp)
 #endif
 #endif
 
+#if defined(CONFIG_KSZ_IBA_ONLY)
+	if (bp->dev->phydev->mdio.bus) {
+		struct phy_device *phydev = bp->dev->phydev;
+
+		phy_attached_info(phydev);
+	}
+#endif
 	sw_device_seen++;
 
 	return 0;
@@ -3818,21 +3737,15 @@ static void macb_sw_exit(struct macb *bp)
 #endif
 	exit_sw_sysfs(sw, &bp->sysfs, &dev->dev);
 #endif
-	if (bp->port.pl == bp->phylink)
-		bp->port.pl = NULL;
 	for (i = 1; i < sw->dev_count + sw->dev_offset; i++) {
 		dev = sw->netdev[i];
 		if (!dev)
 			continue;
 		bp = netdev_priv(dev);
 		flush_work(&bp->port.link_update);
-		if (bp->phylink) {
-			if (bp->port.pl == bp->phylink)
-				bp->port.pl = NULL;
-			phylink_destroy(bp->phylink);
-			bp->phylink = NULL;
-		}
 		unregister_netdev(dev);
+		if (dev->phydev->mdio.bus)
+			phy_detach(dev->phydev);
 		free_netdev(dev);
 	}
 }
@@ -3840,8 +3753,8 @@ static void macb_sw_exit(struct macb *bp)
 
 static int macb_open(struct net_device *dev)
 {
-	size_t bufsz = dev->mtu + ETH_HLEN + ETH_FCS_LEN + NET_IP_ALIGN;
 	struct macb *bp = netdev_priv(dev);
+	size_t bufsz = dev->mtu + ETH_HLEN + ETH_FCS_LEN + NET_IP_ALIGN;
 	struct macb_queue *queue;
 	unsigned int q;
 	int err;
@@ -3881,6 +3794,15 @@ static int macb_open(struct net_device *dev)
 	if (err < 0)
 		goto pm_exit;
 
+	/* carrier starts down */
+	netif_carrier_off(dev);
+
+	/* if the phy is not yet register, retry later*/
+	if (!dev->phydev) {
+		err = -EAGAIN;
+		goto pm_exit;
+	}
+
 	/* RX buffers initialization */
 	macb_init_rx_buffer_size(bp, bufsz);
 
@@ -3894,6 +3816,7 @@ static int macb_open(struct net_device *dev)
 	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
 		napi_enable(&queue->napi);
 
+	bp->macbgem_ops.mog_init_rings(bp);
 	macb_init_hw(bp);
 
 #ifdef CONFIG_KSZ_SWITCH
@@ -3916,9 +3839,11 @@ skip_hw:
 	}
 #endif
 
-	err = macb_phylink_connect(bp);
-	if (err)
-		goto reset_hw;
+	/* schedule a link state check */
+#ifdef CONFIG_KSZ_SWITCH
+	if (!sw_is_switch(sw))
+#endif
+	phy_start(dev->phydev);
 
 	netif_tx_start_all_queues(dev);
 
@@ -3935,21 +3860,12 @@ skip_hw:
 		create_sw_dev(dev, bp);
 #endif
 
-	return 0;
-
-reset_hw:
-#ifdef CONFIG_KSZ_SWITCH
-	bp = bp->hw_priv;
-#endif
-	macb_reset_hw(bp);
-	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
-		napi_disable(&queue->napi);
-	macb_free_consistent(bp);
-
 pm_exit:
-	pm_runtime_put_sync(&bp->pdev->dev);
-
-	return err;
+	if (err) {
+		pm_runtime_put_sync(&bp->pdev->dev);
+		return err;
+	}
+	return 0;
 }
 
 static int macb_close(struct net_device *dev)
@@ -3962,6 +3878,7 @@ static int macb_close(struct net_device *dev)
 #ifdef CONFIG_KSZ_SWITCH
 	struct macb *dbp = bp;
 	struct ksz_sw *sw = bp->port.sw;
+	bool stop_phy = true;
 
 #if defined(CONFIG_KSZ_IBA_ONLY)
 	if (sw_is_switch(sw)) {
@@ -3987,6 +3904,7 @@ static int macb_close(struct net_device *dev)
 		dev_set_promisc(dbp, false);
 		sw->net_ops->close_port(sw, dev, &dbp->port);
 		bp->opened--;
+		stop_phy = false;
 		if (!bp->opened) {
 			sw->net_ops->close(sw);
 			sw->net_ops->stop(sw, true);
@@ -4011,12 +3929,14 @@ static int macb_close(struct net_device *dev)
 		napi_disable(&queue->napi);
 
 #ifdef CONFIG_KSZ_SWITCH
-skip_hw:
+	if (stop_phy)
+#else
+	if (dev->phydev)
 #endif
-	phylink_stop(bp->phylink);
-	phylink_disconnect_phy(bp->phylink);
+		phy_stop(dev->phydev);
 
 #ifdef CONFIG_KSZ_SWITCH
+skip_hw:
 	if (sw_is_switch(sw)) {
 		if (bp->opened > 0) {
 			netif_carrier_off(dev);
@@ -4123,6 +4043,9 @@ static struct net_device_stats *gem_get_stats(struct macb *bp)
 {
 	struct gem_stats *hwstat = &bp->hw_stats.gem;
 	struct net_device_stats *nstat = &bp->dev->stats;
+
+	if (!netif_running(bp->dev))
+		return nstat;
 
 	gem_update_stats(bp);
 
@@ -4339,31 +4262,30 @@ static void macb_get_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 {
 	struct macb *bp = netdev_priv(netdev);
 
-	wol->supported = 0;
-	wol->wolopts = 0;
-
 #ifdef CONFIG_KSZ_SWITCH
 	if (bp != bp->hw_priv)
 		bp = bp->hw_priv;
 #endif
-	if (bp->wol & MACB_WOL_HAS_MAGIC_PACKET)
-		phylink_ethtool_get_wol(bp->phylink, wol);
+	wol->supported = 0;
+	wol->wolopts = 0;
+
+	if (bp->wol & MACB_WOL_HAS_MAGIC_PACKET) {
+		wol->supported = WAKE_MAGIC;
+
+		if (bp->wol & MACB_WOL_ENABLED)
+			wol->wolopts |= WAKE_MAGIC;
+	}
 }
 
 static int macb_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 {
 	struct macb *bp = netdev_priv(netdev);
-	int ret;
 
 #ifdef CONFIG_KSZ_SWITCH
 	/* Operate only on the main device. */
 	if (bp != bp->hw_priv)
 		return 0;
 #endif
-	ret = phylink_ethtool_set_wol(bp->phylink, wol);
-	if (!ret)
-		return 0;
-
 	if (!(bp->wol & MACB_WOL_HAS_MAGIC_PACKET) ||
 	    (wol->wolopts & ~WAKE_MAGIC))
 		return -EOPNOTSUPP;
@@ -4376,22 +4298,6 @@ static int macb_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 	device_set_wakeup_enable(&bp->pdev->dev, bp->wol & MACB_WOL_ENABLED);
 
 	return 0;
-}
-
-static int macb_get_link_ksettings(struct net_device *netdev,
-				   struct ethtool_link_ksettings *kset)
-{
-	struct macb *bp = netdev_priv(netdev);
-
-	return phylink_ethtool_ksettings_get(bp->phylink, kset);
-}
-
-static int macb_set_link_ksettings(struct net_device *netdev,
-				   const struct ethtool_link_ksettings *kset)
-{
-	struct macb *bp = netdev_priv(netdev);
-
-	return phylink_ethtool_ksettings_set(bp->phylink, kset);
 }
 
 static void macb_get_ringparam(struct net_device *netdev,
@@ -4525,13 +4431,12 @@ static int macb_get_ts_info(struct net_device *netdev,
 #ifdef CONFIG_1588_PTP
 	struct ksz_sw *sw = bp->port.sw;
 
-	if (sw_is_switch(sw)) {
+	if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
 		struct ptp_info *ptp = &sw->ptp_hw;
 
 		return ptp->ops->get_ts_info(ptp, netdev, info);
 	}
 #endif
-
 	if (bp->ptp_info)
 		return bp->ptp_info->get_ts_info(netdev, info);
 
@@ -4592,6 +4497,9 @@ static void gem_prog_cmp_regs(struct macb *bp, struct ethtool_rx_flow_spec *fs)
 	bool cmp_a = false;
 	bool cmp_b = false;
 	bool cmp_c = false;
+
+	if (!macb_is_gem(bp))
+		return;
 
 	tp4sp_v = &(fs->h_u.tcp_ip4_spec);
 	tp4sp_m = &(fs->m_u.tcp_ip4_spec);
@@ -4865,8 +4773,8 @@ static const struct ethtool_ops macb_ethtool_ops = {
 	.get_sset_count		= macb_get_sset_count,
 	.get_wol		= macb_get_wol,
 	.set_wol		= macb_set_wol,
-	.get_link_ksettings     = macb_get_link_ksettings,
-	.set_link_ksettings     = macb_set_link_ksettings,
+	.get_link_ksettings     = phy_ethtool_get_link_ksettings,
+	.set_link_ksettings     = phy_ethtool_set_link_ksettings,
 	.get_ringparam		= macb_get_ringparam,
 	.set_ringparam		= macb_set_ringparam,
 };
@@ -4879,8 +4787,8 @@ static const struct ethtool_ops gem_ethtool_ops = {
 	.get_ethtool_stats	= gem_get_ethtool_stats,
 	.get_strings		= gem_get_ethtool_strings,
 	.get_sset_count		= gem_get_sset_count,
-	.get_link_ksettings     = macb_get_link_ksettings,
-	.set_link_ksettings     = macb_set_link_ksettings,
+	.get_link_ksettings     = phy_ethtool_get_link_ksettings,
+	.set_link_ksettings     = phy_ethtool_set_link_ksettings,
 	.get_ringparam		= macb_get_ringparam,
 	.set_ringparam		= macb_set_ringparam,
 	.get_rxnfc			= gem_get_rxnfc,
@@ -4893,6 +4801,7 @@ static const struct ethtool_ops gem_ethtool_ops = {
 
 static int macb_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 {
+	struct phy_device *phydev = dev->phydev;
 	struct macb *bp = netdev_priv(dev);
 
 #ifdef CONFIG_KSZ_SWITCH
@@ -4950,16 +4859,20 @@ static int macb_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	if (!netif_running(dev))
 		return -EINVAL;
 
-	if (bp->ptp_info) {
-		switch (cmd) {
-		case SIOCSHWTSTAMP:
-			return bp->ptp_info->set_hwtst(dev, rq, cmd);
-		case SIOCGHWTSTAMP:
-			return bp->ptp_info->get_hwtst(dev, rq);
-		}
-	}
+	if (!phydev)
+		return -ENODEV;
 
-	return phylink_mii_ioctl(bp->phylink, rq, cmd);
+	if (!bp->ptp_info)
+		return phy_mii_ioctl(phydev, rq, cmd);
+
+	switch (cmd) {
+	case SIOCSHWTSTAMP:
+		return bp->ptp_info->set_hwtst(dev, rq, cmd);
+	case SIOCGHWTSTAMP:
+		return bp->ptp_info->get_hwtst(dev, rq);
+	default:
+		return phy_mii_ioctl(phydev, rq, cmd);
+	}
 }
 
 static inline void macb_set_txcsum_feature(struct macb *bp,
@@ -5037,12 +4950,7 @@ static void macb_restore_features(struct macb *bp)
 {
 	struct net_device *netdev = bp->dev;
 	netdev_features_t features = netdev->features;
-
-#ifdef CONFIG_KSZ_SWITCH
-	/* Operate only on the main device. */
-	if (bp != bp->hw_priv)
-		return;
-#endif
+	struct ethtool_rx_fs_item *item;
 
 	/* TX checksum offload */
 	macb_set_txcsum_feature(bp, features);
@@ -5051,6 +4959,9 @@ static void macb_restore_features(struct macb *bp)
 	macb_set_rxcsum_feature(bp, features);
 
 	/* RX Flow Filters */
+	list_for_each_entry(item, &bp->rx_fs_list.list, list)
+		gem_prog_cmp_regs(bp, &item->fs);
+
 	macb_set_rxflow_feature(bp, features);
 }
 
@@ -5100,14 +5011,17 @@ static void macb_configure_caps(struct macb *bp,
 		if ((dcfg & (GEM_BIT(RX_PKT_BUFF) | GEM_BIT(TX_PKT_BUFF))) == 0)
 			bp->caps |= MACB_CAPS_FIFO_MODE;
 #ifdef CONFIG_KSZ_SWITCH
+#ifdef FAKE_SG
+/* Allow scatter/gather mode to improve TCP transmit performance. */
+		bp->caps &= ~MACB_CAPS_SG_DISABLED;
+#endif
 /* MAC used in evaluation board does not really support large jumbo frame. */
 		bp->caps &= ~MACB_CAPS_JUMBO;
 #endif
 #ifdef CONFIG_MACB_USE_HWSTAMP
 		if (gem_has_ptp(bp)) {
 			if (!GEM_BFEXT(TSU, gem_readl(bp, DCFG5)))
-				dev_err(&bp->pdev->dev,
-					"GEM doesn't support hardware ptp.\n");
+				pr_err("GEM doesn't support hardware ptp.\n");
 			else {
 				bp->hw_dma_cap |= HW_DMA_CAP_PTP;
 				bp->ptp_info = &gem_ptp_info;
@@ -5360,6 +5274,7 @@ static int macb_init(struct platform_device *pdev)
 	reg = gem_readl(bp, DCFG8);
 	bp->max_tuples = min((GEM_BFEXT(SCR2CMP, reg) / 3),
 			GEM_BFEXT(T2SCR, reg));
+	INIT_LIST_HEAD(&bp->rx_fs_list.list);
 	if (bp->max_tuples > 0) {
 		/* also needs one ethtype match to check IPv4 */
 		if (GEM_BFEXT(SCR2ETH, reg) > 0) {
@@ -5370,7 +5285,6 @@ static int macb_init(struct platform_device *pdev)
 			/* Filtering is supported in hw but don't enable it in kernel now */
 			dev->hw_features |= NETIF_F_NTUPLE;
 			/* init Rx flow definitions */
-			INIT_LIST_HEAD(&bp->rx_fs_list.list);
 			bp->rx_fs_list.count = 0;
 			spin_lock_init(&bp->rx_fs_lock);
 		} else
@@ -5497,9 +5411,8 @@ static int at91ether_open(struct net_device *dev)
 			     MACB_BIT(ISR_ROVR)	|
 			     MACB_BIT(HRESP));
 
-	ret = macb_phylink_connect(lp);
-	if (ret)
-		return ret;
+	/* schedule a link state check */
+	phy_start(dev->phydev);
 
 	netif_start_queue(dev);
 
@@ -5531,9 +5444,6 @@ static int at91ether_close(struct net_device *dev)
 			     MACB_BIT(HRESP));
 
 	netif_stop_queue(dev);
-
-	phylink_stop(lp->phylink);
-	phylink_disconnect_phy(lp->phylink);
 
 	dma_free_coherent(&lp->pdev->dev,
 			  AT91ETHER_MAX_RX_DESCR *
@@ -5729,6 +5639,7 @@ static int at91ether_init(struct platform_device *pdev)
 	struct net_device *dev = platform_get_drvdata(pdev);
 	struct macb *bp = netdev_priv(dev);
 	int err;
+	u32 reg;
 
 	bp->queues[0].bp = bp;
 
@@ -5742,7 +5653,11 @@ static int at91ether_init(struct platform_device *pdev)
 
 	macb_writel(bp, NCR, 0);
 
-	macb_writel(bp, NCFGR, MACB_BF(CLK, MACB_CLK_DIV32) | MACB_BIT(BIG));
+	reg = MACB_BF(CLK, MACB_CLK_DIV32) | MACB_BIT(BIG);
+	if (bp->phy_interface == PHY_INTERFACE_MODE_RMII)
+		reg |= MACB_BIT(RM9200_RMII);
+
+	macb_writel(bp, NCFGR, reg);
 
 	return 0;
 }
@@ -5895,7 +5810,7 @@ static const struct macb_config sama5d4_config = {
 };
 
 static const struct macb_config emac_config = {
-	.caps = MACB_CAPS_NEEDS_RSTONUBR | MACB_CAPS_MACB_IS_EMAC,
+	.caps = MACB_CAPS_NEEDS_RSTONUBR,
 	.clk_init = at91ether_clk_init,
 	.init = at91ether_init,
 };
@@ -5968,7 +5883,9 @@ static int macb_probe(struct platform_device *pdev)
 	struct clk *tsu_clk = NULL;
 	unsigned int queue_mask, num_queues;
 	bool native_io;
-	phy_interface_t interface;
+#if !defined(CONFIG_KSZ_IBA_ONLY)
+	struct phy_device *phydev;
+#endif
 	struct net_device *dev;
 	struct resource *regs;
 	void __iomem *mem;
@@ -6100,14 +6017,12 @@ static int macb_probe(struct platform_device *pdev)
 		macb_get_hwaddr(bp);
 	}
 
-	err = of_get_phy_mode(np, &interface);
-	if (err)
+	err = of_get_phy_mode(np);
+	if (err < 0)
 		/* not found in DT, MII by default */
 		bp->phy_interface = PHY_INTERFACE_MODE_MII;
 	else
-		bp->phy_interface = interface;
-
-	bp->speed = SPEED_UNKNOWN;
+		bp->phy_interface = err;
 
 	/* IP specific init */
 	err = init(pdev);
@@ -6128,8 +6043,45 @@ static int macb_probe(struct platform_device *pdev)
 #endif
 
 	err = macb_mii_init(bp);
+
+#ifdef CONFIG_KSZ_SWITCH
+
+	/* Point to real private structure holding hardware information. */
+	bp->hw_priv = bp;
+
+#ifndef CONFIG_KSZ_IBA_ONLY
+	if (err)
+		err = macb_sw_chk(bp);
+#endif
+#endif
+
+#ifdef CONFIG_FIXED_PHY
+	if (err) {
+		if (!bp->phy_node && of_phy_is_fixed_link(np)) {
+			err = of_phy_register_fixed_link(np);
+			if (!err)
+				bp->phy_node = of_node_get(np);
+		}
+		if (bp->phy_node) {
+			err = -ENXIO;
+			dev->phydev = of_phy_connect(dev, bp->phy_node,
+				&macb_handle_link_change, 0,
+				bp->phy_interface);
+			if (dev->phydev) {
+				bp->link = 0;
+				bp->speed = 0;
+				bp->duplex = -1;
+				err = 0;
+			}
+		}
+	}
+#endif
 	if (err)
 		goto err_out_free_netdev;
+
+#if !defined(CONFIG_KSZ_IBA_ONLY)
+	phydev = dev->phydev;
+#endif
 
 	netif_carrier_off(dev);
 
@@ -6143,19 +6095,20 @@ static int macb_probe(struct platform_device *pdev)
 		     (unsigned long)bp);
 
 #ifdef CONFIG_KSZ_SWITCH
-
-	/* Point to real private structure holding hardware information. */
-	bp->hw_priv = bp;
-
 #if !defined(CONFIG_KSZ_IBA_ONLY)
 	if (bp->port.sw)
 		err = macb_sw_init(bp);
+	phydev = dev->phydev;
 #endif
 #endif
 
 #ifdef MACB_REGS_SIZE
 	err = sysfs_create_bin_file(&dev->dev.kobj,
 				    &macb_registers_attr);
+#endif
+
+#if !defined(CONFIG_KSZ_IBA_ONLY)
+	phy_attached_info(phydev);
 #endif
 
 	netdev_info(dev, "Cadence %s rev 0x%08x at 0x%08lx irq %d (%pM)\n",
@@ -6168,7 +6121,11 @@ static int macb_probe(struct platform_device *pdev)
 	return 0;
 
 err_out_unregister_mdio:
+	phy_disconnect(dev->phydev);
 	mdiobus_unregister(bp->mii_bus);
+	of_node_put(bp->phy_node);
+	if (np && of_phy_is_fixed_link(np))
+		of_phy_deregister_fixed_link(np);
 	mdiobus_free(bp->mii_bus);
 
 err_out_free_netdev:
@@ -6212,9 +6169,7 @@ static void macb_shutdown(struct platform_device *pdev)
 				continue;
 		}
 		if (netif_running(dev)) {
-			rtnl_lock();
 			macb_close(dev);
-			rtnl_unlock();
 
 			/* This call turns off the transmit queue. */
 			netif_device_detach(dev);
@@ -6252,6 +6207,11 @@ static void macb_sw_remove(struct net_device *dev, struct macb *bp)
 	if (do_exit) {
 		flush_work(&bp->port.link_update);
 		macb_sw_exit(bp);
+		if (dev->phydev) {
+			if (dev->phydev->mdio.bus)
+				phy_detach(dev->phydev);
+			dev->phydev = NULL;
+		}
 	}
 #ifdef CONFIG_KSZ_SMI
 	if (bp->sw_pdev)
@@ -6280,6 +6240,7 @@ static int macb_remove(struct platform_device *pdev)
 {
 	struct net_device *dev;
 	struct macb *bp;
+	struct device_node *np = pdev->dev.of_node;
 
 	dev = platform_get_drvdata(pdev);
 
@@ -6289,7 +6250,12 @@ static int macb_remove(struct platform_device *pdev)
 #ifdef CONFIG_KSZ_SWITCH
 		macb_sw_remove(dev, bp);
 #endif
+		if (dev->phydev)
+			phy_disconnect(dev->phydev);
 		mdiobus_unregister(bp->mii_bus);
+		if (np && of_phy_is_fixed_link(np))
+			of_phy_deregister_fixed_link(np);
+		dev->phydev = NULL;
 		mdiobus_free(bp->mii_bus);
 
 		unregister_netdev(dev);
@@ -6304,7 +6270,7 @@ static int macb_remove(struct platform_device *pdev)
 			clk_disable_unprepare(bp->tsu_clk);
 			pm_runtime_set_suspended(&pdev->dev);
 		}
-		phylink_destroy(bp->phylink);
+		of_node_put(bp->phy_node);
 		free_netdev(dev);
 	}
 
@@ -6327,6 +6293,7 @@ static int __maybe_unused macb_suspend(struct device *dev)
 	if (bp != bp->hw_priv)
 		return 0;
 #endif
+
 	if (bp->wol & MACB_WOL_ENABLED) {
 		macb_writel(bp, IER, MACB_BIT(WOL));
 		macb_writel(bp, WOL, MACB_BIT(MAG));
@@ -6337,9 +6304,11 @@ static int __maybe_unused macb_suspend(struct device *dev)
 		for (q = 0, queue = bp->queues; q < bp->num_queues;
 		     ++q, ++queue)
 			napi_disable(&queue->napi);
-		rtnl_lock();
-		phylink_stop(bp->phylink);
-		rtnl_unlock();
+#ifdef CONFIG_KSZ_SWITCH
+		if (!sw_is_switch(bp->port.sw))
+#endif
+		phy_stop(netdev->phydev);
+		phy_suspend(netdev->phydev);
 		spin_lock_irqsave(&bp->lock, flags);
 		macb_reset_hw(bp);
 		spin_unlock_irqrestore(&bp->lock, flags);
@@ -6394,11 +6363,21 @@ static int __maybe_unused macb_resume(struct device *dev)
 		for (q = 0, queue = bp->queues; q < bp->num_queues;
 		     ++q, ++queue)
 			napi_enable(&queue->napi);
-		rtnl_lock();
-		phylink_start(bp->phylink);
-		rtnl_unlock();
+		phy_resume(netdev->phydev);
+		phy_init_hw(netdev->phydev);
+#ifdef CONFIG_KSZ_SWITCH
+		/* May need a way to tell the switch driver to call
+		 * adjust_link.  If the switch is also suspended then
+		 * resuming may have link change and so adjust_link will be
+		 * called.  When there is no connection IBA will not start
+		 * though.
+		 */
+		if (!sw_is_switch(bp->port.sw))
+#endif
+		phy_start(netdev->phydev);
 	}
 
+	bp->macbgem_ops.mog_init_rings(bp);
 	macb_init_hw(bp);
 	macb_set_rx_mode(netdev);
 	macb_restore_features(bp);

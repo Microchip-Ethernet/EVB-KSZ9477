@@ -331,6 +331,7 @@ struct ksz_port_info {
 	u8 advertised;
 	u8 partner;
 	u8 link;
+	u16 lpa;
 	u32 status[3];
 	u32 length[3];
 	u8 mac_addr[ETH_ALEN];

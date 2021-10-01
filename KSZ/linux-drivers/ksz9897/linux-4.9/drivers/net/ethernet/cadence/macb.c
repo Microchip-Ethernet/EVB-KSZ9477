@@ -82,7 +82,6 @@ static void get_sysfs_data_(struct net_device *dev,
 #define get_sysfs_data		get_sysfs_data_
 #endif
 
-static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #define DO_NOT_USE_COPY_SKB
 
 #if defined(CONFIG_IBA_KSZ9897)
@@ -183,24 +182,6 @@ static inline int sw_is_switch(struct ksz_sw *sw)
 {
 	return sw != NULL;
 }
-
-static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb)
-{
-	if (old->ip_summed) {
-		int offset = old->head - old->data;
-
-		skb->head = skb->data + offset;
-	}
-	skb->dev = old->dev;
-	skb->sk = old->sk;
-	skb->protocol = old->protocol;
-	skb->ip_summed = old->ip_summed;
-	skb->csum = old->csum;
-	skb_shinfo(skb)->tx_flags = skb_shinfo(old)->tx_flags;
-	skb_set_network_header(skb, ETH_HLEN);
-
-	dev_kfree_skb_any(old);
-}  /* copy_old_skb */
 #endif
 
 #ifdef CONFIG_KSZ_SWITCH
@@ -2277,8 +2258,6 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 #ifdef HAVE_KSZ_SWITCH
 	struct ksz_port *port = &bp->port;
 	struct ksz_sw *sw = bp->port.sw;
-	int header = 0;
-	int len = skb->len;
 #endif
 
 #if defined(DEBUG) && defined(VERBOSE_DEBUG)
@@ -2295,25 +2274,6 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (__netif_subqueue_stopped(dev, queue_index))
 		return NETDEV_TX_BUSY;
 
-	if (sw_is_switch(sw))
-		len = sw->net_ops->get_tx_len(sw, skb, port->first_port,
-			&header);
-
-	/* Hardware cannot handle scatter/gather mode. */
-	/* Hardware cannot generate checksum correctly for HSR frame. */
-	if (skb_shinfo(skb)->nr_frags ||
-	    (skb->ip_summed && header > VLAN_HLEN)) {
-		struct sk_buff *nskb;
-
-		nskb = dev_alloc_skb(len);
-		if (nskb) {
-			skb_copy_and_csum_dev(skb, nskb->data);
-			skb->ip_summed = 0;
-			nskb->len = skb->len;
-			copy_old_skb(skb, nskb);
-			skb = nskb;
-		}
-	}
 	if (bp != bp->hw_priv) {
 		bp = bp->hw_priv;
 		queue = &bp->queues[queue_index];
@@ -2353,6 +2313,8 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			spin_unlock_irqrestore(&bp->lock, flags);
 			return NETDEV_TX_OK;
 		}
+		if (!skb_tailroom(skb))
+			skb_linearize(skb);
 	}
 #endif
 

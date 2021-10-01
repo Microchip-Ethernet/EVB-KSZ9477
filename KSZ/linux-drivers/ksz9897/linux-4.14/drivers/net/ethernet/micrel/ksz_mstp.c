@@ -1,7 +1,7 @@
 /**
  * Microchip MSTP code
  *
- * Copyright (c) 2016-2019 Microchip Technology Inc.
+ * Copyright (c) 2016-2021 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -821,7 +821,7 @@ static int checkParameters(int hello_time, int max_age, int fwd_delay)
 static int make_hmac_md5(void *in_data, int len, u8 *out_data)
 {
 	struct crypto_ahash *hmac_md5;
-	struct ahash_request req;
+	struct ahash_request *req;
 	struct scatterlist sg[1];
 	int err;
 
@@ -830,21 +830,27 @@ static int make_hmac_md5(void *in_data, int len, u8 *out_data)
 		return -ENOMEM;
 	}
 
-	err = crypto_ahash_init(&req);
+	req = ahash_request_alloc(hmac_md5, GFP_KERNEL);
+	if (!req)
+		goto out_free_hmac_md5;
+
+	err = crypto_ahash_setkey(hmac_md5, CFG_DIGEST_SIGN_KEY, 16);
 	if (err)
 		goto out;
-	err = crypto_ahash_setkey(hmac_md5, CFG_DIGEST_SIGN_KEY, 16);
+	ahash_request_set_tfm(req, hmac_md5);
+	ahash_request_set_callback(req, 0, NULL, NULL);
+	err = crypto_ahash_init(req);
 	if (err)
 		goto out;
 
 	sg_init_one(sg, in_data, len);
-	ahash_request_set_tfm(&req, hmac_md5);
-	ahash_request_set_callback(&req, 0, NULL, NULL);
-	ahash_request_set_crypt(&req, sg, out_data, len);
-	err = crypto_ahash_digest(&req);
-	ahash_request_zero(&req);
+	ahash_request_set_crypt(req, sg, out_data, len);
+	err = crypto_ahash_digest(req);
+	ahash_request_zero(req);
 
 out:
+	ahash_request_free(req);
+out_free_hmac_md5:
 	crypto_free_ahash(hmac_md5);
 	return err;
 }

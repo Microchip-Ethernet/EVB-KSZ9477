@@ -65,13 +65,6 @@ config KSZ_IBA
 	help
 	  Enable IBA support.
 
-config KSZ_AVB
-	bool "AVB support"
-	depends on HAVE_KSZ9897
-	default y
-	help
-	  Enable AVB support.
-
 config KSZ_MRP
 	bool "MRP support"
 	depends on KSZ_SWITCH
@@ -81,7 +74,7 @@ config KSZ_MRP
 
 config KSZ_MSRP
 	bool "MSRP support"
-	depends on KSZ_MRP && KSZ_AVB
+	depends on (HAVE_KSZ9897) && KSZ_MRP
 	default y
 	help
 	  Enable MSRP support.

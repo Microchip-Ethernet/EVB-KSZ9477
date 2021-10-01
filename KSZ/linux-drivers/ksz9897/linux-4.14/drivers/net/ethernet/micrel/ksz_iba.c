@@ -1,7 +1,7 @@
 /**
  * Microchip IBA code
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2021 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -181,6 +181,7 @@ static u32 iba_set_val(u32 size, u32 addr, u32 val)
 	return val;
 }  /* iba_set_val */
 
+#if 0
 /**
  * iba_chk_regs - IBA register check
  * @sw:		The switch instance.
@@ -243,6 +244,7 @@ static void iba_chk_regs(struct ksz_sw *sw, u32 cmds, u32 data)
 	else if (1 == need_tail_tag)
 		sw->overrides &= ~TAIL_TAGGING;
 }  /* iba_chk_regs */
+#endif
 
 static u32 last_iba_addr;
 
@@ -316,6 +318,7 @@ static int iba_xmit(struct ksz_iba_info *info)
 	struct net_device *netdev = info->dev;
 	const struct net_device_ops *ops = netdev->netdev_ops;
 	struct sk_buff *skb;
+	int timeout = 5;
 
 	if (len < 60) {
 		memset(&info->packet[len], 0, 60 - len);
@@ -342,7 +345,7 @@ static int iba_xmit(struct ksz_iba_info *info)
 
 			rc = NETDEV_TX_BUSY;
 		}
-	} while (NETDEV_TX_BUSY == rc);
+	} while (NETDEV_TX_BUSY == rc && timeout--);
 	return rc;
 }  /* iba_xmit */
 
@@ -2506,12 +2509,11 @@ static void *r_mib_cnt_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 ctrl;
 	u32 *data = in;
-	uint *port = obj;
+	u32 *port_in = obj;
 	int cnt;
 	int num = data[0];
-	struct ksz_sw *sw = info->sw_dev;
-	u32 freeze = sw->info->port_cfg[*port].freeze ?
-		MIB_COUNTER_FLUSH_FREEZE : 0;
+	uint p = port_in[0];
+	u32 freeze = port_in[1];
 
 	for (cnt = 0; cnt < num; cnt++, data++) {
 		ctrl = data[1] & MIB_COUNTER_INDEX_M;
@@ -2519,13 +2521,13 @@ static void *r_mib_cnt_pre(struct ksz_iba_info *info, void *in, void *obj)
 		ctrl |= MIB_COUNTER_READ;
 		ctrl |= freeze;
 		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
-			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4),
+			PORT_CTRL_ADDR(p, REG_PORT_MIB_CTRL_STAT__4),
 			ctrl);
 		iba_cmd_set(info, IBA_CMD_WAIT_ON_1, IBA_CMD_32,
-			PORT_CTRL_ADDR(*port, REG_PORT_MIB_CTRL_STAT__4),
+			PORT_CTRL_ADDR(p, REG_PORT_MIB_CTRL_STAT__4),
 			MIB_COUNTER_VALID);
 		iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32,
-			PORT_CTRL_ADDR(*port, REG_PORT_MIB_DATA), 0);
+			PORT_CTRL_ADDR(p, REG_PORT_MIB_DATA), 0);
 	}
 	return info->fptr;
 }  /* r_mib_cnt_pre */
@@ -2545,7 +2547,8 @@ static int r_mib_cnt_post(struct ksz_iba_info *info, void *out, void *obj)
 	u32 cmd;
 	int i = 0;
 	u32 *data = out;
-	uint *port = obj;
+	u32 *port_in = obj;
+	uint p = port_in[0];
 
 	while (info->regs[i].cmd != (u32) -1) {
 		cmd = (info->regs[i].cmd >> IBA_CMD_S);
@@ -2554,8 +2557,8 @@ static int r_mib_cnt_post(struct ksz_iba_info *info, void *out, void *obj)
 			u32 size = (info->regs[i].cmd & IBA_CMD_32);
 
 #if 1
-if (((reg >> 12) & 0xf) != *port + 1)
-dbg_msg(" ?? %s %x %x"NL, __func__, reg, *port);
+if (((reg >> 12) & 0xf) != p + 1)
+dbg_msg(" ?? %s %x %x"NL, __func__, reg, p);
 #endif
 			reg &= ((1 << 12) - 1);
 			switch (reg) {
@@ -2589,13 +2592,19 @@ static int iba_r_mib_cnt_hw(struct ksz_sw *sw, uint port, u32 addr[], int num,
 			    u32 data[])
 {
 	u32 data_in[MAX_IBA_MIB_ENTRIES + 1];
+	u32 obj[2];
+	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
+	u32 freeze = cfg->freeze ? MIB_COUNTER_FLUSH_FREEZE : 0;
+	uint p = port;
 
+	obj[0] = p;
+	obj[1] = freeze;
 	if (num > MAX_IBA_MIB_ENTRIES)
 		num = MAX_IBA_MIB_ENTRIES;
 	data_in[0] = num;
 	memcpy(&data_in[1], addr, sizeof(u32) * num);
 	memset(data, 0, sizeof(u32) * num * READ_MIB_ENTRY_SIZE);
-	return iba_req(&sw->info->iba, data_in, data, &port, r_mib_cnt_pre,
+	return iba_req(&sw->info->iba, data_in, data, obj, r_mib_cnt_pre,
 		r_mib_cnt_post);
 }  /* iba_r_mib_cnt_hw */
 
@@ -2889,7 +2898,9 @@ dbg_msg("apb: %08x"NL, last_iba_addr);
 #else
 				for (; i <= cnt; i++) {
 					data = ntohl(frame->data[i]);
+#if 0
 					iba_chk_regs(info->sw_dev, cmds, data);
+#endif
 					cmds += 4;
 #ifdef SHOW_IBA
 					dbg_msg("%08x ", data);
@@ -2931,7 +2942,9 @@ dbg_msg("apb: %08x"NL, last_iba_addr);
 #endif
 				break;
 			case IBA_CMD_WRITE:
+#if 0
 				iba_chk_regs(info->sw_dev, cmds, data);
+#endif
 #ifdef SHOW_IBA
 				dbg_msg("w: ");
 #endif

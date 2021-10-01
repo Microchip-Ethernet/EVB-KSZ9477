@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8863 SMI driver
  *
- * Copyright (c) 2018-2020 Microchip Technology Inc.
+ * Copyright (c) 2018-2021 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -37,8 +37,8 @@
 #include "ksz_common.c"
 #include "ksz_req.c"
 
-#define SW_DRV_RELDATE			"Jan 30, 2020"
-#define SW_DRV_VERSION			"1.2.2"
+#define SW_DRV_RELDATE			"Sep 30, 2021"
+#define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */
 

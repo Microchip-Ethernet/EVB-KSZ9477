@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8795 switch common code
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2021 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -8397,13 +8397,6 @@ static void sw_kill_vid(struct ksz_sw *sw, u16 vid)
 	}
 }  /* sw_kill_vid */
 
-static int add_frag(void *from, char *to, int offset, int len, int odd,
-	struct sk_buff *skb)
-{
-	memcpy(to + offset, from, len);
-	return 0;
-}
-
 static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 	struct sk_buff *skb)
 {
@@ -8428,7 +8421,9 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct ksz_port *priv, void *ptr,
 	int (*update_msg)(u8 *data, u32 port, u32 overrides))
 {
+	bool need_new_copy = false;
 	int len;
+	int padlen = 0;
 	uint port;
 	u8 dest;
 	struct sk_buff *org_skb;
@@ -8453,6 +8448,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (1 == priv->port_cnt)
 		port = priv->first_port;
 
+#if 0
 	do {
 		u16 prio;
 		u16 vid;
@@ -8494,6 +8490,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			skb->len -= VLAN_HLEN;
 		}
 	} while (0);
+#endif
 
 	dest = 0;
 	if (port) {
@@ -8501,31 +8498,28 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		dest = 1 << port;
 	}
 
-	/* Socket buffer has no fragments. */
-	if (!skb_shinfo(skb)->nr_frags) {
-#ifdef NET_SKBUFF_DATA_USES_OFFSET
-		len = skb_end_pointer(skb) - skb->data;
-#else
-		len = skb->end - skb->data;
-#endif
-		if (skb->len + 1 > len || len < 60 + 1) {
-			len = (skb->len + 7) & ~3;
-			if (len < 64)
-				len = 64;
-			skb = dev_alloc_skb(len);
-			if (!skb)
-				return NULL;
-			memcpy(skb->data, org_skb->data, org_skb->len);
-			skb->len = org_skb->len;
-			copy_old_skb(org_skb, skb);
-		}
-		if (skb->len < 60) {
-			memset(&skb->data[skb->len], 0, 60 - skb->len);
-			skb->len = 60;
-		}
-		skb_set_tail_pointer(skb, skb->len);
-		len = skb->len;
+	/* Check the socket buffer length is enough to hold the tail tag. */
+	if (skb->len < ETH_ZLEN)
+		padlen = ETH_ZLEN - skb->len;
+	len = skb_tailroom(skb);
+	if (len < 1 + padlen) {
+		need_new_copy = true;
+		len = (skb->len + 1 + padlen + 4) & ~3;
 	}
+	if (need_new_copy) {
+		skb = skb_copy_expand(org_skb, 0, len, GFP_ATOMIC);
+		if (!skb)
+			return NULL;
+		consume_skb(org_skb);
+	}
+	if (padlen) {
+		u8 *pad = skb_put(skb, padlen);
+
+		memset(pad, 0, padlen);
+	}
+	skb_set_tail_pointer(skb, skb->len);
+	len = skb->len;
+
 	if (!dest) {
 		dest = TAIL_TAG_LOOKUP;
 	}
@@ -8535,31 +8529,8 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		if (len != skb->len)
 			len = skb->len;
 	}
-	if (!skb_shinfo(skb)->nr_frags) {
-		skb->data[len] = dest;
-		skb_put(skb, 1);
-	} else {
-		struct sock dummy;
-		struct sock *sk;
-
-		sk = skb->sk;
-		if (!sk) {
-			sk = &dummy;
-			sk->sk_allocation = GFP_KERNEL;
-			refcount_set(&sk->sk_wmem_alloc, 1);
-		}
-
-		/* Clear last tag. */
-		sw->tx_pad[sw->tx_start] = 0;
-		sw->tx_start = 0;
-		len = 1;
-		if (skb->len < 60) {
-			sw->tx_start = 60 - skb->len;
-			len += sw->tx_start;
-		}
-		sw->tx_pad[sw->tx_start] = dest;
-		skb_append_datato_frags(sk, skb, add_frag, sw->tx_pad, len);
-	}
+	skb->data[len] = dest;
+	skb_put(skb, 1);
 
 	/* Need to compensate checksum for some devices. */
 	if (skb->ip_summed != CHECKSUM_PARTIAL)

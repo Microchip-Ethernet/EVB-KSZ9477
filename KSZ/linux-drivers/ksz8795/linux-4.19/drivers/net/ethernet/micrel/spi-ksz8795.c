@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8795 SPI driver
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2021 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -83,8 +83,8 @@
 
 #define KS8795_DEV			"ksz8795"
 
-#define SW_DRV_RELDATE			"Feb 7, 2020"
-#define SW_DRV_VERSION			"1.2.2"
+#define SW_DRV_RELDATE			"Sep 30, 2021"
+#define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */
 

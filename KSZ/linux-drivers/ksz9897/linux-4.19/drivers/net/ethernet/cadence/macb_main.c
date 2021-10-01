@@ -99,7 +99,6 @@ static void get_sysfs_data_(struct net_device *dev,
 #define get_sysfs_data		get_sysfs_data_
 #endif
 
-static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #define DO_NOT_USE_COPY_SKB
 
 #if defined(CONFIG_IBA_KSZ9897)
@@ -200,24 +199,6 @@ static inline int sw_is_switch(struct ksz_sw *sw)
 {
 	return sw != NULL;
 }
-
-static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb)
-{
-	if (old->ip_summed) {
-		int offset = old->head - old->data;
-
-		skb->head = skb->data + offset;
-	}
-	skb->dev = old->dev;
-	skb->sk = old->sk;
-	skb->protocol = old->protocol;
-	skb->ip_summed = old->ip_summed;
-	skb->csum = old->csum;
-	skb_shinfo(skb)->tx_flags = skb_shinfo(old)->tx_flags;
-	skb_set_network_header(skb, ETH_HLEN);
-
-	dev_kfree_skb_any(old);
-}  /* copy_old_skb */
 #endif
 
 #ifdef CONFIG_KSZ_SWITCH
@@ -339,7 +320,11 @@ static int get_sw_irq(struct macb *bp)
 /* Max length of transmit frame must be a multiple of 8 bytes */
 #define MACB_TX_LEN_ALIGN	8
 #define MACB_MAX_TX_LEN		((unsigned int)((1 << MACB_TX_FRMLEN_SIZE) - 1) & ~((unsigned int)(MACB_TX_LEN_ALIGN - 1)))
-#define GEM_MAX_TX_LEN		((unsigned int)((1 << GEM_TX_FRMLEN_SIZE) - 1) & ~((unsigned int)(MACB_TX_LEN_ALIGN - 1)))
+/* Limit maximum TX length as per Cadence TSO errata. This is to avoid a
+ * false amba_error in TX path from the DMA assuming there is not enough
+ * space in the SRAM (16KB) even when there is.
+ */
+#define GEM_MAX_TX_LEN		(unsigned int)(0x3FC0)
 
 #define GEM_MTU_MIN_SIZE	ETH_MIN_MTU
 #define MACB_NETIF_LSO		NETIF_F_TSO
@@ -1502,7 +1487,9 @@ static void macb_tx_interrupt(struct macb_queue *queue)
 
 			/* First, update TX stats if needed */
 			if (skb) {
-				if (gem_ptp_do_txstamp(queue, skb, desc) == 0) {
+				if (unlikely(skb_shinfo(skb)->tx_flags &
+					     SKBTX_HW_TSTAMP) &&
+				    gem_ptp_do_txstamp(queue, skb, desc) == 0) {
 					/* skb now belongs to timestamp buffer
 					 * and will be removed later
 					 */
@@ -2507,16 +2494,14 @@ static netdev_features_t macb_features_check(struct sk_buff *skb,
 
 	/* Validate LSO compatibility */
 
-	/* there is only one buffer */
-	if (!skb_is_nonlinear(skb))
+	/* there is only one buffer or protocol is not UDP */
+	if (!skb_is_nonlinear(skb) || (ip_hdr(skb)->protocol != IPPROTO_UDP))
 		return features;
 
 	/* length of header */
 	hdrlen = skb_transport_offset(skb);
-	if (ip_hdr(skb)->protocol == IPPROTO_TCP)
-		hdrlen += tcp_hdrlen(skb);
 
-	/* For LSO:
+	/* For UFO only:
 	 * When software supplies two or more payload buffers all payload buffers
 	 * apart from the last must be a multiple of 8 bytes in size.
 	 */
@@ -2556,7 +2541,8 @@ static inline int macb_clear_csum(struct sk_buff *skb)
 #ifndef NO_HW_CSUM_FIX
 static int macb_pad_and_fcs(struct sk_buff **skb, struct net_device *ndev)
 {
-	bool cloned = skb_cloned(*skb) || skb_header_cloned(*skb);
+	bool cloned = skb_cloned(*skb) || skb_header_cloned(*skb) ||
+		      skb_is_nonlinear(*skb);
 	int padlen = ETH_ZLEN - (*skb)->len;
 	int headroom = skb_headroom(*skb);
 	int tailroom = skb_tailroom(*skb);
@@ -2626,33 +2612,11 @@ static netdev_tx_t macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 #ifdef HAVE_KSZ_SWITCH
 	struct ksz_port *port = &bp->port;
 	struct ksz_sw *sw = bp->port.sw;
-	int header = 0;
-	int len = skb->len;
 
 	/* May be called from switch driver. */
 	if (__netif_subqueue_stopped(dev, queue_index))
 		return NETDEV_TX_BUSY;
 
-	if (sw_is_switch(sw))
-		len = sw->net_ops->get_tx_len(sw, skb, port->first_port,
-			&header);
-
-	/* Hardware cannot handle scatter/gather mode. */
-	/* Hardware cannot generate checksum correctly for HSR frame. */
-	if (skb_shinfo(skb)->nr_frags ||
-	    (skb->ip_summed && header > VLAN_HLEN)) {
-		struct sk_buff *nskb;
-
-		nskb = dev_alloc_skb(len);
-		if (nskb) {
-			skb_copy_and_csum_dev(skb, nskb->data);
-			skb->ip_summed = 0;
-			nskb->len = skb->len;
-			copy_old_skb(skb, nskb);
-			skb = nskb;
-			skb_set_tail_pointer(skb, skb->len);
-		}
-	}
 	if (bp != bp->hw_priv) {
 		bp = bp->hw_priv;
 		queue = &bp->queues[queue_index];
@@ -2670,6 +2634,8 @@ static netdev_tx_t macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		if (!skb) {
 			return NETDEV_TX_OK;
 		}
+		if (!skb_tailroom(skb))
+			skb_linearize(skb);
 	}
 #endif
 
@@ -3763,6 +3729,9 @@ static struct net_device_stats *gem_get_stats(struct macb *bp)
 	struct gem_stats *hwstat = &bp->hw_stats.gem;
 	struct net_device_stats *nstat = &bp->dev->stats;
 
+	if (!netif_running(bp->dev))
+		return nstat;
+
 	gem_update_stats(bp);
 
 	nstat->rx_errors = (hwstat->rx_frame_check_sequence_errors +
@@ -4737,7 +4706,7 @@ static int macb_clk_init(struct platform_device *pdev, struct clk **pclk,
 		if (!err)
 			err = -ENODEV;
 
-		dev_err(&pdev->dev, "failed to get macb_clk (%u)\n", err);
+		dev_err(&pdev->dev, "failed to get macb_clk (%d)\n", err);
 		return err;
 	}
 
@@ -4746,7 +4715,7 @@ static int macb_clk_init(struct platform_device *pdev, struct clk **pclk,
 		if (!err)
 			err = -ENODEV;
 
-		dev_err(&pdev->dev, "failed to get hclk (%u)\n", err);
+		dev_err(&pdev->dev, "failed to get hclk (%d)\n", err);
 		return err;
 	}
 
@@ -4760,25 +4729,25 @@ static int macb_clk_init(struct platform_device *pdev, struct clk **pclk,
 
 	err = clk_prepare_enable(*pclk);
 	if (err) {
-		dev_err(&pdev->dev, "failed to enable pclk (%u)\n", err);
+		dev_err(&pdev->dev, "failed to enable pclk (%d)\n", err);
 		return err;
 	}
 
 	err = clk_prepare_enable(*hclk);
 	if (err) {
-		dev_err(&pdev->dev, "failed to enable hclk (%u)\n", err);
+		dev_err(&pdev->dev, "failed to enable hclk (%d)\n", err);
 		goto err_disable_pclk;
 	}
 
 	err = clk_prepare_enable(*tx_clk);
 	if (err) {
-		dev_err(&pdev->dev, "failed to enable tx_clk (%u)\n", err);
+		dev_err(&pdev->dev, "failed to enable tx_clk (%d)\n", err);
 		goto err_disable_hclk;
 	}
 
 	err = clk_prepare_enable(*rx_clk);
 	if (err) {
-		dev_err(&pdev->dev, "failed to enable rx_clk (%u)\n", err);
+		dev_err(&pdev->dev, "failed to enable rx_clk (%d)\n", err);
 		goto err_disable_txclk;
 	}
 
@@ -4934,10 +4903,7 @@ static int macb_init(struct platform_device *pdev)
 
 	if (!(bp->caps & MACB_CAPS_USRIO_DISABLED)) {
 		val = 0;
-		if (bp->phy_interface == PHY_INTERFACE_MODE_RGMII ||
-		    bp->phy_interface == PHY_INTERFACE_MODE_RGMII_TXID ||
-		    bp->phy_interface == PHY_INTERFACE_MODE_RGMII_RXID ||
-		    bp->phy_interface == PHY_INTERFACE_MODE_RGMII_ID)
+		if (phy_interface_mode_is_rgmii(bp->phy_interface))
 			val = GEM_BIT(RGMII);
 		else if (bp->phy_interface == PHY_INTERFACE_MODE_RMII &&
 			 (bp->caps & MACB_CAPS_USRIO_DEFAULT_IS_MII_GMII))
@@ -5258,7 +5224,7 @@ static int at91ether_clk_init(struct platform_device *pdev, struct clk **pclk,
 
 	err = clk_prepare_enable(*pclk);
 	if (err) {
-		dev_err(&pdev->dev, "failed to enable pclk (%u)\n", err);
+		dev_err(&pdev->dev, "failed to enable pclk (%d)\n", err);
 		return err;
 	}
 
@@ -5870,7 +5836,7 @@ static int macb_probe(struct platform_device *pdev)
 	bp->wol = 0;
 	if (of_get_property(np, "magic-packet", NULL))
 		bp->wol |= MACB_WOL_HAS_MAGIC_PACKET;
-	device_init_wakeup(&pdev->dev, bp->wol & MACB_WOL_HAS_MAGIC_PACKET);
+	device_set_wakeup_capable(&pdev->dev, bp->wol & MACB_WOL_HAS_MAGIC_PACKET);
 
 	spin_lock_init(&bp->lock);
 
@@ -6176,6 +6142,7 @@ next:
 		lan937x_exit();
 #endif
 #endif
+		tasklet_kill(&bp->hresp_err_tasklet);
 		clk_disable_unprepare(bp->tx_clk);
 		clk_disable_unprepare(bp->hclk);
 		clk_disable_unprepare(bp->pclk);

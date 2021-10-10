@@ -232,16 +232,18 @@ static int get_sw_irq(struct macb *bp, struct device **ext_dev)
 	int spi_select;
 	char name[20];
 
-	spi_select = 0;
 	for (spi_bus = 0; spi_bus < 2; spi_bus++) {
-		sprintf(name, "spi%d.%d\n", spi_bus, spi_select);
-		dev = bus_find_device_by_name(&spi_bus_type, NULL, name);
-		if (dev && dev->of_node) {
-			int irq = of_irq_get(dev->of_node, 0);
+		for (spi_select = 0; spi_select < 4; spi_select++) {
+			sprintf(name, "spi%d.%d\n", spi_bus, spi_select);
+			dev = bus_find_device_by_name(&spi_bus_type, NULL,
+						      name);
+			if (dev && dev->of_node) {
+				int irq = of_irq_get(dev->of_node, 0);
 
-			if (ext_dev)
-				*ext_dev = dev;
-			return irq;
+				if (ext_dev)
+					*ext_dev = dev;
+				return irq;
+			}
 		}
 	}
 	return -1;
@@ -1027,7 +1029,9 @@ static void macb_mac_config(struct phylink_config *config, unsigned int mode,
 		if (state->interface == PHY_INTERFACE_MODE_RMII)
 			ctrl |= MACB_BIT(RM9200_RMII);
 	} else {
-		ctrl &= ~(GEM_BIT(GBE) | GEM_BIT(SGMIIEN) | GEM_BIT(PCSSEL));
+		/* These bits only apply to GEM MAC. */
+		if (macb_is_gem(bp))
+			ctrl &= ~(GEM_BIT(GBE) | GEM_BIT(SGMIIEN) | GEM_BIT(PCSSEL));
 
 		/* We do not support MLO_PAUSE_RX yet */
 		if (state->pause & MLO_PAUSE_TX)
@@ -4000,6 +4004,7 @@ static int macb_close(struct net_device *dev)
 #endif
 			if (stop_queue)
 				netif_tx_stop_all_queues(dev);
+			bp = dbp;
 			goto skip_hw;
 		}
 	}
@@ -4018,6 +4023,7 @@ skip_hw:
 
 #ifdef CONFIG_KSZ_SWITCH
 	if (sw_is_switch(sw)) {
+		bp = dbp->hw_priv;
 		if (bp->opened > 0) {
 			netif_carrier_off(dev);
 			return 0;

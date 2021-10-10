@@ -26,10 +26,6 @@
 #endif
 
 #ifdef CONFIG_KSZ_SWITCH
-#ifdef CONFIG_PHYLINK
-#include <linux/phylink.h>
-#endif
-
 #if defined(CONFIG_HAVE_KSZ9897)
 #include "../micrel/ksz_cfg_9897.h"
 #elif defined(CONFIG_HAVE_KSZ8795)

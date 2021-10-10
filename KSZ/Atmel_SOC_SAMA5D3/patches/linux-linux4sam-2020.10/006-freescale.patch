@@ -1,7 +1,7 @@
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec.h linux-at91-linux4sam-2020.10/drivers/net/ethernet/freescale/fec.h
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec.h	2021-01-14 04:54:56.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/freescale/fec.h	2021-08-31 22:59:36.501854303 -0700
-@@ -19,6 +19,32 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/freescale/fec.h	2021-10-05 13:55:39.682881881 -0700
+@@ -19,6 +19,28 @@
  #include <linux/ptp_clock_kernel.h>
  #include <linux/timecounter.h>
  
@@ -12,10 +12,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
 +#endif
 +
 +#ifdef CONFIG_KSZ_SWITCH
-+#ifdef CONFIG_PHYLINK
-+#include <linux/phylink.h>
-+#endif
-+
 +#if defined(CONFIG_HAVE_KSZ9897)
 +#include "../micrel/ksz_cfg_9897.h"
 +#elif defined(CONFIG_HAVE_KSZ8795)
@@ -34,7 +30,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/freescale/fec
  #if defined(CONFIG_M523x) || defined(CONFIG_M527x) || defined(CONFIG_M528x) || \
      defined(CONFIG_M520x) || defined(CONFIG_M532x) || defined(CONFIG_ARM) || \
      defined(CONFIG_ARM64) || defined(CONFIG_COMPILE_TEST)
-@@ -590,6 +616,25 @@ struct fec_enet_private {
+@@ -590,6 +612,25 @@ struct fec_enet_private {
  	unsigned int reload_period;
  	int pps_enable;
  	unsigned int next_counter;

@@ -57128,7 +57128,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sp
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_stp.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_stp.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_stp.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_stp.c	2021-08-28 13:20:47.278787517 -0700
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_stp.c	2021-10-09 15:01:59.154058833 -0700
 @@ -0,0 +1,5035 @@
 +/**
 + * Microchip RSTP code
@@ -62518,7 +62518,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_st
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8795.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8795.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.c	2021-09-10 10:54:42.475598774 -0700
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.c	2021-10-09 15:46:09.750169797 -0700
 @@ -0,0 +1,12145 @@
 +/**
 + * Microchip KSZ8795 switch common code
@@ -66871,10 +66871,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	int i;
 +
 +	memset(&entry, 0, sizeof(struct ksz_mac_table));
-+	sw->ops->release(sw);
 +	for (i = 0; i < STATIC_MAC_TABLE_ENTRIES; i++)
 +		sw_w_sta_mac_table(sw, i, &entry);
-+	sw->ops->acquire(sw);
 +}  /* sw_clr_sta_mac_table */
 +
 +/**
@@ -66897,9 +66895,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	entry.use_fid = 0;
 +	entry.override = 1;
 +	entry.valid = 1;
-+	sw->ops->release(sw);
 +	sw_w_sta_mac_table(sw, STP_ENTRY, &entry);
-+	sw->ops->acquire(sw);
 +}  /* sw_setup_stp */
 +
 +#ifdef CONFIG_KSZ_STP
@@ -67778,7 +67774,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	sw->info->multi_sys = MULTI_MAC_TABLE_ENTRIES;
 +	sw->info->multi_net = SWITCH_MAC_TABLE_ENTRIES;
 +	if (sw->features & STP_SUPPORT) {
++		sw->ops->release(sw);
 +		sw_setup_stp(sw);
++		sw->ops->acquire(sw);
 +	}
 +#ifdef CONFIG_KSZ_DLR
 +	if (sw->features & DLR_HW)
@@ -69111,7 +69109,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		sw_flush_dyn_mac_table(sw, TOTAL_PORT_NUM);
 +		break;
 +	case PROC_STATIC:
++		sw->ops->release(sw);
 +		sw_clr_sta_mac_table(sw);
++		sw->ops->acquire(sw);
 +		break;
 +	case PROC_SET_AGING:
 +		sw_cfg(sw, REG_SW_CTRL_1, SW_AGING_ENABLE, num);
@@ -71360,7 +71360,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			/* Not really using VLAN. */
 +			if (1 == sw->eth_maps[p].vlan)
 +				continue;
-+			sw->ops->release(sw);
 +
 +			map = &sw->eth_maps[p];
 +
@@ -71371,6 +71370,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			entry.fid = map->vlan & (FID_ENTRIES - 1);
 +			entry.member = sw->HOST_MASK | map->mask;
 +			entry.valid = 1;
++			sw->ops->release(sw);
 +			sw_w_vlan_table(sw, map->vlan, &entry);
 +			sw->ops->acquire(sw);
 +			for (i = 0, q = map->first;
@@ -71454,11 +71454,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		sw_reset(sw);
 +	reset = true;
 +	sw_init(sw);
++	sw->ops->release(sw);
 +
 +	/* Clean out static MAC table when the switch shutdown. */
 +	if (complete)
 +		sw_clr_sta_mac_table(sw);
-+	sw->ops->release(sw);
 +	return reset;
 +}  /* sw_stop */
 +
@@ -72667,7 +72667,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	sw_notify_link_change(sw, port->link_ports);
 +
-+	if (!sw->dev_offset || port != sw->netport[0])
++	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 +		sw_report_link(sw, port, port->linked);
 +
 +	/* There is an extra network device for the main device. */
@@ -74667,8 +74667,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8795.h linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.h
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8795.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.h	2021-09-10 11:18:48.990869696 -0700
-@@ -0,0 +1,985 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8795.h	2021-10-05 14:00:26.591372708 -0700
+@@ -0,0 +1,989 @@
 +/**
 + * Microchip KSZ8795 switch common header
 + *
@@ -74690,6 +74690,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifndef KSZ_SW_8795_H
 +#define KSZ_SW_8795_H
 +
++
++#ifdef CONFIG_PHYLINK
++#include <linux/phylink.h>
++#endif
 +
 +/* These definitions should be defined before this header file. */
 +#ifndef PRIO_QUEUES
@@ -75656,7 +75660,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8895.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8895.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.c	2021-09-10 10:51:58.852673778 -0700
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.c	2021-10-09 15:45:38.242168478 -0700
 @@ -0,0 +1,9977 @@
 +/**
 + * Microchip KSZ8895 switch common code
@@ -78733,10 +78737,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	int i;
 +
 +	memset(&entry, 0, sizeof(struct ksz_mac_table));
-+	sw->ops->release(sw);
 +	for (i = 0; i < STATIC_MAC_TABLE_ENTRIES; i++)
 +		sw_w_sta_mac_table(sw, i, &entry);
-+	sw->ops->acquire(sw);
 +}  /* sw_clr_sta_mac_table */
 +
 +/**
@@ -78759,9 +78761,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	entry.use_fid = 0;
 +	entry.override = 1;
 +	entry.valid = 1;
-+	sw->ops->release(sw);
 +	sw_w_sta_mac_table(sw, STP_ENTRY, &entry);
-+	sw->ops->acquire(sw);
 +}  /* sw_setup_stp */
 +
 +#ifdef CONFIG_KSZ_STP
@@ -79626,7 +79626,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	sw->info->multi_sys = MULTI_MAC_TABLE_ENTRIES;
 +	sw->info->multi_net = SWITCH_MAC_TABLE_ENTRIES;
 +	if (sw->features & STP_SUPPORT) {
++		sw->ops->release(sw);
 +		sw_setup_stp(sw);
++		sw->ops->acquire(sw);
 +	}
 +}  /* sw_setup */
 +
@@ -80928,7 +80930,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		sw_flush_dyn_mac_table(sw, TOTAL_PORT_NUM);
 +		break;
 +	case PROC_STATIC:
++		sw->ops->release(sw);
 +		sw_clr_sta_mac_table(sw);
++		sw->ops->acquire(sw);
 +		break;
 +	case PROC_SET_AGING:
 +		sw_cfg(sw, REG_SW_CTRL_1, SW_AGING_ENABLE, num);
@@ -82581,7 +82585,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			/* Not really using VLAN. */
 +			if (1 == sw->eth_maps[p].vlan)
 +				continue;
-+			sw->ops->release(sw);
 +
 +			map = &sw->eth_maps[p];
 +
@@ -82592,6 +82595,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			entry.fid = map->vlan & (FID_ENTRIES - 1);
 +			entry.member = sw->HOST_MASK | map->mask;
 +			entry.valid = 1;
++			sw->ops->release(sw);
 +			sw_w_vlan_table(sw, map->vlan, &entry);
 +			sw->ops->acquire(sw);
 +			for (i = 0, q = map->first;
@@ -82669,11 +82673,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		sw_reset(sw);
 +	reset = true;
 +	sw_init(sw);
++	sw->ops->release(sw);
 +
 +	/* Clean out static MAC table when the switch shutdown. */
 +	if (complete)
 +		sw_clr_sta_mac_table(sw);
-+	sw->ops->release(sw);
 +	return reset;
 +}  /* sw_stop */
 +
@@ -83838,7 +83842,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	sw_notify_link_change(sw, port->link_ports);
 +
-+	if (!sw->dev_offset || port != sw->netport[0])
++	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 +		sw_report_link(sw, port, port->linked);
 +
 +	/* There is an extra network device for the main device. */
@@ -85637,8 +85641,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8895.h linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.h
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_8895.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.h	2021-09-10 11:19:00.314758894 -0700
-@@ -0,0 +1,866 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_8895.h	2021-10-05 14:00:14.127364637 -0700
+@@ -0,0 +1,870 @@
 +/**
 + * Microchip KSZ8895 switch common header
 + *
@@ -85660,6 +85664,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifndef KSZ_SW_8895_H
 +#define KSZ_SW_8895_H
 +
++
++#ifdef CONFIG_PHYLINK
++#include <linux/phylink.h>
++#endif
 +
 +/* These definitions should be defined before this header file. */
 +#ifndef PRIO_QUEUES
@@ -86507,7 +86515,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-09-10 10:43:30.530680462 -0700
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-10-09 15:36:04.006144438 -0700
 @@ -0,0 +1,19171 @@
 +/**
 + * Microchip gigabit switch common code
@@ -93323,9 +93331,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	alu->valid = 1;
 +	if (sw->stp)
 +		alu->forward = FWD_STP_DEV | FWD_HOST | FWD_HOST_OVERRIDE;
-+	sw->ops->release(sw);
 +	sw_w_sta_mac_table(sw, alu->index, alu->type, entry);
-+	sw->ops->acquire(sw);
 +}  /* sw_setup_stp */
 +#endif
 +
@@ -95402,7 +95408,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (sw->features & AVB_SUPPORT)
 +		sw_setup_multi(sw);
 +#ifdef CONFIG_KSZ_STP
++	sw->ops->release(sw);
 +	sw_setup_stp(sw);
++	sw->ops->acquire(sw);
 +#endif
 +#ifdef CONFIG_1588_PTP
 +	if (sw->features & PTP_HW)
@@ -102543,7 +102551,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	sw_notify_link_change(sw, port->link_ports);
 +
-+	if (!sw->dev_offset || port != sw->netport[0])
++	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 +		sw_report_link(sw, port, port->linked);
 +
 +#ifdef CONFIG_KSZ_STP
@@ -105682,8 +105690,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.h linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.h
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.h	2021-08-28 13:20:47.510773894 -0700
-@@ -0,0 +1,1411 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.h	2021-10-05 14:00:39.543380054 -0700
+@@ -0,0 +1,1415 @@
 +/**
 + * Microchip KSZ9897 switch common header
 + *
@@ -105705,6 +105713,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifndef KSZ_SW_9897_H
 +#define KSZ_SW_9897_H
 +
++
++#ifdef CONFIG_PHYLINK
++#include <linux/phylink.h>
++#endif
 +
 +/* These definitions should be defined before this header file. */
 +#ifndef PRIO_QUEUES
@@ -107175,8 +107187,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.c	2021-09-10 10:56:12.546640126 -0700
-@@ -0,0 +1,10255 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.c	2021-10-09 15:26:31.022120451 -0700
+@@ -0,0 +1,10235 @@
 +/**
 + * Microchip switch common code
 + *
@@ -107783,11 +107795,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 port = 0;
 +	u8 timestamp = 0;
 +	u8 fid = 0;
-+	int locked = mutex_is_locked(&sw->lock);
 +	int first_break = true;
 +
-+	if (locked)
-+		mutex_unlock(sw->reglock);
 +	memset(mac_addr, 0, ETH_ALEN);
 +	i = 0;
 +	do {
@@ -107810,8 +107819,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		}
 +		i++;
 +	} while (i < entries);
-+	if (locked)
-+		mutex_lock(sw->reglock);
 +	return len;
 +}
 +
@@ -107836,13 +107843,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	u32 data_hi;
 +	u32 data_lo;
-+	int locked = mutex_is_locked(&sw->lock);
 +
-+	if (locked)
-+		mutex_unlock(sw->reglock);
 +	sw_r_table_64(sw, TABLE_STATIC_MAC, addr, &data_hi, &data_lo);
-+	if (locked)
-+		mutex_lock(sw->reglock);
 +	if (data_hi & (STATIC_MAC_TABLE_VALID | STATIC_MAC_TABLE_OVERRIDE)) {
 +		mac_addr[5] = (u8) data_lo;
 +		mac_addr[4] = (u8)(data_lo >> 8);
@@ -107880,7 +107882,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	u32 data_hi;
 +	u32 data_lo;
-+	int locked = mutex_is_locked(&sw->lock);
 +
 +	data_lo = ((u32) mac_addr[2] << 24) |
 +		((u32) mac_addr[3] << 16) |
@@ -107899,11 +107900,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	else
 +		data_hi &= ~STATIC_MAC_TABLE_OVERRIDE;
 +
-+	if (locked)
-+		mutex_unlock(sw->reglock);
 +	sw_w_table_64(sw, TABLE_STATIC_MAC, addr, data_hi, data_lo);
-+	if (locked)
-+		mutex_lock(sw->reglock);
 +}
 +
 +static ssize_t sw_d_sta_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
@@ -107983,13 +107980,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 *member)
 +{
 +	u32 data;
-+	int locked = mutex_is_locked(&sw->lock);
 +
-+	if (locked)
-+		mutex_unlock(sw->reglock);
 +	sw_r_table(sw, TABLE_VLAN, addr, &data);
-+	if (locked)
-+		mutex_lock(sw->reglock);
 +	if (data & VLAN_TABLE_VALID) {
 +		*vid = (u16)(data & VLAN_TABLE_VID);
 +		*fid = (u8)((data & VLAN_TABLE_FID) >> VLAN_TABLE_FID_SHIFT);
@@ -108018,7 +108010,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u32 data;
 +	int entry;
 +	struct ksz_sw_info *info = sw->info;
-+	int locked = mutex_is_locked(&sw->lock);
 +
 +	data = vid;
 +	data |= (u32) fid << VLAN_TABLE_FID_SHIFT;
@@ -108026,11 +108017,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (valid)
 +		data |= VLAN_TABLE_VALID;
 +
-+	if (locked)
-+		mutex_unlock(sw->reglock);
 +	sw_w_table(sw, TABLE_VLAN, addr, data);
-+	if (locked)
-+		mutex_lock(sw->reglock);
 +
 +	entry = addr;
 +	if (entry >= VLAN_TABLE_ENTRIES)
@@ -110166,6 +110153,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct ksz_sw_info *info = sw->info;
 +
 +	/* Create 16 VLAN entries in the VLAN table. */
++	sw->ops->release(sw);
 +	for (entry = 0; entry < VLAN_TABLE_ENTRIES; entry++) {
 +		sw_w_vlan_table(sw, entry,
 +			info->vlan_table[entry].vid,
@@ -110173,6 +110161,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			info->vlan_table[entry].member,
 +			info->vlan_table[entry].valid);
 +	}
++	sw->ops->acquire(sw);
 +
 +	/* Enable 802.1q VLAN mode. */
 +	sw_cfg(sw, REG_SWITCH_CTRL_2, UNICAST_VLAN_BOUNDARY, 1);
@@ -110193,6 +110182,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct ksz_sw_info *info = sw->info;
 +
 +	/* Read 16 VLAN entries from device's VLAN table. */
++	sw->ops->release(sw);
 +	for (entry = 0; entry < VLAN_TABLE_ENTRIES; entry++) {
 +		if (!sw_r_vlan_table(sw, entry,
 +				&info->vlan_table[entry].vid,
@@ -110202,6 +110192,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		else
 +			info->vlan_table[entry].valid = 0;
 +	}
++	sw->ops->acquire(sw);
 +
 +	for (port = 0; port < TOTAL_PORT_NUM; port++) {
 +		port_get_def_vid(sw, port, &info->port_cfg[port].vid);
@@ -111483,7 +111474,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	sw->info->multi_sys = MULTI_MAC_TABLE_ENTRIES;
 +	sw->info->multi_net = SWITCH_MAC_TABLE_ENTRIES;
 +	if (sw->features & STP_SUPPORT) {
++		sw->ops->release(sw);
 +		sw_setup_stp(sw);
++		sw->ops->acquire(sw);
 +	}
 +#ifdef CONFIG_KSZ_DLR
 +	if (sw->features & DLR_HW)
@@ -112558,6 +112551,16 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		len += sprintf(buf + len, "\t%08x = tail tagging\n",
 +			TAIL_TAGGING);
 +		break;
++	case PROC_DYNAMIC:
++		len = sw_d_dyn_mac_table(sw, buf, len);
++		break;
++	case PROC_STATIC:
++		len = sw_d_sta_mac_table(sw, buf, len);
++		len = sw_d_mac_table(sw, buf, len);
++		break;
++	case PROC_VLAN:
++		len = sw_d_vlan_table(sw, buf, len);
++		break;
 +	}
 +	return len;
 +}
@@ -112693,19 +112696,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	case PROC_SET_PASS_PAUSE:
 +		chk = sw_chk(sw, S_LINK_AGING_CTRL, SWITCH_PASS_PAUSE);
 +		break;
-+	case PROC_DYNAMIC:
-+		len = sw_d_dyn_mac_table(sw, buf, len);
-+		type = SHOW_HELP_NONE;
-+		break;
-+	case PROC_STATIC:
-+		len = sw_d_sta_mac_table(sw, buf, len);
-+		len = sw_d_mac_table(sw, buf, len);
-+		type = SHOW_HELP_NONE;
-+		break;
-+	case PROC_VLAN:
-+		len = sw_d_vlan_table(sw, buf, len);
-+		type = SHOW_HELP_NONE;
-+		break;
 +	default:
 +		type = SHOW_HELP_NONE;
 +		break;
@@ -112802,7 +112792,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		sw_flush_dyn_mac_table(sw, TOTAL_PORT_NUM);
 +		break;
 +	case PROC_STATIC:
++		sw->ops->release(sw);
 +		sw_clr_sta_mac_table(sw);
++		sw->ops->acquire(sw);
 +		break;
 +	case PROC_SET_AGING:
 +		sw_cfg(sw, REG_SWITCH_CTRL_1, SWITCH_AGING_ENABLE, num);
@@ -114661,7 +114653,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			/* Not really using VLAN. */
 +			if (1 == sw->eth_maps[p].vlan)
 +				continue;
-+			sw->ops->release(sw);
 +
 +			map = &sw->eth_maps[p];
 +
@@ -114669,6 +114660,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			 * Setting FID allows same MAC address in different
 +			 * VLANs.
 +			 */
++			sw->ops->release(sw);
 +			sw_w_vlan_table(sw, p + 1,
 +				map->vlan,
 +				map->vlan & (FID_ENTRIES - 1),
@@ -114745,11 +114737,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		sw_reset(sw);
 +	reset = true;
 +	sw_init(sw);
++	sw->ops->release(sw);
 +
 +	/* Clean out static MAC table when the switch shutdown. */
 +	if ((sw->features & STP_SUPPORT) && complete)
 +		sw_clr_sta_mac_table(sw);
-+	sw->ops->release(sw);
 +	return reset;
 +}  /* sw_stop */
 +
@@ -115921,7 +115913,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	sw_notify_link_change(sw, port->link_ports);
 +
-+	if (!sw->dev_offset || port != sw->netport[0])
++	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 +		sw_report_link(sw, port, port->linked);
 +
 +#ifdef CONFIG_KSZ_STP
@@ -117434,8 +117426,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw.h linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.h
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.h	2021-09-10 11:19:18.234579121 -0700
-@@ -0,0 +1,854 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw.h	2021-10-05 14:00:01.551355475 -0700
+@@ -0,0 +1,858 @@
 +/**
 + * Microchip switch common header
 + *
@@ -117457,6 +117449,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifndef KSZ_SW_H
 +#define KSZ_SW_H
 +
++
++#ifdef CONFIG_PHYLINK
++#include <linux/phylink.h>
++#endif
 +
 +/* These definitions should be defined before this header file. */
 +#ifndef PRIO_QUEUES
@@ -120839,12 +120835,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_sysfs.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_sysfs.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_sysfs.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_sysfs.c	2021-08-28 13:20:47.622767317 -0700
-@@ -0,0 +1,913 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_sysfs.c	2021-10-09 15:17:22.090097471 -0700
+@@ -0,0 +1,909 @@
 +/**
 + * Microchip switch common sysfs code
 + *
-+ * Copyright (c) 2015-2018 Microchip Technology Inc.
++ * Copyright (c) 2015-2021 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2011-2013 Micrel, Inc.
@@ -121110,9 +121106,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	proc_num = offset / sizeof(int);
 +	ret = count;
-+	sw->ops->acquire(sw);
 +	sw->ops->sysfs_mac_write(sw, proc_num, index, num, buf);
-+	sw->ops->release(sw);
 +	up(proc_sem);
 +	return ret;
 +}
@@ -121171,9 +121165,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	proc_num = offset / sizeof(int);
 +	ret = count;
-+	sw->ops->acquire(sw);
 +	sw->ops->sysfs_vlan_write(sw, proc_num, index, num);
-+	sw->ops->release(sw);
 +	up(proc_sem);
 +	return ret;
 +}

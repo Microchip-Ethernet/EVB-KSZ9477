@@ -6812,9 +6812,7 @@ static void sw_setup_stp(struct ksz_sw *sw)
 	alu->valid = 1;
 	if (sw->stp)
 		alu->forward = FWD_STP_DEV | FWD_HOST | FWD_HOST_OVERRIDE;
-	sw->ops->release(sw);
 	sw_w_sta_mac_table(sw, alu->index, alu->type, entry);
-	sw->ops->acquire(sw);
 }  /* sw_setup_stp */
 #endif
 
@@ -8891,7 +8889,9 @@ static void sw_setup(struct ksz_sw *sw)
 	if (sw->features & AVB_SUPPORT)
 		sw_setup_multi(sw);
 #ifdef CONFIG_KSZ_STP
+	sw->ops->release(sw);
 	sw_setup_stp(sw);
+	sw->ops->acquire(sw);
 #endif
 #ifdef CONFIG_1588_PTP
 	if (sw->features & PTP_HW)
@@ -16032,7 +16032,7 @@ static void link_update_work(struct work_struct *work)
 
 	sw_notify_link_change(sw, port->link_ports);
 
-	if (!sw->dev_offset || port != sw->netport[0])
+	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 		sw_report_link(sw, port, port->linked);
 
 #ifdef CONFIG_KSZ_STP

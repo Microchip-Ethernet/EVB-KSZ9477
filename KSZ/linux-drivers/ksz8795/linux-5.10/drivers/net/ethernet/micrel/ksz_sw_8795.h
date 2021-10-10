@@ -20,6 +20,10 @@
 #define KSZ_SW_8795_H
 
 
+#ifdef CONFIG_PHYLINK
+#include <linux/phylink.h>
+#endif
+
 /* These definitions should be defined before this header file. */
 #ifndef PRIO_QUEUES
 #define PRIO_QUEUES			4

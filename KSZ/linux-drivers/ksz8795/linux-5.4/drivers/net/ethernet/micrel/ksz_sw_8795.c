@@ -4349,10 +4349,8 @@ static void sw_clr_sta_mac_table(struct ksz_sw *sw)
 	int i;
 
 	memset(&entry, 0, sizeof(struct ksz_mac_table));
-	sw->ops->release(sw);
 	for (i = 0; i < STATIC_MAC_TABLE_ENTRIES; i++)
 		sw_w_sta_mac_table(sw, i, &entry);
-	sw->ops->acquire(sw);
 }  /* sw_clr_sta_mac_table */
 
 /**
@@ -4375,9 +4373,7 @@ static void sw_setup_stp(struct ksz_sw *sw)
 	entry.use_fid = 0;
 	entry.override = 1;
 	entry.valid = 1;
-	sw->ops->release(sw);
 	sw_w_sta_mac_table(sw, STP_ENTRY, &entry);
-	sw->ops->acquire(sw);
 }  /* sw_setup_stp */
 
 #ifdef CONFIG_KSZ_STP
@@ -5256,7 +5252,9 @@ static void sw_setup(struct ksz_sw *sw)
 	sw->info->multi_sys = MULTI_MAC_TABLE_ENTRIES;
 	sw->info->multi_net = SWITCH_MAC_TABLE_ENTRIES;
 	if (sw->features & STP_SUPPORT) {
+		sw->ops->release(sw);
 		sw_setup_stp(sw);
+		sw->ops->acquire(sw);
 	}
 #ifdef CONFIG_KSZ_DLR
 	if (sw->features & DLR_HW)
@@ -6589,7 +6587,9 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 		sw_flush_dyn_mac_table(sw, TOTAL_PORT_NUM);
 		break;
 	case PROC_STATIC:
+		sw->ops->release(sw);
 		sw_clr_sta_mac_table(sw);
+		sw->ops->acquire(sw);
 		break;
 	case PROC_SET_AGING:
 		sw_cfg(sw, REG_SW_CTRL_1, SW_AGING_ENABLE, num);
@@ -8838,7 +8838,6 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 			/* Not really using VLAN. */
 			if (1 == sw->eth_maps[p].vlan)
 				continue;
-			sw->ops->release(sw);
 
 			map = &sw->eth_maps[p];
 
@@ -8849,6 +8848,7 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 			entry.fid = map->vlan & (FID_ENTRIES - 1);
 			entry.member = sw->HOST_MASK | map->mask;
 			entry.valid = 1;
+			sw->ops->release(sw);
 			sw_w_vlan_table(sw, map->vlan, &entry);
 			sw->ops->acquire(sw);
 			for (i = 0, q = map->first;
@@ -8932,11 +8932,11 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 		sw_reset(sw);
 	reset = true;
 	sw_init(sw);
+	sw->ops->release(sw);
 
 	/* Clean out static MAC table when the switch shutdown. */
 	if (complete)
 		sw_clr_sta_mac_table(sw);
-	sw->ops->release(sw);
 	return reset;
 }  /* sw_stop */
 
@@ -10122,7 +10122,7 @@ static void link_update_work(struct work_struct *work)
 
 	sw_notify_link_change(sw, port->link_ports);
 
-	if (!sw->dev_offset || port != sw->netport[0])
+	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 		sw_report_link(sw, port, port->linked);
 
 	/* There is an extra network device for the main device. */

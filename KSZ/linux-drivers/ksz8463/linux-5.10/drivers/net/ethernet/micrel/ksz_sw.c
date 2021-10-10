@@ -604,11 +604,8 @@ static ssize_t sw_d_dyn_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 	u8 port = 0;
 	u8 timestamp = 0;
 	u8 fid = 0;
-	int locked = mutex_is_locked(&sw->lock);
 	int first_break = true;
 
-	if (locked)
-		mutex_unlock(sw->reglock);
 	memset(mac_addr, 0, ETH_ALEN);
 	i = 0;
 	do {
@@ -631,8 +628,6 @@ static ssize_t sw_d_dyn_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 		}
 		i++;
 	} while (i < entries);
-	if (locked)
-		mutex_lock(sw->reglock);
 	return len;
 }
 
@@ -657,13 +652,8 @@ static int sw_r_sta_mac_table(struct ksz_sw *sw, u16 addr, u8 *mac_addr,
 {
 	u32 data_hi;
 	u32 data_lo;
-	int locked = mutex_is_locked(&sw->lock);
 
-	if (locked)
-		mutex_unlock(sw->reglock);
 	sw_r_table_64(sw, TABLE_STATIC_MAC, addr, &data_hi, &data_lo);
-	if (locked)
-		mutex_lock(sw->reglock);
 	if (data_hi & (STATIC_MAC_TABLE_VALID | STATIC_MAC_TABLE_OVERRIDE)) {
 		mac_addr[5] = (u8) data_lo;
 		mac_addr[4] = (u8)(data_lo >> 8);
@@ -701,7 +691,6 @@ static void sw_w_sta_mac_table(struct ksz_sw *sw, u16 addr, u8 *mac_addr,
 {
 	u32 data_hi;
 	u32 data_lo;
-	int locked = mutex_is_locked(&sw->lock);
 
 	data_lo = ((u32) mac_addr[2] << 24) |
 		((u32) mac_addr[3] << 16) |
@@ -720,11 +709,7 @@ static void sw_w_sta_mac_table(struct ksz_sw *sw, u16 addr, u8 *mac_addr,
 	else
 		data_hi &= ~STATIC_MAC_TABLE_OVERRIDE;
 
-	if (locked)
-		mutex_unlock(sw->reglock);
 	sw_w_table_64(sw, TABLE_STATIC_MAC, addr, data_hi, data_lo);
-	if (locked)
-		mutex_lock(sw->reglock);
 }
 
 static ssize_t sw_d_sta_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
@@ -804,13 +789,8 @@ static int sw_r_vlan_table(struct ksz_sw *sw, u16 addr, u16 *vid, u8 *fid,
 	u8 *member)
 {
 	u32 data;
-	int locked = mutex_is_locked(&sw->lock);
 
-	if (locked)
-		mutex_unlock(sw->reglock);
 	sw_r_table(sw, TABLE_VLAN, addr, &data);
-	if (locked)
-		mutex_lock(sw->reglock);
 	if (data & VLAN_TABLE_VALID) {
 		*vid = (u16)(data & VLAN_TABLE_VID);
 		*fid = (u8)((data & VLAN_TABLE_FID) >> VLAN_TABLE_FID_SHIFT);
@@ -839,7 +819,6 @@ static void sw_w_vlan_table(struct ksz_sw *sw, u16 addr, u16 vid, u8 fid,
 	u32 data;
 	int entry;
 	struct ksz_sw_info *info = sw->info;
-	int locked = mutex_is_locked(&sw->lock);
 
 	data = vid;
 	data |= (u32) fid << VLAN_TABLE_FID_SHIFT;
@@ -847,11 +826,7 @@ static void sw_w_vlan_table(struct ksz_sw *sw, u16 addr, u16 vid, u8 fid,
 	if (valid)
 		data |= VLAN_TABLE_VALID;
 
-	if (locked)
-		mutex_unlock(sw->reglock);
 	sw_w_table(sw, TABLE_VLAN, addr, data);
-	if (locked)
-		mutex_lock(sw->reglock);
 
 	entry = addr;
 	if (entry >= VLAN_TABLE_ENTRIES)
@@ -2987,6 +2962,7 @@ static void sw_ena_vlan(struct ksz_sw *sw)
 	struct ksz_sw_info *info = sw->info;
 
 	/* Create 16 VLAN entries in the VLAN table. */
+	sw->ops->release(sw);
 	for (entry = 0; entry < VLAN_TABLE_ENTRIES; entry++) {
 		sw_w_vlan_table(sw, entry,
 			info->vlan_table[entry].vid,
@@ -2994,6 +2970,7 @@ static void sw_ena_vlan(struct ksz_sw *sw)
 			info->vlan_table[entry].member,
 			info->vlan_table[entry].valid);
 	}
+	sw->ops->acquire(sw);
 
 	/* Enable 802.1q VLAN mode. */
 	sw_cfg(sw, REG_SWITCH_CTRL_2, UNICAST_VLAN_BOUNDARY, 1);
@@ -3014,6 +2991,7 @@ static void sw_init_vlan(struct ksz_sw *sw)
 	struct ksz_sw_info *info = sw->info;
 
 	/* Read 16 VLAN entries from device's VLAN table. */
+	sw->ops->release(sw);
 	for (entry = 0; entry < VLAN_TABLE_ENTRIES; entry++) {
 		if (!sw_r_vlan_table(sw, entry,
 				&info->vlan_table[entry].vid,
@@ -3023,6 +3001,7 @@ static void sw_init_vlan(struct ksz_sw *sw)
 		else
 			info->vlan_table[entry].valid = 0;
 	}
+	sw->ops->acquire(sw);
 
 	for (port = 0; port < TOTAL_PORT_NUM; port++) {
 		port_get_def_vid(sw, port, &info->port_cfg[port].vid);
@@ -4304,7 +4283,9 @@ static void sw_setup(struct ksz_sw *sw)
 	sw->info->multi_sys = MULTI_MAC_TABLE_ENTRIES;
 	sw->info->multi_net = SWITCH_MAC_TABLE_ENTRIES;
 	if (sw->features & STP_SUPPORT) {
+		sw->ops->release(sw);
 		sw_setup_stp(sw);
+		sw->ops->acquire(sw);
 	}
 #ifdef CONFIG_KSZ_DLR
 	if (sw->features & DLR_HW)
@@ -5379,6 +5360,16 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 		len += sprintf(buf + len, "\t%08x = tail tagging\n",
 			TAIL_TAGGING);
 		break;
+	case PROC_DYNAMIC:
+		len = sw_d_dyn_mac_table(sw, buf, len);
+		break;
+	case PROC_STATIC:
+		len = sw_d_sta_mac_table(sw, buf, len);
+		len = sw_d_mac_table(sw, buf, len);
+		break;
+	case PROC_VLAN:
+		len = sw_d_vlan_table(sw, buf, len);
+		break;
 	}
 	return len;
 }
@@ -5514,19 +5505,6 @@ static ssize_t sysfs_sw_read_hw(struct ksz_sw *sw, int proc_num, ssize_t len,
 	case PROC_SET_PASS_PAUSE:
 		chk = sw_chk(sw, S_LINK_AGING_CTRL, SWITCH_PASS_PAUSE);
 		break;
-	case PROC_DYNAMIC:
-		len = sw_d_dyn_mac_table(sw, buf, len);
-		type = SHOW_HELP_NONE;
-		break;
-	case PROC_STATIC:
-		len = sw_d_sta_mac_table(sw, buf, len);
-		len = sw_d_mac_table(sw, buf, len);
-		type = SHOW_HELP_NONE;
-		break;
-	case PROC_VLAN:
-		len = sw_d_vlan_table(sw, buf, len);
-		type = SHOW_HELP_NONE;
-		break;
 	default:
 		type = SHOW_HELP_NONE;
 		break;
@@ -5623,7 +5601,9 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 		sw_flush_dyn_mac_table(sw, TOTAL_PORT_NUM);
 		break;
 	case PROC_STATIC:
+		sw->ops->release(sw);
 		sw_clr_sta_mac_table(sw);
+		sw->ops->acquire(sw);
 		break;
 	case PROC_SET_AGING:
 		sw_cfg(sw, REG_SWITCH_CTRL_1, SWITCH_AGING_ENABLE, num);
@@ -7482,7 +7462,6 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 			/* Not really using VLAN. */
 			if (1 == sw->eth_maps[p].vlan)
 				continue;
-			sw->ops->release(sw);
 
 			map = &sw->eth_maps[p];
 
@@ -7490,6 +7469,7 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 			 * Setting FID allows same MAC address in different
 			 * VLANs.
 			 */
+			sw->ops->release(sw);
 			sw_w_vlan_table(sw, p + 1,
 				map->vlan,
 				map->vlan & (FID_ENTRIES - 1),
@@ -7566,11 +7546,11 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 		sw_reset(sw);
 	reset = true;
 	sw_init(sw);
+	sw->ops->release(sw);
 
 	/* Clean out static MAC table when the switch shutdown. */
 	if ((sw->features & STP_SUPPORT) && complete)
 		sw_clr_sta_mac_table(sw);
-	sw->ops->release(sw);
 	return reset;
 }  /* sw_stop */
 
@@ -8742,7 +8722,7 @@ static void link_update_work(struct work_struct *work)
 
 	sw_notify_link_change(sw, port->link_ports);
 
-	if (!sw->dev_offset || port != sw->netport[0])
+	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 		sw_report_link(sw, port, port->linked);
 
 #ifdef CONFIG_KSZ_STP

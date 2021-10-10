@@ -1,7 +1,7 @@
 /**
  * Microchip switch common sysfs code
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2021 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2011-2013 Micrel, Inc.
@@ -267,9 +267,7 @@ static ssize_t netmac_store(struct device *d, struct device_attribute *attr,
 
 	proc_num = offset / sizeof(int);
 	ret = count;
-	sw->ops->acquire(sw);
 	sw->ops->sysfs_mac_write(sw, proc_num, index, num, buf);
-	sw->ops->release(sw);
 	up(proc_sem);
 	return ret;
 }
@@ -328,9 +326,7 @@ static ssize_t netvlan_store(struct device *d, struct device_attribute *attr,
 
 	proc_num = offset / sizeof(int);
 	ret = count;
-	sw->ops->acquire(sw);
 	sw->ops->sysfs_vlan_write(sw, proc_num, index, num);
-	sw->ops->release(sw);
 	up(proc_sem);
 	return ret;
 }

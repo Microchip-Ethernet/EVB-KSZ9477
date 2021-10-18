@@ -1,0 +1,63 @@
+diff -Napur at91bootstrap3-v3.8.5-orig/scripts/bitfieldsparser.py at91bootstrap3-v3.8.5/scripts/bitfieldsparser.py
+--- at91bootstrap3-v3.8.5-orig/scripts/bitfieldsparser.py	2016-04-13 01:35:39.000000000 -0700
++++ at91bootstrap3-v3.8.5/scripts/bitfieldsparser.py	2021-10-17 23:07:12.279977132 -0700
+@@ -27,20 +27,20 @@ from pprint import pprint
+ 
+ def find_meaning(maps, bits):
+ 	'''Conver value to correcpoding bits'''
+-	if maps.has_key(bits["name"]):
++	if bits["name"] in maps:
+ 		start = bits["start"]
+ 		len = bits["len"]
+ 		mask = (2 ** len - 1) << start
+ 
+-		if bits.has_key("meaning"):
++		if "meaning" in bits:
+ 			# find the corresponding name, value in the maps,
+ 			# then the .json's meaning part, convert it to bit field
+-			for name, array in bits["meaning"].items():
++			for name, array in list(bits["meaning"].items()):
+ 				# array[1] present the convert sitation. if equal then convert to the name, which is number in bits
+ 				if maps[bits["name"]] == array[1]:
+ 					return (int(name) << start) & mask
+ 
+-			print "Error: not found"
++			print("Error: not found")
+ 		else:
+ 			# find the corresponding name, value in the maps, and shift as bit field.
+ 			return (maps[bits["name"]] << start) & mask
+@@ -77,13 +77,13 @@ def parse_bitfield(fields, whole_word):
+ 			# print 'mask: %x' % mask
+ 			value = (whole_word & mask) >> start
+ 			meaning_str = ""
+-			if bits.has_key("meaning"):
+-				if bits["meaning"].has_key(repr(value)):
++			if "meaning" in bits:
++				if repr(value) in bits["meaning"]:
+ 					meaning_str = bits["meaning"][repr(value)][0]
+ 
+ 			if meaning_str == "":
+-				print bits["name"], ':', value
++				print(bits["name"], ':', value)
+ 			else:
+-				print bits["name"], ':', value, '->', meaning_str
++				print(bits["name"], ':', value, '->', meaning_str)
+ 		else:
+-			print 'wrong type'
++			print('wrong type')
+diff -Napur at91bootstrap3-v3.8.5-orig/scripts/pmecc_head.py at91bootstrap3-v3.8.5/scripts/pmecc_head.py
+--- at91strap3-v3.8.5-orig/scripts/pmecc_head.py	2016-04-13 01:35:39.000000000 -0700
++++ at91strap3-v3.8.5/scripts/pmecc_head.py	2021-10-17 23:06:46.244790980 -0700
+@@ -62,10 +62,10 @@ def display_pmecc_header(file_name, val)
+     json_file=open(file_name)
+     data = json.load(json_file)
+     #pprint(data["pmecc_header"]["usePmecc"])
+-    if data.has_key(name):
++    if name in data:
+ 	bitfieldsparser.parse_bitfield(data[name]["struct"], val)
+     else:
+-	print 'Error: Cannot find the kay name: %s in the json file: %s' % (name, file_name)
++	print('Error: Cannot find the kay name: %s in the json file: %s' % (name, file_name))
+     json_file.close()
+ 
+ # Test code start here...

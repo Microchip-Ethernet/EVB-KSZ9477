@@ -1349,7 +1349,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/i2c-ks
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/iba-ksz9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/iba-ksz9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/iba-ksz9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/iba-ksz9897.c	2021-08-27 14:49:48.204003779 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/iba-ksz9897.c	2021-10-29 13:46:00.727495151 -0700
 @@ -0,0 +1,109 @@
 +/**
 + * Microchip KSZ9897 IBA driver
@@ -1441,7 +1441,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/iba-ks
 +
 +#define KS9897MLI_DEV0			"ksz9897"
 +
-+#define SW_DRV_RELDATE			"Aug 24, 2021"
++#define SW_DRV_RELDATE			"Oct 29, 2021"
 +#define SW_DRV_VERSION			"1.2.4"
 +
 +/* -------------------------------------------------------------------------- */
@@ -11680,8 +11680,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_cf
 +
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_cfg_9897.h linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_cfg_9897.h
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_cfg_9897.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_cfg_9897.h	2021-08-27 14:49:48.208003779 -0700
-@@ -0,0 +1,25 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_cfg_9897.h	2021-10-20 18:04:23.207145953 -0700
+@@ -0,0 +1,29 @@
 +/**
 + * This file contains shared configurations between the network and switch
 + * drivers.
@@ -11694,6 +11694,10 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_cf
 +#if defined(CONFIG_KSZ_PTP)
 +/* Support 1588 PTP. */
 +#define CONFIG_1588_PTP
++#endif
++
++#if defined(CONFIG_IBA_KSZ9897)
++#define CONFIG_KSZ_IBA_ONLY
 +#endif
 +
 +
@@ -21342,8 +21346,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_iba.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_iba.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_iba.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_iba.c	2021-09-02 22:38:44.420941442 -0700
-@@ -0,0 +1,3138 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_iba.c	2021-10-29 13:18:43.358810070 -0700
+@@ -0,0 +1,3137 @@
 +/**
 + * Microchip IBA code
 + *
@@ -22252,11 +22256,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ib
 +printk("  !! %x"NL, rc);
 +		iba_dbg_states(info);
 +
-+#ifndef CONFIG_KSZ_IBA_ONLY
 +		/* Not testing if IBA is okay. */
 +		if (!(info->use_iba & 0x80))
 +			iba_to_spi(info->sw_dev, info);
-+#endif
 +		return 0;
 +	}
 +	if (info->use_iba & 0x40)
@@ -22266,13 +22268,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ib
 +	if (!wait) {
 +if (dbg_iba)
 +dbg_msg("  w timeout"NL);
++else
++dbg_msg(" first fail: %02x %04x %04x"NL, info->respid, last_ok_reg,
++	last_iba_addr);
 +		iba_dbg_states(info);
 +
-+#ifndef CONFIG_KSZ_IBA_ONLY
 +		/* Not testing if IBA is okay. */
 +		if (!(info->use_iba & 0x80))
 +			iba_to_spi(info->sw_dev, info);
-+#endif
 +		return 0;
 +	}
 +
@@ -40901,8 +40904,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ms
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_ptp_9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_ptp_9897.c	2021-08-27 14:49:48.216003779 -0700
-@@ -0,0 +1,6968 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_ptp_9897.c	2021-10-29 13:24:29.247581891 -0700
+@@ -0,0 +1,6965 @@
 +/**
 + * Microchip PTP common code
 + *
@@ -42645,8 +42648,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_pt
 +dbg_msg("msg_conf1: %x"NL, data);
 +	data = ptp->mode;
 +	sw->reg->w16(sw, REG_PTP_MSG_CONF1, data);
-+	data = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
-+	if ((sw->overrides & TAIL_TAGGING) && (data & PTP_ENABLE))
++	if ((data & PTP_ENABLE))
 +		sw->overrides |= PTP_TAG;
 +#endif
 +	data = sw->reg->r16(sw, REG_PTP_MSG_CONF2);
@@ -42833,8 +42835,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_pt
 +	sw->reg->w16(sw, REG_PTP_MSG_CONF1, ptp->mode);
 +	sw->reg->w16(sw, REG_PTP_MSG_CONF2, ptp->cfg);
 +	sw->reg->w32(sw, REG_PTP_INT_STATUS__4, 0xffffffff);
-+	if (sw->overrides & TAIL_TAGGING)
-+		sw->overrides |= PTP_TAG;
 +	ptp->tx_intr = PTP_PORT_XDELAY_REQ_INT;
 +#if 0
 +	ptp->tx_intr = PTP_PORT_XDELAY_REQ_INT | PTP_PORT_PDELAY_RESP_INT |
@@ -62518,7 +62518,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_st
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8795.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8795.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.c	2021-10-09 15:44:51.270166511 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.c	2021-11-01 11:14:51.738974770 -0700
 @@ -0,0 +1,12122 @@
 +/**
 + * Microchip KSZ8795 switch common code
@@ -71553,7 +71553,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +dbg_msg(" validate: %d\n", state->interface);
 +	if ((sw->dev_offset && p->port_cnt > 1) ||
 +	    (!sw->dev_offset && !sw->phy_offset)) {
-+		if (sw->phylink_ops)
++		if (sw->phylink_ops && sw->phylink_ops->validate)
 +			sw->phylink_ops->validate(config, supported, state);
 +	} else {
 +		sw_set_phylink_support(sw, p, supported, state);
@@ -71576,7 +71576,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	/* Tell MAC driver to turn off transmit queues. */
 +	interface = PHY_INTERFACE_MODE_INTERNAL;
-+	if (sw->phylink_ops)
++	if (sw->phylink_ops && sw->phylink_ops->mac_link_down)
 +		sw->phylink_ops->mac_link_down(config, mode, interface);
 +}
 +
@@ -71590,7 +71590,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	/* Tell MAC driver to turn on transmit queues. */
 +	interface = PHY_INTERFACE_MODE_INTERNAL;
-+	if (sw->phylink_ops)
++	if (sw->phylink_ops && sw->phylink_ops->mac_link_up)
 +		sw->phylink_ops->mac_link_up(config, mode, interface, phydev);
 +}
 +
@@ -75637,7 +75637,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8895.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8895.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.c	2021-10-09 15:50:05.198179654 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.c	2021-11-01 11:15:30.683514746 -0700
 @@ -0,0 +1,9954 @@
 +/**
 + * Microchip KSZ8895 switch common code
@@ -82748,7 +82748,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +dbg_msg(" validate: %d\n", state->interface);
 +	if ((sw->dev_offset && p->port_cnt > 1) ||
 +	    (!sw->dev_offset && !sw->phy_offset)) {
-+		if (sw->phylink_ops)
++		if (sw->phylink_ops && sw->phylink_ops->validate)
 +			sw->phylink_ops->validate(config, supported, state);
 +	} else {
 +		sw_set_phylink_support(sw, p, supported, state);
@@ -82771,7 +82771,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	/* Tell MAC driver to turn off transmit queues. */
 +	interface = PHY_INTERFACE_MODE_INTERNAL;
-+	if (sw->phylink_ops)
++	if (sw->phylink_ops && sw->phylink_ops->mac_link_down)
 +		sw->phylink_ops->mac_link_down(config, mode, interface);
 +}
 +
@@ -82785,7 +82785,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	/* Tell MAC driver to turn on transmit queues. */
 +	interface = PHY_INTERFACE_MODE_INTERNAL;
-+	if (sw->phylink_ops)
++	if (sw->phylink_ops && sw->phylink_ops->mac_link_up)
 +		sw->phylink_ops->mac_link_up(config, mode, interface, phydev);
 +}
 +
@@ -86469,7 +86469,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-10-05 16:50:40.390981473 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2021-10-29 13:55:52.737364374 -0700
 @@ -0,0 +1,19148 @@
 +/**
 + * Microchip gigabit switch common code
@@ -93285,9 +93285,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	alu->valid = 1;
 +	if (sw->stp)
 +		alu->forward = FWD_STP_DEV | FWD_HOST | FWD_HOST_OVERRIDE;
-+	sw->ops->release(sw);
 +	sw_w_sta_mac_table(sw, alu->index, alu->type, entry);
-+	sw->ops->acquire(sw);
 +}  /* sw_setup_stp */
 +#endif
 +
@@ -95364,7 +95362,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (sw->features & AVB_SUPPORT)
 +		sw_setup_multi(sw);
 +#ifdef CONFIG_KSZ_STP
++	sw->ops->release(sw);
 +	sw_setup_stp(sw);
++	sw->ops->acquire(sw);
 +#endif
 +#ifdef CONFIG_1588_PTP
 +	if (sw->features & PTP_HW)
@@ -101186,7 +101186,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +dbg_msg(" validate: %d\n", state->interface);
 +	if ((sw->dev_offset && p->port_cnt > 1) ||
 +	    (!sw->dev_offset && !sw->phy_offset)) {
-+		if (sw->phylink_ops)
++		if (sw->phylink_ops && sw->phylink_ops->validate)
 +			sw->phylink_ops->validate(config, supported, state);
 +	} else {
 +		sw_set_phylink_support(sw, p, supported, state);
@@ -101213,7 +101213,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	/* Tell MAC driver to turn off transmit queues. */
 +	interface = PHY_INTERFACE_MODE_INTERNAL;
-+	if (sw->phylink_ops)
++	if (sw->phylink_ops && sw->phylink_ops->mac_link_down)
 +		sw->phylink_ops->mac_link_down(config, mode, interface);
 +}
 +
@@ -101227,7 +101227,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	/* Tell MAC driver to turn on transmit queues. */
 +	interface = PHY_INTERFACE_MODE_INTERNAL;
-+	if (sw->phylink_ops)
++	if (sw->phylink_ops && sw->phylink_ops->mac_link_up)
 +		sw->phylink_ops->mac_link_up(config, mode, interface, phydev);
 +}
 +
@@ -107118,7 +107118,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c	2021-10-09 15:43:41.162163577 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c	2021-11-01 11:16:05.735804715 -0700
 @@ -0,0 +1,10212 @@
 +/**
 + * Microchip switch common code
@@ -114766,7 +114766,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +dbg_msg(" validate: %d\n", state->interface);
 +	if ((sw->dev_offset && p->port_cnt > 1) ||
 +	    (!sw->dev_offset && !sw->phy_offset)) {
-+		if (sw->phylink_ops)
++		if (sw->phylink_ops && sw->phylink_ops->validate)
 +			sw->phylink_ops->validate(config, supported, state);
 +	} else {
 +		sw_set_phylink_support(sw, p, supported, state);
@@ -114789,7 +114789,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	/* Tell MAC driver to turn off transmit queues. */
 +	interface = PHY_INTERFACE_MODE_INTERNAL;
-+	if (sw->phylink_ops)
++	if (sw->phylink_ops && sw->phylink_ops->mac_link_down)
 +		sw->phylink_ops->mac_link_down(config, mode, interface);
 +}
 +
@@ -114803,7 +114803,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	/* Tell MAC driver to turn on transmit queues. */
 +	interface = PHY_INTERFACE_MODE_INTERNAL;
-+	if (sw->phylink_ops)
++	if (sw->phylink_ops && sw->phylink_ops->mac_link_up)
 +		sw->phylink_ops->mac_link_up(config, mode, interface, phydev);
 +}
 +

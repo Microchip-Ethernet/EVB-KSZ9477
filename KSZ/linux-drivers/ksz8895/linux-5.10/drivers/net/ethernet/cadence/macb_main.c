@@ -3862,7 +3862,8 @@ static void netdev_start_iba(struct work_struct *work)
 	bp->opened++;
 
 	/* Signal IBA initialization is complete. */
-	sw->info->iba.use_iba = 3;
+	if (2 == sw->info->iba.use_iba)
+		sw->info->iba.use_iba = 3;
 }  /* netdev_start_iba */
 
 static int create_sw_dev(struct net_device *dev, struct macb *bp)
@@ -4645,13 +4646,12 @@ static int macb_get_ts_info(struct net_device *netdev,
 #ifdef CONFIG_1588_PTP
 	struct ksz_sw *sw = bp->port.sw;
 
-	if (sw_is_switch(sw)) {
+	if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
 		struct ptp_info *ptp = &sw->ptp_hw;
 
 		return ptp->ops->get_ts_info(ptp, netdev, info);
 	}
 #endif
-
 	if (bp->ptp_info)
 		return bp->ptp_info->get_ts_info(netdev, info);
 

@@ -3191,7 +3191,8 @@ static void netdev_start_iba(struct work_struct *work)
 	priv->opened++;
 
 	/* Signal IBA initialization is complete. */
-	sw->info->iba.use_iba = 3;
+	if (2 == sw->info->iba.use_iba)
+		sw->info->iba.use_iba = 3;
 }  /* netdev_start_iba */
 
 static int create_sw_dev(struct net_device *dev, struct stmmac_priv *priv)
@@ -3421,8 +3422,27 @@ static int stmmac_open(struct net_device *dev)
 	struct stmmac_priv *net_priv = priv;
 	int rx_mode = 0;
 	struct ksz_sw *sw = priv->port.sw;
-#endif
 
+	if (sw_is_switch(sw)) {
+		priv = net_priv->hw_priv;
+		net_priv->multi = false;
+		net_priv->promisc = false;
+		if (priv->opened > 0) {
+			netif_carrier_off(dev);
+			goto skip_hw;
+		}
+		if (0 == priv->opened) {
+			struct net_device *main_dev = priv->dev;
+
+			/* Need to wait for MAC ready to start operation. */
+			priv->port.ready = false;
+			priv->hw_multi = 0;
+			priv->hw_promisc = 0;
+			rx_mode = sw->net_ops->open_dev(sw, main_dev,
+				&priv->port, main_dev->dev_addr);
+		}
+	}
+#endif
 	if (priv->hw->pcs != STMMAC_PCS_RGMII &&
 	    priv->hw->pcs != STMMAC_PCS_TBI &&
 	    priv->hw->pcs != STMMAC_PCS_RTBI) {
@@ -3448,24 +3468,7 @@ static int stmmac_open(struct net_device *dev)
 
 #ifdef CONFIG_KSZ_SWITCH
 	if (sw_is_switch(sw)) {
-		priv = net_priv->hw_priv;
-		net_priv->multi = false;
-		net_priv->promisc = false;
-		if (priv->opened > 0) {
-			netif_carrier_off(dev);
-			goto skip_hw;
-		}
-		if (0 == priv->opened) {
-			struct net_device *main_dev = priv->dev;
-
-			/* Need to wait for MAC ready to start operation. */
-			priv->port.ready = false;
-			priv->hw_multi = 0;
-			priv->hw_promisc = 0;
-			bfsize += sw->net_ops->get_mtu(sw);
-			rx_mode = sw->net_ops->open_dev(sw, main_dev,
-				&priv->port, main_dev->dev_addr);
-		}
+		bfsize += sw->net_ops->get_mtu(sw);
 	}
 #endif
 	priv->dma_buf_sz = bfsize;

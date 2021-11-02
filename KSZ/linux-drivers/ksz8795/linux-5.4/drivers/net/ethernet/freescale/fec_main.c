@@ -1931,6 +1931,7 @@ fec_enet_rx_queue(struct net_device *ndev, int budget, u16 queue_id)
 
 #ifdef CONFIG_KSZ_SWITCH
 	struct ksz_sw *sw = fep->port.sw;
+	struct net_device *orig_dev = ndev;
 #endif
 
 #ifdef CONFIG_M532x
@@ -2083,6 +2084,7 @@ fec_enet_rx_queue(struct net_device *ndev, int budget, u16 queue_id)
 
 #ifdef CONFIG_KSZ_SWITCH
 rx_done:
+		ndev = orig_dev;
 #endif
 		if (is_copybreak) {
 			dma_sync_single_for_device(&fep->pdev->dev,
@@ -3762,7 +3764,6 @@ static void prep_sw_dev(struct ksz_sw *sw, struct fec_enet_private *fep, int i,
 	int phy_mode;
 	char phy_id[MII_BUS_ID_SIZE];
 	char bus_id[MII_BUS_ID_SIZE];
-	struct phy_device *phydev;
 
 	fep->phy_addr = sw->net_ops->setup_dev(sw, fep->netdev, dev_name,
 		&fep->port, i, port_count, mib_port_count);
@@ -3770,10 +3771,8 @@ static void prep_sw_dev(struct ksz_sw *sw, struct fec_enet_private *fep, int i,
 	phy_mode = fep->phy_interface;
 	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", sw->id);
 	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, fep->phy_addr);
-	phydev = phy_attach(fep->netdev, phy_id, phy_mode);
-	if (!IS_ERR(phydev)) {
-		fep->netdev->phydev = phydev;
-	}
+	if (!fep->netdev->phydev)
+		phy_attach(fep->netdev, phy_id, phy_mode);
 }  /* prep_sw_dev */
 
 static int fec_enet_sw_init(struct fec_enet_private *fep)
@@ -3894,13 +3893,6 @@ static int fec_enet_sw_init(struct fec_enet_private *fep)
 #endif
 #endif
 
-#if defined(CONFIG_KSZ_IBA_ONLY)
-	if (fep->netdev->phydev->mdio.bus) {
-		struct phy_device *phydev = fep->netdev->phydev;
-
-		phy_attached_info(phydev);
-	}
-#endif
 	sw_device_seen++;
 
 	return 0;
@@ -3980,7 +3972,8 @@ static void netdev_start_iba(struct work_struct *work)
 	fep->opened++;
 
 	/* Signal IBA initialization is complete. */
-	sw->info->iba.use_iba = 3;
+	if (2 == sw->info->iba.use_iba)
+		sw->info->iba.use_iba = 3;
 }  /* netdev_start_iba */
 
 static int create_sw_dev(struct net_device *dev, struct fec_enet_private *fep)

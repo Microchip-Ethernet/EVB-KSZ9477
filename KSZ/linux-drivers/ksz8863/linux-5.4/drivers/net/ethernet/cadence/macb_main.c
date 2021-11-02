@@ -237,7 +237,7 @@ static int get_sw_irq(struct macb *bp, struct device **ext_dev)
 	char name[20];
 
 	for (spi_bus = 0; spi_bus < 2; spi_bus++) {
-		for (spi_select = 0; spi_select < 2; spi_select++) {
+		for (spi_select = 0; spi_select < 4; spi_select++) {
 			sprintf(name, "spi%d.%d\n", spi_bus, spi_select);
 			dev = bus_find_device_by_name(&spi_bus_type, NULL,
 						      name);
@@ -3458,7 +3458,6 @@ static void prep_sw_dev(struct ksz_sw *sw, struct macb *bp, int i,
 	int phy_mode;
 	char phy_id[MII_BUS_ID_SIZE];
 	char bus_id[MII_BUS_ID_SIZE];
-	struct phy_device *phydev;
 
 	bp->phy_addr = sw->net_ops->setup_dev(sw, bp->dev, dev_name, &bp->port,
 		i, port_count, mib_port_count);
@@ -3466,10 +3465,8 @@ static void prep_sw_dev(struct ksz_sw *sw, struct macb *bp, int i,
 	phy_mode = bp->phy_interface;
 	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", sw->id);
 	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, bp->phy_addr);
-	phydev = phy_attach(bp->dev, phy_id, phy_mode);
-	if (!IS_ERR(phydev)) {
-		bp->dev->phydev = phydev;
-	}
+	if (!bp->dev->phydev)
+		phy_attach(bp->dev, phy_id, phy_mode);
 }  /* prep_sw_dev */
 
 static int macb_sw_init(struct macb *bp)
@@ -3538,12 +3535,6 @@ static int macb_sw_init(struct macb *bp)
 
 		bp->hw_priv = hw_priv;
 		bp->phy_interface = hw_priv->phy_interface;
-#if 0
-		dev->phydev = &bp->dummy_phy;
-		dev->phydev->duplex = 1;
-		dev->phydev->speed = SPEED_1000;
-		dev->phydev->autoneg = 1;
-#endif
 
 		spin_lock_init(&bp->lock);
 
@@ -3590,13 +3581,6 @@ static int macb_sw_init(struct macb *bp)
 #endif
 #endif
 
-#if defined(CONFIG_KSZ_IBA_ONLY)
-	if (bp->dev->phydev->mdio.bus) {
-		struct phy_device *phydev = bp->dev->phydev;
-
-		phy_attached_info(phydev);
-	}
-#endif
 	sw_device_seen++;
 
 	return 0;
@@ -3672,7 +3656,8 @@ static void netdev_start_iba(struct work_struct *work)
 	bp->opened++;
 
 	/* Signal IBA initialization is complete. */
-	sw->info->iba.use_iba = 3;
+	if (2 == sw->info->iba.use_iba)
+		sw->info->iba.use_iba = 3;
 }  /* netdev_start_iba */
 
 static int create_sw_dev(struct net_device *dev, struct macb *bp)
@@ -3920,7 +3905,6 @@ static int macb_close(struct net_device *dev)
 #endif
 			if (stop_queue)
 				netif_tx_stop_all_queues(dev);
-			bp = dbp;
 			goto skip_hw;
 		}
 	}
@@ -3941,7 +3925,6 @@ static int macb_close(struct net_device *dev)
 #ifdef CONFIG_KSZ_SWITCH
 skip_hw:
 	if (sw_is_switch(sw)) {
-		bp = dbp->hw_priv;
 		if (bp->opened > 0) {
 			netif_carrier_off(dev);
 			return 0;
@@ -5887,9 +5870,7 @@ static int macb_probe(struct platform_device *pdev)
 	struct clk *tsu_clk = NULL;
 	unsigned int queue_mask, num_queues;
 	bool native_io;
-#if !defined(CONFIG_KSZ_IBA_ONLY)
 	struct phy_device *phydev;
-#endif
 	struct net_device *dev;
 	struct resource *regs;
 	void __iomem *mem;
@@ -6083,9 +6064,7 @@ static int macb_probe(struct platform_device *pdev)
 	if (err)
 		goto err_out_free_netdev;
 
-#if !defined(CONFIG_KSZ_IBA_ONLY)
 	phydev = dev->phydev;
-#endif
 
 	netif_carrier_off(dev);
 
@@ -6111,9 +6090,7 @@ static int macb_probe(struct platform_device *pdev)
 				    &macb_registers_attr);
 #endif
 
-#if !defined(CONFIG_KSZ_IBA_ONLY)
 	phy_attached_info(phydev);
-#endif
 
 	netdev_info(dev, "Cadence %s rev 0x%08x at 0x%08lx irq %d (%pM)\n",
 		    macb_is_gem(bp) ? "GEM" : "MACB", macb_readl(bp, MID),

@@ -6812,9 +6812,7 @@ static void sw_setup_stp(struct ksz_sw *sw)
 	alu->valid = 1;
 	if (sw->stp)
 		alu->forward = FWD_STP_DEV | FWD_HOST | FWD_HOST_OVERRIDE;
-	sw->ops->release(sw);
 	sw_w_sta_mac_table(sw, alu->index, alu->type, entry);
-	sw->ops->acquire(sw);
 }  /* sw_setup_stp */
 #endif
 
@@ -8891,7 +8889,9 @@ static void sw_setup(struct ksz_sw *sw)
 	if (sw->features & AVB_SUPPORT)
 		sw_setup_multi(sw);
 #ifdef CONFIG_KSZ_STP
+	sw->ops->release(sw);
 	sw_setup_stp(sw);
+	sw->ops->acquire(sw);
 #endif
 #ifdef CONFIG_1588_PTP
 	if (sw->features & PTP_HW)
@@ -14713,7 +14713,7 @@ static void sw_port_phylink_validate(struct phylink_config *config,
 dbg_msg(" validate: %d\n", state->interface);
 	if ((sw->dev_offset && p->port_cnt > 1) ||
 	    (!sw->dev_offset && !sw->phy_offset)) {
-		if (sw->phylink_ops)
+		if (sw->phylink_ops && sw->phylink_ops->validate)
 			sw->phylink_ops->validate(config, supported, state);
 	} else {
 		sw_set_phylink_support(sw, p, supported, state);
@@ -14740,7 +14740,7 @@ static void sw_port_phylink_mac_link_down(struct phylink_config *config,
 
 	/* Tell MAC driver to turn off transmit queues. */
 	interface = PHY_INTERFACE_MODE_INTERNAL;
-	if (sw->phylink_ops)
+	if (sw->phylink_ops && sw->phylink_ops->mac_link_down)
 		sw->phylink_ops->mac_link_down(config, mode, interface);
 }
 
@@ -14754,7 +14754,7 @@ static void sw_port_phylink_mac_link_up(struct phylink_config *config,
 
 	/* Tell MAC driver to turn on transmit queues. */
 	interface = PHY_INTERFACE_MODE_INTERNAL;
-	if (sw->phylink_ops)
+	if (sw->phylink_ops && sw->phylink_ops->mac_link_up)
 		sw->phylink_ops->mac_link_up(config, mode, interface, phydev);
 }
 
@@ -14768,11 +14768,11 @@ static const struct phylink_mac_ops sw_port_phylink_mac_ops = {
 static int setup_phylink(struct ksz_port *port)
 {
 	struct device_node *dn = port->dn;
-	phy_interface_t mode;
+	int mode;
 	int ret;
 
-	ret = of_get_phy_mode(dn, &mode);
-	if (ret)
+	mode = of_get_phy_mode(dn);
+	if (mode < 0)
 		mode = PHY_INTERFACE_MODE_NA;
 
 	port->pl_config.dev = &port->netdev->dev;

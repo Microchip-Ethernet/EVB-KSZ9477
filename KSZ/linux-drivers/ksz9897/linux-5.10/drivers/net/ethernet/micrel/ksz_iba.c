@@ -906,11 +906,9 @@ static int iba_reqs(struct ksz_iba_info *info, void **in, void *out, void *obj,
 printk("  !! %x"NL, rc);
 		iba_dbg_states(info);
 
-#ifndef CONFIG_KSZ_IBA_ONLY
 		/* Not testing if IBA is okay. */
 		if (!(info->use_iba & 0x80))
 			iba_to_spi(info->sw_dev, info);
-#endif
 		return 0;
 	}
 	if (info->use_iba & 0x40)
@@ -920,13 +918,14 @@ printk("  !! %x"NL, rc);
 	if (!wait) {
 if (dbg_iba)
 dbg_msg("  w timeout"NL);
+else
+dbg_msg(" first fail: %02x %04x %04x"NL, info->respid, last_ok_reg,
+	last_iba_addr);
 		iba_dbg_states(info);
 
-#ifndef CONFIG_KSZ_IBA_ONLY
 		/* Not testing if IBA is okay. */
 		if (!(info->use_iba & 0x80))
 			iba_to_spi(info->sw_dev, info);
-#endif
 		return 0;
 	}
 

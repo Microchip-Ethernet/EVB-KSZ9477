@@ -12,6 +12,10 @@
 #define CONFIG_1588_PTP
 #endif
 
+#if defined(CONFIG_IBA_KSZ9897)
+#define CONFIG_KSZ_IBA_ONLY
+#endif
+
 
 #include "ksz_common.h"
 

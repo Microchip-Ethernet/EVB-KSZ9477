@@ -58,7 +58,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec.h linux-5.10.6
  };
 diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5.10.68/drivers/net/ethernet/freescale/fec_main.c
 --- linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c	2021-09-22 03:28:07.000000000 -0700
-+++ linux-5.10.68/drivers/net/ethernet/freescale/fec_main.c	2021-09-24 18:08:53.941967201 -0700
++++ linux-5.10.68/drivers/net/ethernet/freescale/fec_main.c	2021-11-01 15:04:28.958097024 -0700
 @@ -70,6 +70,396 @@
  
  #include "fec.h"
@@ -733,18 +733,19 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  		}
  	}
  
-@@ -1423,6 +1925,10 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1423,6 +1925,11 @@ fec_enet_rx_queue(struct net_device *nde
  	bool	is_copybreak;
  	bool	need_swap = fep->quirks & FEC_QUIRK_SWAP_FRAME;
  
 +#ifdef CONFIG_KSZ_SWITCH
 +	struct ksz_sw *sw = fep->port.sw;
++	struct net_device *orig_dev = ndev;
 +#endif
 +
  #ifdef CONFIG_M532x
  	flush_cache_all();
  #endif
-@@ -1468,9 +1974,13 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1468,9 +1975,13 @@ fec_enet_rx_queue(struct net_device *nde
  		}
  
  		/* Process the incoming frame. */
@@ -758,7 +759,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  
  		index = fec_enet_get_bd_index(bdp, &rxq->bd);
  		skb = rxq->rx_skbuff[index];
-@@ -1505,6 +2015,19 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1505,6 +2016,19 @@ fec_enet_rx_queue(struct net_device *nde
  			data = skb_pull_inline(skb, 2);
  #endif
  
@@ -778,7 +779,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  		/* Extract the enhanced buffer descriptor */
  		ebdp = NULL;
  		if (fep->bufdesc_ex)
-@@ -1528,10 +2051,12 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1528,10 +2052,12 @@ fec_enet_rx_queue(struct net_device *nde
  
  		skb->protocol = eth_type_trans(skb, ndev);
  
@@ -791,17 +792,18 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  
  		if (fep->bufdesc_ex &&
  		    (fep->csum_flags & FLAG_RX_CSUM_ENABLED)) {
-@@ -1552,6 +2077,9 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1552,6 +2078,10 @@ fec_enet_rx_queue(struct net_device *nde
  		skb_record_rx_queue(skb, queue_id);
  		napi_gro_receive(&fep->napi, skb);
  
 +#ifdef CONFIG_KSZ_SWITCH
 +rx_done:
++		ndev = orig_dev;
 +#endif
  		if (is_copybreak) {
  			dma_sync_single_for_device(&fep->pdev->dev,
  						   fec32_to_cpu(bdp->cbd_bufaddr),
-@@ -1773,6 +2301,9 @@ static void fec_enet_adjust_link(struct
+@@ -1773,6 +2303,9 @@ static void fec_enet_adjust_link(struct
  			netif_tx_unlock_bh(ndev);
  			napi_enable(&fep->napi);
  		}
@@ -811,7 +813,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	} else {
  		if (fep->link) {
  			napi_disable(&fep->napi);
-@@ -1996,6 +2527,13 @@ static int fec_enet_mii_probe(struct net
+@@ -1996,6 +2529,13 @@ static int fec_enet_mii_probe(struct net
  	int phy_id;
  	int dev_id = fep->dev_id;
  
@@ -825,7 +827,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (fep->phy_node) {
  		phy_dev = of_phy_connect(ndev, fep->phy_node,
  					 &fec_enet_adjust_link, 0,
-@@ -2280,6 +2818,10 @@ static void fec_enet_get_regs(struct net
+@@ -2280,6 +2820,10 @@ static void fec_enet_get_regs(struct net
  	if (ret < 0)
  		return;
  
@@ -836,7 +838,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	regs->version = fec_enet_register_version;
  
  	memset(buf, 0, regs->len);
-@@ -2304,6 +2846,15 @@ static int fec_enet_get_ts_info(struct n
+@@ -2304,6 +2848,15 @@ static int fec_enet_get_ts_info(struct n
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -852,7 +854,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (fep->bufdesc_ex) {
  
  		info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
-@@ -2335,6 +2886,10 @@ static void fec_enet_get_pauseparam(stru
+@@ -2335,6 +2888,10 @@ static void fec_enet_get_pauseparam(stru
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -863,7 +865,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	pause->autoneg = (fep->pause_flag & FEC_PAUSE_FLAG_AUTONEG) != 0;
  	pause->tx_pause = (fep->pause_flag & FEC_PAUSE_FLAG_ENABLE) != 0;
  	pause->rx_pause = pause->tx_pause;
-@@ -2345,6 +2900,10 @@ static int fec_enet_set_pauseparam(struc
+@@ -2345,6 +2902,10 @@ static int fec_enet_set_pauseparam(struc
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -874,7 +876,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (!ndev->phydev)
  		return -ENODEV;
  
-@@ -2453,6 +3012,10 @@ static void fec_enet_update_ethtool_stat
+@@ -2453,6 +3014,10 @@ static void fec_enet_update_ethtool_stat
  	struct fec_enet_private *fep = netdev_priv(dev);
  	int i;
  
@@ -885,7 +887,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	for (i = 0; i < ARRAY_SIZE(fec_stats); i++)
  		fep->ethtool_stats[i] = readl(fep->hwp + fec_stats[i].offset);
  }
-@@ -2462,6 +3025,17 @@ static void fec_enet_get_ethtool_stats(s
+@@ -2462,6 +3027,17 @@ static void fec_enet_get_ethtool_stats(s
  {
  	struct fec_enet_private *fep = netdev_priv(dev);
  
@@ -903,7 +905,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (netif_running(dev))
  		fec_enet_update_ethtool_stats(dev);
  
-@@ -2496,6 +3070,10 @@ static void fec_enet_clear_ethtool_stats
+@@ -2496,6 +3072,10 @@ static void fec_enet_clear_ethtool_stats
  	struct fec_enet_private *fep = netdev_priv(dev);
  	int i;
  
@@ -914,7 +916,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	/* Disable MIB statistics counters */
  	writel(FEC_MIB_CTRLSTAT_DISABLE, fep->hwp + FEC_MIB_CTRLSTAT);
  
-@@ -2569,6 +3147,10 @@ fec_enet_get_coalesce(struct net_device
+@@ -2569,6 +3149,10 @@ fec_enet_get_coalesce(struct net_device
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -925,7 +927,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (!(fep->quirks & FEC_QUIRK_HAS_COALESCE))
  		return -EOPNOTSUPP;
  
-@@ -2588,6 +3170,10 @@ fec_enet_set_coalesce(struct net_device
+@@ -2588,6 +3172,10 @@ fec_enet_set_coalesce(struct net_device
  	struct device *dev = &fep->pdev->dev;
  	unsigned int cycle;
  
@@ -936,7 +938,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (!(fep->quirks & FEC_QUIRK_HAS_COALESCE))
  		return -EOPNOTSUPP;
  
-@@ -2644,6 +3230,10 @@ static int fec_enet_get_tunable(struct n
+@@ -2644,6 +3232,10 @@ static int fec_enet_get_tunable(struct n
  	struct fec_enet_private *fep = netdev_priv(netdev);
  	int ret = 0;
  
@@ -947,7 +949,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	switch (tuna->id) {
  	case ETHTOOL_RX_COPYBREAK:
  		*(u32 *)data = fep->rx_copybreak;
-@@ -2663,6 +3253,10 @@ static int fec_enet_set_tunable(struct n
+@@ -2663,6 +3255,10 @@ static int fec_enet_set_tunable(struct n
  	struct fec_enet_private *fep = netdev_priv(netdev);
  	int ret = 0;
  
@@ -958,7 +960,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	switch (tuna->id) {
  	case ETHTOOL_RX_COPYBREAK:
  		fep->rx_copybreak = *(u32 *)data;
-@@ -2680,6 +3274,10 @@ fec_enet_get_wol(struct net_device *ndev
+@@ -2680,6 +3276,10 @@ fec_enet_get_wol(struct net_device *ndev
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -969,7 +971,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (fep->wol_flag & FEC_WOL_HAS_MAGIC_PACKET) {
  		wol->supported = WAKE_MAGIC;
  		wol->wolopts = fep->wol_flag & FEC_WOL_FLAG_ENABLE ? WAKE_MAGIC : 0;
-@@ -2693,6 +3291,10 @@ fec_enet_set_wol(struct net_device *ndev
+@@ -2693,6 +3293,10 @@ fec_enet_set_wol(struct net_device *ndev
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -980,7 +982,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (!(fep->wol_flag & FEC_WOL_HAS_MAGIC_PACKET))
  		return -EINVAL;
  
-@@ -2739,11 +3341,67 @@ static const struct ethtool_ops fec_enet
+@@ -2739,11 +3343,67 @@ static const struct ethtool_ops fec_enet
  	.set_link_ksettings	= phy_ethtool_set_link_ksettings,
  };
  
@@ -1048,7 +1050,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (!netif_running(ndev))
  		return -EINVAL;
  
-@@ -2936,10 +3594,12 @@ fec_enet_alloc_txq_buffers(struct net_de
+@@ -2936,10 +3596,12 @@ fec_enet_alloc_txq_buffers(struct net_de
  		bdp->cbd_sc = cpu_to_fec16(0);
  		bdp->cbd_bufaddr = cpu_to_fec32(0);
  
@@ -1061,7 +1063,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  
  		bdp = fec_enet_get_nextdesc(bdp, &txq->bd);
  	}
-@@ -2970,6 +3630,459 @@ static int fec_enet_alloc_buffers(struct
+@@ -2970,6 +3632,450 @@ static int fec_enet_alloc_buffers(struct
  	return 0;
  }
  
@@ -1202,7 +1204,6 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
 +	int phy_mode;
 +	char phy_id[MII_BUS_ID_SIZE];
 +	char bus_id[MII_BUS_ID_SIZE];
-+	struct phy_device *phydev;
 +
 +	fep->phy_addr = sw->net_ops->setup_dev(sw, fep->netdev, dev_name,
 +		&fep->port, i, port_count, mib_port_count);
@@ -1210,10 +1211,8 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
 +	phy_mode = fep->phy_interface;
 +	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", sw->id);
 +	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, fep->phy_addr);
-+	phydev = phy_attach(fep->netdev, phy_id, phy_mode);
-+	if (!IS_ERR(phydev)) {
-+		fep->netdev->phydev = phydev;
-+	}
++	if (!fep->netdev->phydev)
++		phy_attach(fep->netdev, phy_id, phy_mode);
 +}  /* prep_sw_dev */
 +
 +static int fec_enet_sw_init(struct fec_enet_private *fep)
@@ -1334,13 +1333,6 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
 +#endif
 +#endif
 +
-+#if defined(CONFIG_KSZ_IBA_ONLY)
-+	if (fep->netdev->phydev->mdio.bus) {
-+		struct phy_device *phydev = fep->netdev->phydev;
-+
-+		phy_attached_info(phydev);
-+	}
-+#endif
 +	sw_device_seen++;
 +
 +	return 0;
@@ -1420,7 +1412,8 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
 +	fep->opened++;
 +
 +	/* Signal IBA initialization is complete. */
-+	sw->info->iba.use_iba = 3;
++	if (2 == sw->info->iba.use_iba)
++		sw->info->iba.use_iba = 3;
 +}  /* netdev_start_iba */
 +
 +static int create_sw_dev(struct net_device *dev, struct fec_enet_private *fep)
@@ -1521,7 +1514,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  static int
  fec_enet_open(struct net_device *ndev)
  {
-@@ -2977,6 +4090,27 @@ fec_enet_open(struct net_device *ndev)
+@@ -2977,6 +4083,27 @@ fec_enet_open(struct net_device *ndev)
  	int ret;
  	bool reset_again;
  
@@ -1549,7 +1542,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	ret = pm_runtime_resume_and_get(&fep->pdev->dev);
  	if (ret < 0)
  		return ret;
-@@ -3023,12 +4157,51 @@ fec_enet_open(struct net_device *ndev)
+@@ -3023,12 +4150,51 @@ fec_enet_open(struct net_device *ndev)
  		imx6q_cpuidle_fec_irqs_used();
  
  	napi_enable(&fep->napi);
@@ -1601,7 +1594,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	return 0;
  
  err_enet_mii_probe:
-@@ -3047,6 +4220,60 @@ fec_enet_close(struct net_device *ndev)
+@@ -3047,6 +4213,60 @@ fec_enet_close(struct net_device *ndev)
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -1662,7 +1655,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	phy_stop(ndev->phydev);
  
  	if (netif_device_present(ndev)) {
-@@ -3055,6 +4282,9 @@ fec_enet_close(struct net_device *ndev)
+@@ -3055,6 +4275,9 @@ fec_enet_close(struct net_device *ndev)
  		fec_stop(ndev);
  	}
  
@@ -1672,7 +1665,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	phy_disconnect(ndev->phydev);
  
  	if (fep->quirks & FEC_QUIRK_ERR006687)
-@@ -3092,6 +4322,35 @@ static void set_multicast_list(struct ne
+@@ -3092,6 +4315,35 @@ static void set_multicast_list(struct ne
  	unsigned char hash;
  	unsigned int hash_high = 0, hash_low = 0;
  
@@ -1708,7 +1701,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	if (ndev->flags & IFF_PROMISC) {
  		tmp = readl(fep->hwp + FEC_R_CNTRL);
  		tmp |= 0x8;
-@@ -3113,6 +4372,10 @@ static void set_multicast_list(struct ne
+@@ -3113,6 +4365,10 @@ static void set_multicast_list(struct ne
  		return;
  	}
  
@@ -1719,7 +1712,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	/* Add the addresses in hash register */
  	netdev_for_each_mc_addr(ha, ndev) {
  		/* calculate crc32 value of mac address */
-@@ -3144,6 +4407,11 @@ fec_set_mac_address(struct net_device *n
+@@ -3144,6 +4400,11 @@ fec_set_mac_address(struct net_device *n
  		if (!is_valid_ether_addr(addr->sa_data))
  			return -EADDRNOTAVAIL;
  		memcpy(ndev->dev_addr, addr->sa_data, ndev->addr_len);
@@ -1731,7 +1724,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	}
  
  	/* Add netif status check here to avoid system hang in below case:
-@@ -3267,6 +4535,10 @@ static const struct net_device_ops fec_n
+@@ -3267,6 +4528,10 @@ static const struct net_device_ops fec_n
  	.ndo_poll_controller	= fec_poll_controller,
  #endif
  	.ndo_set_features	= fec_set_features,
@@ -1742,7 +1735,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  };
  
  static const unsigned short offset_des_active_rxq[] = {
-@@ -3388,6 +4660,18 @@ static int fec_enet_init(struct net_devi
+@@ -3388,6 +4653,18 @@ static int fec_enet_init(struct net_devi
  		fep->rx_align = 0x3f;
  	}
  
@@ -1761,7 +1754,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	ndev->hw_features = ndev->features;
  
  	fec_restart(ndev);
-@@ -3717,8 +5001,10 @@ fec_probe(struct platform_device *pdev)
+@@ -3717,8 +4994,10 @@ fec_probe(struct platform_device *pdev)
  		goto failed_reset;
  
  	irq_cnt = fec_enet_get_irq_cnt(pdev);
@@ -1772,7 +1765,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  
  	ret = fec_enet_init(ndev);
  	if (ret)
-@@ -3745,6 +5031,40 @@ fec_probe(struct platform_device *pdev)
+@@ -3745,6 +5024,40 @@ fec_probe(struct platform_device *pdev)
  	if (ret)
  		goto failed_mii_init;
  
@@ -1813,7 +1806,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	/* Carrier starts down, phylib will bring it up */
  	netif_carrier_off(ndev);
  	fec_enet_clk_enable(ndev, false);
-@@ -3759,12 +5079,21 @@ fec_probe(struct platform_device *pdev)
+@@ -3759,12 +5072,21 @@ fec_probe(struct platform_device *pdev)
  	device_init_wakeup(&ndev->dev, fep->wol_flag &
  			   FEC_WOL_HAS_MAGIC_PACKET);
  
@@ -1835,7 +1828,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	pm_runtime_mark_last_busy(&pdev->dev);
  	pm_runtime_put_autosuspend(&pdev->dev);
  
-@@ -3800,6 +5129,91 @@ failed_ioremap:
+@@ -3800,6 +5122,91 @@ failed_ioremap:
  	return ret;
  }
  
@@ -1927,7 +1920,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  static int
  fec_drv_remove(struct platform_device *pdev)
  {
-@@ -3812,6 +5226,10 @@ fec_drv_remove(struct platform_device *p
+@@ -3812,6 +5219,10 @@ fec_drv_remove(struct platform_device *p
  	if (ret < 0)
  		return ret;
  
@@ -1938,7 +1931,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/freescale/fec_main.c linux-5
  	cancel_work_sync(&fep->tx_timeout_work);
  	fec_ptp_stop(pdev);
  	unregister_netdev(ndev);
-@@ -3958,6 +5376,9 @@ static struct platform_driver fec_driver
+@@ -3958,6 +5369,9 @@ static struct platform_driver fec_driver
  	.id_table = fec_devtype,
  	.probe	= fec_probe,
  	.remove	= fec_drv_remove,

@@ -1740,8 +1740,7 @@ static void ptp_hw_enable(struct ptp_info *ptp)
 dbg_msg("msg_conf1: %x"NL, data);
 	data = ptp->mode;
 	sw->reg->w16(sw, REG_PTP_MSG_CONF1, data);
-	data = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
-	if ((sw->overrides & TAIL_TAGGING) && (data & PTP_ENABLE))
+	if ((data & PTP_ENABLE))
 		sw->overrides |= PTP_TAG;
 #endif
 	data = sw->reg->r16(sw, REG_PTP_MSG_CONF2);
@@ -1928,8 +1927,6 @@ static void ptp_start(struct ptp_info *ptp, int init)
 	sw->reg->w16(sw, REG_PTP_MSG_CONF1, ptp->mode);
 	sw->reg->w16(sw, REG_PTP_MSG_CONF2, ptp->cfg);
 	sw->reg->w32(sw, REG_PTP_INT_STATUS__4, 0xffffffff);
-	if (sw->overrides & TAIL_TAGGING)
-		sw->overrides |= PTP_TAG;
 	ptp->tx_intr = PTP_PORT_XDELAY_REQ_INT;
 #if 0
 	ptp->tx_intr = PTP_PORT_XDELAY_REQ_INT | PTP_PORT_PDELAY_RESP_INT |

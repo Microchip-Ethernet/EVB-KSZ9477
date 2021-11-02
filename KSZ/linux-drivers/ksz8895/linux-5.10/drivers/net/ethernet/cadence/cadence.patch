@@ -92,7 +92,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb.h linux-5.10.68
  #ifdef CONFIG_MACB_USE_HWSTAMP
 diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.10.68/drivers/net/ethernet/cadence/macb_main.c
 --- linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c	2021-09-22 03:28:07.000000000 -0700
-+++ linux-5.10.68/drivers/net/ethernet/cadence/macb_main.c	2021-10-09 16:03:48.934214138 -0700
++++ linux-5.10.68/drivers/net/ethernet/cadence/macb_main.c	2021-11-01 15:18:41.402093773 -0700
 @@ -37,6 +37,486 @@
  #include <linux/pm_runtime.h>
  #include "macb.h"
@@ -1402,7 +1402,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	cfg = macb_readl(bp, NCFGR);
  
  	if (dev->flags & IFF_PROMISC) {
-@@ -2585,6 +3652,303 @@ static void macb_set_rx_mode(struct net_
+@@ -2585,6 +3652,304 @@ static void macb_set_rx_mode(struct net_
  	macb_writel(bp, NCFGR, cfg);
  }
  
@@ -1616,7 +1616,8 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
 +	bp->opened++;
 +
 +	/* Signal IBA initialization is complete. */
-+	sw->info->iba.use_iba = 3;
++	if (2 == sw->info->iba.use_iba)
++		sw->info->iba.use_iba = 3;
 +}  /* netdev_start_iba */
 +
 +static int create_sw_dev(struct net_device *dev, struct macb *bp)
@@ -1706,7 +1707,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  static int macb_open(struct net_device *dev)
  {
  	size_t bufsz = dev->mtu + ETH_HLEN + ETH_FCS_LEN + NET_IP_ALIGN;
-@@ -2593,6 +3957,35 @@ static int macb_open(struct net_device *
+@@ -2593,6 +3958,35 @@ static int macb_open(struct net_device *
  	unsigned int q;
  	int err;
  
@@ -1742,7 +1743,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	netdev_dbg(bp->dev, "open\n");
  
  	err = pm_runtime_get_sync(&bp->pdev->dev);
-@@ -2614,6 +4007,26 @@ static int macb_open(struct net_device *
+@@ -2614,6 +4008,26 @@ static int macb_open(struct net_device *
  
  	macb_init_hw(bp);
  
@@ -1769,7 +1770,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	err = macb_phylink_connect(bp);
  	if (err)
  		goto reset_hw;
-@@ -2623,9 +4036,22 @@ static int macb_open(struct net_device *
+@@ -2623,9 +4037,22 @@ static int macb_open(struct net_device *
  	if (bp->ptp_info)
  		bp->ptp_info->ptp_init(dev);
  
@@ -1792,7 +1793,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	macb_reset_hw(bp);
  	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
  		napi_disable(&queue->napi);
-@@ -2642,14 +4068,80 @@ static int macb_close(struct net_device
+@@ -2642,14 +4069,80 @@ static int macb_close(struct net_device
  	unsigned long flags;
  	unsigned int q;
  
@@ -1873,7 +1874,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	spin_lock_irqsave(&bp->lock, flags);
  	macb_reset_hw(bp);
  	netif_carrier_off(dev);
-@@ -2670,6 +4162,40 @@ static int macb_change_mtu(struct net_de
+@@ -2670,6 +4163,40 @@ static int macb_change_mtu(struct net_de
  	if (netif_running(dev))
  		return -EBUSY;
  
@@ -1914,7 +1915,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	dev->mtu = new_mtu;
  
  	return 0;
-@@ -2751,6 +4277,9 @@ static void gem_get_ethtool_stats(struct
+@@ -2751,6 +4278,9 @@ static void gem_get_ethtool_stats(struct
  	struct macb *bp;
  
  	bp = netdev_priv(dev);
@@ -1924,7 +1925,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	gem_update_stats(bp);
  	memcpy(data, &bp->ethtool_stats, sizeof(u64)
  			* (GEM_STATS_LEN + QUEUE_STATS_LEN * MACB_MAX_QUEUES));
-@@ -2799,6 +4328,12 @@ static struct net_device_stats *macb_get
+@@ -2799,6 +4329,12 @@ static struct net_device_stats *macb_get
  	struct net_device_stats *nstat = &bp->dev->stats;
  	struct macb_stats *hwstat = &bp->hw_stats.macb;
  
@@ -1937,7 +1938,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	if (macb_is_gem(bp))
  		return gem_get_stats(bp);
  
-@@ -2840,6 +4375,38 @@ static struct net_device_stats *macb_get
+@@ -2840,6 +4376,38 @@ static struct net_device_stats *macb_get
  	return nstat;
  }
  
@@ -1976,7 +1977,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  static int macb_get_regs_len(struct net_device *netdev)
  {
  	return MACB_GREGS_NBR * sizeof(u32);
-@@ -2852,6 +4419,10 @@ static void macb_get_regs(struct net_dev
+@@ -2852,6 +4420,10 @@ static void macb_get_regs(struct net_dev
  	unsigned int tail, head;
  	u32 *regs_buff = p;
  
@@ -1987,7 +1988,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	regs->version = (macb_readl(bp, MID) & ((1 << MACB_REV_SIZE) - 1))
  			| MACB_GREGS_VERSION;
  
-@@ -2882,6 +4453,10 @@ static void macb_get_wol(struct net_devi
+@@ -2882,6 +4454,10 @@ static void macb_get_wol(struct net_devi
  {
  	struct macb *bp = netdev_priv(netdev);
  
@@ -1998,7 +1999,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	if (bp->wol & MACB_WOL_HAS_MAGIC_PACKET) {
  		phylink_ethtool_get_wol(bp->phylink, wol);
  		wol->supported |= WAKE_MAGIC;
-@@ -2896,6 +4471,11 @@ static int macb_set_wol(struct net_devic
+@@ -2896,6 +4472,11 @@ static int macb_set_wol(struct net_devic
  	struct macb *bp = netdev_priv(netdev);
  	int ret;
  
@@ -2010,7 +2011,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	/* Pass the order to phylink layer */
  	ret = phylink_ethtool_set_wol(bp->phylink, wol);
  	/* Don't manage WoL on MAC if handled by the PHY
-@@ -2939,6 +4519,10 @@ static void macb_get_ringparam(struct ne
+@@ -2939,6 +4520,10 @@ static void macb_get_ringparam(struct ne
  {
  	struct macb *bp = netdev_priv(netdev);
  
@@ -2021,7 +2022,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	ring->rx_max_pending = MAX_RX_RING_SIZE;
  	ring->tx_max_pending = MAX_TX_RING_SIZE;
  
-@@ -2953,6 +4537,11 @@ static int macb_set_ringparam(struct net
+@@ -2953,6 +4538,11 @@ static int macb_set_ringparam(struct net
  	u32 new_rx_size, new_tx_size;
  	unsigned int reset = 0;
  
@@ -2033,20 +2034,19 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
  	if ((ring->rx_mini_pending) || (ring->rx_jumbo_pending))
  		return -EINVAL;
  
-@@ -3053,6 +4642,16 @@ static int macb_get_ts_info(struct net_d
+@@ -3053,6 +4643,15 @@ static int macb_get_ts_info(struct net_d
  {
  	struct macb *bp = netdev_priv(netdev);
  
 +#ifdef CONFIG_1588_PTP
 +	struct ksz_sw *sw = bp->port.sw;
 +
-+	if (sw_is_switch(sw)) {
++	if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
 +		struct ptp_info *ptp = &sw->ptp_hw;
 +
 +		return ptp->ops->get_ts_info(ptp, netdev, info);
 +	}
 +#endif
-+
  	if (bp->ptp_info)
  		return bp->ptp_info->get_ts_info(netdev, info);
  

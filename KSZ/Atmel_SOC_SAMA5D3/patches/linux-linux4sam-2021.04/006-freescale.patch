@@ -58,7 +58,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  };
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec_main.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/freescale/fec_main.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec_main.c	2021-07-29 07:58:03.000000000 -0700
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/freescale/fec_main.c	2021-09-01 12:18:43.466745655 -0700
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/freescale/fec_main.c	2021-11-01 15:04:54.610096927 -0700
 @@ -70,6 +70,396 @@
  
  #include "fec.h"
@@ -733,18 +733,19 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  		}
  	}
  
-@@ -1421,6 +1923,10 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1421,6 +1923,11 @@ fec_enet_rx_queue(struct net_device *nde
  	bool	is_copybreak;
  	bool	need_swap = fep->quirks & FEC_QUIRK_SWAP_FRAME;
  
 +#ifdef CONFIG_KSZ_SWITCH
 +	struct ksz_sw *sw = fep->port.sw;
++	struct net_device *orig_dev = ndev;
 +#endif
 +
  #ifdef CONFIG_M532x
  	flush_cache_all();
  #endif
-@@ -1466,9 +1972,13 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1466,9 +1973,13 @@ fec_enet_rx_queue(struct net_device *nde
  		}
  
  		/* Process the incoming frame. */
@@ -758,7 +759,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  
  		index = fec_enet_get_bd_index(bdp, &rxq->bd);
  		skb = rxq->rx_skbuff[index];
-@@ -1503,6 +2013,19 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1503,6 +2014,19 @@ fec_enet_rx_queue(struct net_device *nde
  			data = skb_pull_inline(skb, 2);
  #endif
  
@@ -778,7 +779,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  		/* Extract the enhanced buffer descriptor */
  		ebdp = NULL;
  		if (fep->bufdesc_ex)
-@@ -1526,10 +2049,12 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1526,10 +2050,12 @@ fec_enet_rx_queue(struct net_device *nde
  
  		skb->protocol = eth_type_trans(skb, ndev);
  
@@ -791,17 +792,18 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  
  		if (fep->bufdesc_ex &&
  		    (fep->csum_flags & FLAG_RX_CSUM_ENABLED)) {
-@@ -1550,6 +2075,9 @@ fec_enet_rx_queue(struct net_device *nde
+@@ -1550,6 +2076,10 @@ fec_enet_rx_queue(struct net_device *nde
  		skb_record_rx_queue(skb, queue_id);
  		napi_gro_receive(&fep->napi, skb);
  
 +#ifdef CONFIG_KSZ_SWITCH
 +rx_done:
++		ndev = orig_dev;
 +#endif
  		if (is_copybreak) {
  			dma_sync_single_for_device(&fep->pdev->dev,
  						   fec32_to_cpu(bdp->cbd_bufaddr),
-@@ -1771,6 +2299,9 @@ static void fec_enet_adjust_link(struct
+@@ -1771,6 +2301,9 @@ static void fec_enet_adjust_link(struct
  			netif_tx_unlock_bh(ndev);
  			napi_enable(&fep->napi);
  		}
@@ -811,7 +813,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	} else {
  		if (fep->link) {
  			napi_disable(&fep->napi);
-@@ -1994,6 +2525,13 @@ static int fec_enet_mii_probe(struct net
+@@ -1994,6 +2527,13 @@ static int fec_enet_mii_probe(struct net
  	int phy_id;
  	int dev_id = fep->dev_id;
  
@@ -825,7 +827,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (fep->phy_node) {
  		phy_dev = of_phy_connect(ndev, fep->phy_node,
  					 &fec_enet_adjust_link, 0,
-@@ -2278,6 +2816,10 @@ static void fec_enet_get_regs(struct net
+@@ -2278,6 +2818,10 @@ static void fec_enet_get_regs(struct net
  	if (ret < 0)
  		return;
  
@@ -836,7 +838,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	regs->version = fec_enet_register_version;
  
  	memset(buf, 0, regs->len);
-@@ -2302,6 +2844,15 @@ static int fec_enet_get_ts_info(struct n
+@@ -2302,6 +2846,15 @@ static int fec_enet_get_ts_info(struct n
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -852,7 +854,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (fep->bufdesc_ex) {
  
  		info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
-@@ -2333,6 +2884,10 @@ static void fec_enet_get_pauseparam(stru
+@@ -2333,6 +2886,10 @@ static void fec_enet_get_pauseparam(stru
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -863,7 +865,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	pause->autoneg = (fep->pause_flag & FEC_PAUSE_FLAG_AUTONEG) != 0;
  	pause->tx_pause = (fep->pause_flag & FEC_PAUSE_FLAG_ENABLE) != 0;
  	pause->rx_pause = pause->tx_pause;
-@@ -2343,6 +2898,10 @@ static int fec_enet_set_pauseparam(struc
+@@ -2343,6 +2900,10 @@ static int fec_enet_set_pauseparam(struc
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -874,7 +876,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (!ndev->phydev)
  		return -ENODEV;
  
-@@ -2451,6 +3010,10 @@ static void fec_enet_update_ethtool_stat
+@@ -2451,6 +3012,10 @@ static void fec_enet_update_ethtool_stat
  	struct fec_enet_private *fep = netdev_priv(dev);
  	int i;
  
@@ -885,7 +887,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	for (i = 0; i < ARRAY_SIZE(fec_stats); i++)
  		fep->ethtool_stats[i] = readl(fep->hwp + fec_stats[i].offset);
  }
-@@ -2460,6 +3023,17 @@ static void fec_enet_get_ethtool_stats(s
+@@ -2460,6 +3025,17 @@ static void fec_enet_get_ethtool_stats(s
  {
  	struct fec_enet_private *fep = netdev_priv(dev);
  
@@ -903,7 +905,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (netif_running(dev))
  		fec_enet_update_ethtool_stats(dev);
  
-@@ -2494,6 +3068,10 @@ static void fec_enet_clear_ethtool_stats
+@@ -2494,6 +3070,10 @@ static void fec_enet_clear_ethtool_stats
  	struct fec_enet_private *fep = netdev_priv(dev);
  	int i;
  
@@ -914,7 +916,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	/* Disable MIB statistics counters */
  	writel(FEC_MIB_CTRLSTAT_DISABLE, fep->hwp + FEC_MIB_CTRLSTAT);
  
-@@ -2567,6 +3145,10 @@ fec_enet_get_coalesce(struct net_device
+@@ -2567,6 +3147,10 @@ fec_enet_get_coalesce(struct net_device
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -925,7 +927,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (!(fep->quirks & FEC_QUIRK_HAS_COALESCE))
  		return -EOPNOTSUPP;
  
-@@ -2586,6 +3168,10 @@ fec_enet_set_coalesce(struct net_device
+@@ -2586,6 +3170,10 @@ fec_enet_set_coalesce(struct net_device
  	struct device *dev = &fep->pdev->dev;
  	unsigned int cycle;
  
@@ -936,7 +938,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (!(fep->quirks & FEC_QUIRK_HAS_COALESCE))
  		return -EOPNOTSUPP;
  
-@@ -2642,6 +3228,10 @@ static int fec_enet_get_tunable(struct n
+@@ -2642,6 +3230,10 @@ static int fec_enet_get_tunable(struct n
  	struct fec_enet_private *fep = netdev_priv(netdev);
  	int ret = 0;
  
@@ -947,7 +949,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	switch (tuna->id) {
  	case ETHTOOL_RX_COPYBREAK:
  		*(u32 *)data = fep->rx_copybreak;
-@@ -2661,6 +3251,10 @@ static int fec_enet_set_tunable(struct n
+@@ -2661,6 +3253,10 @@ static int fec_enet_set_tunable(struct n
  	struct fec_enet_private *fep = netdev_priv(netdev);
  	int ret = 0;
  
@@ -958,7 +960,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	switch (tuna->id) {
  	case ETHTOOL_RX_COPYBREAK:
  		fep->rx_copybreak = *(u32 *)data;
-@@ -2678,6 +3272,10 @@ fec_enet_get_wol(struct net_device *ndev
+@@ -2678,6 +3274,10 @@ fec_enet_get_wol(struct net_device *ndev
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -969,7 +971,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (fep->wol_flag & FEC_WOL_HAS_MAGIC_PACKET) {
  		wol->supported = WAKE_MAGIC;
  		wol->wolopts = fep->wol_flag & FEC_WOL_FLAG_ENABLE ? WAKE_MAGIC : 0;
-@@ -2691,6 +3289,10 @@ fec_enet_set_wol(struct net_device *ndev
+@@ -2691,6 +3291,10 @@ fec_enet_set_wol(struct net_device *ndev
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -980,7 +982,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (!(fep->wol_flag & FEC_WOL_HAS_MAGIC_PACKET))
  		return -EINVAL;
  
-@@ -2737,11 +3339,67 @@ static const struct ethtool_ops fec_enet
+@@ -2737,11 +3341,67 @@ static const struct ethtool_ops fec_enet
  	.set_link_ksettings	= phy_ethtool_set_link_ksettings,
  };
  
@@ -1048,7 +1050,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  	if (!netif_running(ndev))
  		return -EINVAL;
  
-@@ -2934,10 +3592,12 @@ fec_enet_alloc_txq_buffers(struct net_de
+@@ -2934,10 +3594,12 @@ fec_enet_alloc_txq_buffers(struct net_de
  		bdp->cbd_sc = cpu_to_fec16(0);
  		bdp->cbd_bufaddr = cpu_to_fec32(0);
  
@@ -1061,7 +1063,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
  
  		bdp = fec_enet_get_nextdesc(bdp, &txq->bd);
  	}
-@@ -2968,6 +3628,459 @@ static int fec_enet_alloc_buffers(struct
+@@ -2968,6 +3630,457 @@ static int fec_enet_alloc_buffers(struct
  	return 0;
  }
  
@@ -1202,7 +1204,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
 +	int phy_mode;
 +	char phy_id[MII_BUS_ID_SIZE];
 +	char bus_id[MII_BUS_ID_SIZE];
-+	struct phy_device *phydev;
 +
 +	fep->phy_addr = sw->net_ops->setup_dev(sw, fep->netdev, dev_name,
 +		&fep->port, i, port_count, mib_port_count);
@@ -1210,10 +1211,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
 +	phy_mode = fep->phy_interface;
 +	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", sw->id);
 +	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, fep->phy_addr);
-+	phydev = phy_attach(fep->netdev, phy_id, phy_mode);
-+	if (!IS_ERR(phydev)) {
-+		fep->netdev->phydev = phydev;
-+	}
++	if (!fep->netdev->phydev)
++		phy_attach(fep->netdev, phy_id, phy_mode);
 +}  /* prep_sw_dev */
 +
 +static int fec_enet_sw_init(struct fec_enet_private *fep)
@@ -1420,7 +1419,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/freescale/fec
 +	fep->opened++;
 +
 +	/* Signal IBA initialization is complete. */
-+	sw->info->iba.use_iba = 3;
++	if (2 == sw->info->iba.use_iba)
++		sw->info->iba.use_iba = 3;
 +}  /* netdev_start_iba */
 +
 +static int create_sw_dev(struct net_device *dev, struct fec_enet_private *fep)

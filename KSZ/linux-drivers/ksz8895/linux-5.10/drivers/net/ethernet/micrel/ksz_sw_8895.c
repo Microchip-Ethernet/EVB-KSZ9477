@@ -7107,7 +7107,7 @@ static void sw_port_phylink_validate(struct phylink_config *config,
 dbg_msg(" validate: %d\n", state->interface);
 	if ((sw->dev_offset && p->port_cnt > 1) ||
 	    (!sw->dev_offset && !sw->phy_offset)) {
-		if (sw->phylink_ops)
+		if (sw->phylink_ops && sw->phylink_ops->validate)
 			sw->phylink_ops->validate(config, supported, state);
 	} else {
 		sw_set_phylink_support(sw, p, supported, state);
@@ -7121,7 +7121,7 @@ static int sw_port_phylink_mac_prepare(struct phylink_config *config,
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
 
-	if (sw->phylink_ops)
+	if (sw->phylink_ops && sw->phylink_ops->mac_prepare)
 		return sw->phylink_ops->mac_prepare(config, mode, interface);
 	return 0;
 }
@@ -7142,7 +7142,7 @@ static void sw_port_phylink_mac_link_down(struct phylink_config *config,
 
 	/* Tell MAC driver to turn off transmit queues. */
 	interface = PHY_INTERFACE_MODE_INTERNAL;
-	if (sw->phylink_ops)
+	if (sw->phylink_ops && sw->phylink_ops->mac_link_down)
 		sw->phylink_ops->mac_link_down(config, mode, interface);
 }
 
@@ -7158,7 +7158,7 @@ static void sw_port_phylink_mac_link_up(struct phylink_config *config,
 
 	/* Tell MAC driver to turn on transmit queues. */
 	interface = PHY_INTERFACE_MODE_INTERNAL;
-	if (sw->phylink_ops)
+	if (sw->phylink_ops && sw->phylink_ops->mac_link_up)
 		sw->phylink_ops->mac_link_up(config, phydev, mode,
 					     interface, speed, duplex,
 					     tx_pause, rx_pause);

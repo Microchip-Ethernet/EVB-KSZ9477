@@ -22,6 +22,7 @@
 #define GBIT_SUPPORT			BIT(0)
 #define NEW_XMII			BIT(1)
 #define IS_9893				BIT(2)
+#define PTP_HW				BIT(3)
 
 /* overrides flags */
 #define PTP_TAG				BIT(0)
@@ -231,6 +232,178 @@ static int ksz9477_reset_switch(struct ksz_device *dev)
 	ksz_write16(dev, REG_SW_MAC_CTRL_2, data16);
 
 	return 0;
+}
+
+static void port_mmd_setup(struct ksz_device *dev, uint port, u16 devid,
+			   u16 reg, u16 len)
+{
+	u16 ctrl = PORT_MMD_OP_DATA_NO_INCR;
+
+	if (len > 1)
+		ctrl = PORT_MMD_OP_DATA_INCR_RW;
+	ksz_pwrite16(dev, port, REG_PORT_PHY_MMD_SETUP,
+		     MMD_SETUP(PORT_MMD_OP_INDEX, devid));
+	ksz_pwrite16(dev, port, REG_PORT_PHY_MMD_INDEX_DATA, reg);
+	ksz_pwrite16(dev, port, REG_PORT_PHY_MMD_SETUP,
+		     MMD_SETUP(ctrl, devid));
+}
+
+static void port_mmd_read(struct ksz_device *dev, uint port, u16 devid,
+			  u16 reg, u16 *buf, u16 len)
+{
+	port_mmd_setup(dev, port, devid, reg, len);
+	while (len) {
+		ksz_pread16(dev, port, REG_PORT_PHY_MMD_INDEX_DATA, buf);
+		buf++;
+		len--;
+	}
+}
+
+static void port_mmd_write(struct ksz_device *dev, uint port, u16 devid,
+			   u16 reg, u16 *buf, u16 len)
+{
+	port_mmd_setup(dev, port, devid, reg, len);
+	while (len) {
+		ksz_pwrite16(dev, port, REG_PORT_PHY_MMD_INDEX_DATA, *buf);
+		buf++;
+		len--;
+	}
+}
+
+#if 1
+#define SETUP_PHY_OLD
+#endif
+#if 0
+#define SETUP_PHY_NEW
+#endif
+
+struct ksz_phy_settings {
+	u16 mmd;
+	u16 reg;
+	u16 val;
+};
+
+static struct ksz_phy_settings ksz9893_phy_settings[] = {
+	{ MMD_DEVICE_ID_DSP, 0xa0, 0x3fff },
+};
+
+static void port_setup_eee(struct ksz_device *dev, uint port)
+{
+	u16 val[0x20];
+
+	ksz_pwrite16(dev, port, REG_PORT_PHY_CTRL, 0x2100);
+#ifdef SETUP_PHY_OLD
+	ksz_pwrite16(dev, port, REG_PORT_PHY_REMOTE_LB_LED, 0x00f0);
+#endif
+
+#ifdef SETUP_PHY_NEW
+	val[0] = 0xDD0B;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0x6F, val, 1);
+#else
+	val[0] = 0x0100;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0xCE, val, 1);
+	val[0] = 0x0ff0;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0xCC, val, 1);
+	val[0] = 0x0141;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0xCA, val, 1);
+	val[0] = 0x0fcf;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0xCB, val, 1);
+	val[0] = 0x0010;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0xC8, val, 1);
+	val[0] = 0x0100;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0xD9, val, 1);
+	val[0] = 0x0280;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0xC9, val, 1);
+#endif
+
+#ifdef SETUP_PHY_OLD
+	val[0x09] = 0x010A;
+	val[0x0a] = 0x00ED;
+	val[0x0b] = 0x00D3;
+	val[0x0c] = 0x00BC;
+	val[0x0d] = 0x00A8;
+	val[0x0e] = 0x0096;
+	val[0x0f] = 0x0085;
+	val[0x10] = 0x0077;
+	val[0x11] = 0x006A;
+	val[0x12] = 0x005E;
+	val[0x13] = 0x0054;
+	val[0x14] = 0x004B;
+	val[0x15] = 0x0043;
+	val[0x16] = 0x003C;
+	val[0x17] = 0x0035;
+	val[0x18] = 0x002F;
+	val[0x19] = 0x002A;
+	val[0x1a] = 0x0026;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0x79, &val[0x09], 18);
+#endif
+
+	val[0] = 0x6032;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0x8F, val, 1);
+	val[0] = 0x248C;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0x9D, val, 1);
+
+	val[0] = 0x0060;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0x75, val, 1);
+	val[0] = 0x7777;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_DSP, 0xD3, val, 1);
+
+#ifdef SETUP_PHY_OLD
+	val[0] = 0x9400;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x0, val, 1);
+#endif
+
+#ifdef SETUP_PHY_NEW
+	val[0] = 0x00d0;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x4, val, 1);
+	val[0] = 0x3008;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x6, val, 1);
+	val[0] = 0x2001;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x8, val, 1);
+#else
+	/*
+	 * Use value 0x00E2 for improved 100BTX PMD Output Amplitude.
+	 */
+	val[0] = 0x00e2;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x4, val, 1);
+	val[0] = 0x3100;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x6, val, 1);
+	val[0] = 0xe01c;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x9, val, 1);
+#endif
+
+	val[0x13] = 0x6eff;
+	val[0x14] = 0xe6ff;
+	val[0x15] = 0x6eff;
+	val[0x16] = 0xe6ff;
+	val[0x17] = 0x00ff;
+	val[0x18] = 0x43ff;
+	val[0x19] = 0xc3ff;
+	val[0x1a] = 0x6fff;
+	val[0x1b] = 0x07ff;
+	val[0x1c] = 0x0fff;
+	val[0x1d] = 0xe7ff;
+	val[0x1e] = 0xefff;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x13, &val[0x13], 12);
+#ifdef SETUP_PHY_NEW
+	val[0] = 0xeeee;
+	port_mmd_write(dev, port, MMD_DEVICE_ID_AFED, 0x20, val, 1);
+#endif
+
+	ksz_pwrite16(dev, port, REG_PORT_PHY_CTRL, 0x1140);
+}
+
+static void port_setup_9893(struct ksz_device *dev, uint port)
+{
+	struct ksz_phy_settings *set;
+	u16 val[1];
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ksz9893_phy_settings); i++) {
+		set = &ksz9893_phy_settings[i];
+		val[0] = set->val;
+		port_mmd_write(dev, port, set->mmd, set->reg, val, 1);
+	}
 }
 
 static void ksz9477_r_mib_cnt(struct ksz_device *dev, int port, u16 addr,
@@ -1350,6 +1523,32 @@ static void ksz9477_port_setup(struct ksz_device *dev, int port, bool cpu_port)
 	/* clear pending interrupts */
 	if (port < dev->phy_port_cnt)
 		ksz_pread16(dev, port, REG_PORT_PHY_INT_ENABLE, &data16);
+	if (port < dev->phy_port_cnt) {
+		u32 data;
+		u16 val;
+
+		if ((dev->features & IS_9893))
+			port_setup_9893(dev, port);
+		else
+			port_setup_eee(dev, port);
+
+		/* Disable EEE for 1588 PTP. */
+		if (dev->features & PTP_HW) {
+			port_mmd_read(dev, port, MMD_DEVICE_ID_EEE_ADV,
+				      MMD_EEE_ADV, &val, 1);
+			val &= ~(EEE_ADV_100MBIT | EEE_ADV_1GBIT);
+			port_mmd_write(dev, port, MMD_DEVICE_ID_EEE_ADV,
+				       MMD_EEE_ADV, &val, 1);
+		}
+
+		p->intr_mask = PORT_PHY_INT;
+		val = LINK_DOWN_INT | LINK_UP_INT;
+
+		ksz_pread32(dev, port, REG_PORT_PHY_INT_ENABLE & ~3, &data);
+		data &= 0xffff00ff;
+		data |= (u32)val << 8;
+		ksz_pwrite32(dev, port, REG_PORT_PHY_INT_ENABLE & ~3, data);
+	}
 }
 
 static void ksz9477_config_cpu_port(struct dsa_switch *ds)
@@ -1569,7 +1768,7 @@ static int ksz9477_switch_detect(struct ksz_device *dev)
 	ret = ksz_read8(dev, REG_SW_GLOBAL_SERIAL_CTRL_0, &data8);
 	if (ret)
 		return ret;
-	if (data8 == 0 || data8 == 0xff)
+	if (data8 == 0xff)
 		return -ENODEV;
 
 	data8 &= ~SPI_AUTO_EDGE_DETECTION;
@@ -1604,6 +1803,8 @@ static int ksz9477_switch_detect(struct ksz_device *dev)
 			chip = KSZ8563_SW_CHIP;
 		else
 			chip = KSZ9563_SW_CHIP;
+		if (!(data8 & SW_AVB_ABLE))
+			dev->features |= PTP_HW;
 	} else {
 		dev->features |= NEW_XMII;
 		if (!(data8 & SW_GIGABIT_ABLE))
@@ -1627,6 +1828,10 @@ static int ksz9477_switch_detect(struct ksz_device *dev)
 			id_hi = FAMILY_ID_98;
 			id_lo = CHIP_ID_96;
 		}
+		if (id_hi == FAMILY_ID_94 ||
+		    id_lo == CHIP_ID_67 ||
+		    id_lo == CHIP_ID_66)
+			dev->features |= PTP_HW;
 	}
 	if (dev->dev->of_node) {
 		char name[80];

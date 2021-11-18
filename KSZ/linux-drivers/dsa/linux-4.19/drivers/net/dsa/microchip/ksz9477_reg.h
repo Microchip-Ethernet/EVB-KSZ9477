@@ -2,7 +2,7 @@
  *
  * Microchip KSZ9477 register definitions
  *
- * Copyright (C) 2017-2018 Microchip Technology Inc.
+ * Copyright (C) 2017-2021 Microchip Technology Inc.
  */
 
 #ifndef __KSZ9477_REGS_H
@@ -1059,6 +1059,11 @@
 #define SR_MII_AUTO_NEG_FULL_DUPLEX	BIT(5)
 
 #define MMD_SR_MII_REMOTE_CAPABILITY	0x0005
+
+#define SR_MII_REMOTE_ACK		BIT(14)
+#define SR_MII_REMOTE_HALF_DUPLEX	BIT(6)
+#define SR_MII_REMOTE_FULL_DUPLEX	BIT(5)
+
 #define MMD_SR_MII_AUTO_NEG_EXP		0x0006
 #define MMD_SR_MII_AUTO_NEG_EXT		0x000F
 

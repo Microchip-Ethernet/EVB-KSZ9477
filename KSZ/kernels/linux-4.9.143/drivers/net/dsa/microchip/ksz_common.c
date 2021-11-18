@@ -2,7 +2,7 @@
 /*
  * Microchip switch driver main logic
  *
- * Copyright (C) 2017-2019 Microchip Technology Inc.
+ * Copyright (C) 2017-2021 Microchip Technology Inc.
  */
 
 #include <linux/kernel.h>
@@ -145,7 +145,14 @@ void ksz_adjust_link(struct dsa_switch *ds, int port,
 		p->link_just_down = 1;
 		dev->live_ports &= ~(1 << port);
 	}
-	p->phydev = *phydev;
+
+	/* SGMII port simulates a PHY. */
+	if (!p->sgmii)
+		p->phydev = *phydev;
+
+	/* Remember the actual phy device used by DSA. */
+	if (!p->actual_phydev)
+		p->actual_phydev = phydev;
 }
 EXPORT_SYMBOL_GPL(ksz_adjust_link);
 

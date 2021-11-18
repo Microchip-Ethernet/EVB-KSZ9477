@@ -2,7 +2,7 @@
 /*
  * Microchip KSZ9477 series register access through I2C
  *
- * Copyright (C) 2018-2019 Microchip Technology Inc.
+ * Copyright (C) 2018-2021 Microchip Technology Inc.
  */
 
 #include <linux/kernel.h>
@@ -53,6 +53,7 @@ static int ksz9477_i2c_probe(struct i2c_client *i2c,
 
 	if (i2c->dev.platform_data)
 		dev->pdata = i2c->dev.platform_data;
+	dev->irq = i2c->irq;
 
 	ret = ksz9477_switch_register(dev);
 

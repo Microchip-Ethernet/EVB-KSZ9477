@@ -231,6 +231,7 @@ static int ksz9477_reset_switch(struct ksz_device *dev)
 	data16 |= (BROADCAST_STORM_VALUE * BROADCAST_STORM_PROT_RATE) / 100;
 	ksz_write16(dev, REG_SW_MAC_CTRL_2, data16);
 
+	ksz_write32(dev, REG_SW_PORT_INT_MASK__4, ~((1 << dev->port_cnt) - 1));
 	return 0;
 }
 
@@ -1549,6 +1550,8 @@ static void ksz9477_port_setup(struct ksz_device *dev, int port, bool cpu_port)
 		data |= (u32)val << 8;
 		ksz_pwrite32(dev, port, REG_PORT_PHY_INT_ENABLE & ~3, data);
 	}
+	ksz_pwrite8(dev, port, REG_PORT_INT_MASK,
+		    ~p->intr_mask & PORT_INT_MASK);
 }
 
 static void ksz9477_config_cpu_port(struct dsa_switch *ds)
@@ -1649,6 +1652,48 @@ static int ksz9477_setup(struct dsa_switch *ds)
 	ksz_init_mib_timer(dev);
 
 	return 0;
+}
+
+static irqreturn_t ksz9477_switch_irq_thread(int ireq, void *dev_id)
+{
+	struct ksz_device *dev = dev_id;
+	irqreturn_t result = IRQ_NONE;
+	u32 data;
+	int port;
+	int ret;
+
+	ret = ksz_read32(dev, REG_SW_INT_STATUS__4, &data);
+	if (ret)
+		return result;
+
+	ret = ksz_read32(dev, REG_SW_PORT_INT_STATUS__4, &data);
+	if (ret)
+		return result;
+
+	for (port = 0; port < dev->port_cnt; port++) {
+		if (data & BIT(port)) {
+			struct phy_device *phydev =
+				dev->ports[port].actual_phydev;
+			u8 data8;
+
+			ksz_pread8(dev, port, REG_PORT_INT_STATUS, &data8);
+
+			result = IRQ_HANDLED;
+			if (data8 & PORT_PHY_INT) {
+				u8 val;
+
+				/* The status is cleared after read. */
+				ksz_pread8(dev, port, REG_PORT_PHY_INT_STATUS,
+					   &val);
+				if ((val & (LINK_DOWN_INT | LINK_UP_INT)) &&
+				    phydev) {
+					phy_trigger_machine(phydev, true);
+				}
+			}
+		}
+	}
+
+	return result;
 }
 
 static struct dsa_switch_ops ksz9477_switch_ops = {
@@ -1967,6 +2012,22 @@ static int ksz9477_switch_init(struct ksz_device *dev)
 		if (!dev->ports[i].mib.counters)
 			return -ENOMEM;
 	}
+	if (dev->irq > 0) {
+		unsigned long irqflags = IRQF_TRIGGER_LOW;
+		int ret;
+
+		irqflags |= IRQF_ONESHOT;
+		ret = devm_request_threaded_irq(dev->dev, dev->irq, NULL,
+						ksz9477_switch_irq_thread,
+						irqflags,
+						dev_name(dev->dev),
+						dev);
+		if (ret) {
+			dev_err(dev->dev, "failed to request IRQ.\n");
+			return ret;
+		}
+	}
+
 	i = phy_drivers_register(ksz9477_phy_driver,
 				 ARRAY_SIZE(ksz9477_phy_driver), THIS_MODULE);
 	if (i < 0)

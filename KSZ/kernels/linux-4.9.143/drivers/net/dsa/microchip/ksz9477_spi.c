@@ -2,7 +2,7 @@
 /*
  * Microchip KSZ9477 series register access through SPI
  *
- * Copyright (C) 2017-2019 Microchip Technology Inc.
+ * Copyright (C) 2017-2021 Microchip Technology Inc.
  */
 
 #include <linux/kernel.h>
@@ -70,6 +70,7 @@ static int ksz9477_spi_probe(struct spi_device *spi)
 
 	if (spi->dev.platform_data)
 		dev->pdata = spi->dev.platform_data;
+	dev->irq = spi->irq;
 
 	ret = ksz9477_switch_register(dev);
 

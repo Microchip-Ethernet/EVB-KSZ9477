@@ -113,10 +113,7 @@
 						port@6 {
 							reg = <6>;
 							label = "lan6";
-							fixed-link {
-								speed = <1000>;
-								full-duplex;
-							};
+							mode = <1>;
 						};
 					};
 				};
@@ -260,10 +257,7 @@
 						port@6 {
 							reg = <6>;
 							label = "lan6";
-							fixed-link {
-								speed = <1000>;
-								full-duplex;
-							};
+							mode = <1>;
 						};
 					};
 				};

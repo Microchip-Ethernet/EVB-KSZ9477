@@ -2,7 +2,7 @@
  *
  * Microchip KSZ series switch common definitions
  *
- * Copyright (C) 2017-2018 Microchip Technology Inc.
+ * Copyright (C) 2017-2021 Microchip Technology Inc.
  */
 
 #include <linux/phy.h>
@@ -29,8 +29,11 @@ struct ksz_port_mib {
 struct ksz_port {
 	u16 member;
 	u16 vid_member;
+	u8 intr_mask;
+	u8 link_val;
 	int stp_state;
 	struct phy_device phydev;
+	struct phy_device *actual_phydev;
 
 	u32 on:1;			/* port is not disabled by hardware */
 	u32 phy:1;			/* port has a PHY */
@@ -49,7 +52,6 @@ struct ksz_device {
 	const char *name;
 	struct regmap *regmap[3];
 
-	struct mutex reg_mutex;		/* register access */
 	struct mutex stats_mutex;	/* status access */
 	struct mutex alu_mutex;		/* ALU access */
 	struct mutex vlan_mutex;	/* vlan access */
@@ -58,6 +60,7 @@ struct ksz_device {
 	const struct ksz_tag_ops *tag_ops;
 
 	struct device *dev;
+	int irq;
 
 	void *priv;
 
@@ -85,6 +88,8 @@ struct ksz_device {
 	struct timer_list mib_read_timer;
 	struct work_struct mib_read;
 	unsigned long mib_read_interval;
+	struct timer_list sgmii_timer;
+	struct work_struct sgmii_check;
 	u16 br_member;
 	u16 member;
 	u16 live_ports;
@@ -100,5 +105,6 @@ struct ksz_device {
 	u16 host_mask;
 	u16 port_mask;
 	u32 vlan_up:1;
+	u8 sgmii_mode;
 };
 

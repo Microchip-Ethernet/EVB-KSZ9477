@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 I2C driver
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -54,6 +54,7 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
+#undef MAX_REQUEST_SIZE
 #define MAX_REQUEST_SIZE		80
 
 #include "ksz_cfg_9897.h"
@@ -103,8 +104,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Sep 30, 2021"
-#define SW_DRV_VERSION			"1.2.4"
+#define SW_DRV_RELDATE			"Mar 3, 2022"
+#define SW_DRV_VERSION			"1.2.5"
 
 /* -------------------------------------------------------------------------- */
 
@@ -506,6 +507,7 @@ static int ksz9897_probe(struct i2c_client *i2c,
 	hw_priv->i2cdev = i2c;
 
 	priv->dev = &i2c->dev;
+	priv->of_dev = &i2c->dev;
 
 	priv->sw.reg = &sw_reg_ops;
 

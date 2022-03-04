@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -34,10 +34,6 @@
 #define WRITE_VLAN_ENTRY_SIZE		4
 
 #define MAX_SYSFS_BUF_SIZE		(4080 - 80)
-
-#if 1
-#define USE_LOG_MASK
-#endif
 
 enum {
 	PROC_SW_INFO,
@@ -435,8 +431,6 @@ enum {
 
 static uint get_phy_port(struct ksz_sw *sw, uint n)
 {
-if (n > sw->mib_port_cnt + 1)
-dbg_msg("  !!! %s %d"NL, __func__, n);
 	if (n >= sw->mib_port_cnt + 1)
 		n = 0;
 	return sw->port_info[n].phy_p;
@@ -444,17 +438,11 @@ dbg_msg("  !!! %s %d"NL, __func__, n);
 
 static uint get_log_port(struct ksz_sw *sw, uint p)
 {
-if (p >= sw->port_cnt)
-dbg_msg("  !!! %s %d"NL, __func__, p);
-if (!sw->port_info[p].log_m)
-dbg_msg("  ??? %s %d"NL, __func__, p);
 	return sw->port_info[p].log_p;
 }
 
 static u16 get_phy_mask(struct ksz_sw *sw, uint n)
 {
-if (n > sw->mib_port_cnt + 1)
-dbg_msg("  !!! %s %d"NL, __func__, n);
 	if (n >= sw->mib_port_cnt + 1)
 		n = 0;
 	return sw->port_info[n].phy_m;
@@ -462,7 +450,6 @@ dbg_msg("  !!! %s %d"NL, __func__, n);
 
 static uint get_phy_mask_from_log(struct ksz_sw *sw, uint log_m)
 {
-#ifdef USE_LOG_MASK
 	struct ksz_port_info *info;
 	uint n;
 	uint p;
@@ -475,14 +462,10 @@ static uint get_phy_mask_from_log(struct ksz_sw *sw, uint log_m)
 			phy_m |= info->phy_m;
 	}
 	return phy_m;
-#else
-	return log_m;
-#endif
 }
 
 static uint get_log_mask_from_phy(struct ksz_sw *sw, uint phy_m)
 {
-#ifdef USE_LOG_MASK
 	struct ksz_port_info *info;
 	uint n;
 	uint p;
@@ -495,9 +478,6 @@ static uint get_log_mask_from_phy(struct ksz_sw *sw, uint phy_m)
 			log_m |= sw->port_info[p].log_m;
 	}
 	return log_m;
-#else
-	return phy_m;
-#endif
 }
 
 static uint get_sysfs_port(struct ksz_sw *sw, uint n)
@@ -4476,6 +4456,12 @@ static inline void port_cfg_tail_tag(struct ksz_sw *sw, uint p, bool set)
 {
 	port_cfg(sw, p,
 		REG_PORT_CTRL_0, PORT_TAIL_TAG_ENABLE, set);
+	if (p == sw->HOST_PORT) {
+		if (set)
+			sw->overrides |= TAIL_TAGGING;
+		else
+			sw->overrides &= ~TAIL_TAGGING;
+	}
 }
 
 static inline int port_chk_back_pressure(struct ksz_sw *sw, uint p)
@@ -6819,9 +6805,7 @@ static void sw_setup_stp(struct ksz_sw *sw)
 	alu->valid = 1;
 	if (sw->stp)
 		alu->forward = FWD_STP_DEV | FWD_HOST | FWD_HOST_OVERRIDE;
-	sw->ops->release(sw);
 	sw_w_sta_mac_table(sw, alu->index, alu->type, entry);
-	sw->ops->acquire(sw);
 }  /* sw_setup_stp */
 #endif
 
@@ -7681,6 +7665,9 @@ static int port_sgmii_detect(struct ksz_sw *sw, uint p)
 	buf[0] = port_sgmii_phy_r(sw, p, SR_MII_PHY_JTAG_CHIP_ID_LO);
 	buf[1] = port_sgmii_phy_r(sw, p, SR_MII_PHY_JTAG_CHIP_ID_HI);
 dbg_msg("jtag: %04x %04x"NL, buf[1], buf[0]);
+	port_sgmii_r(sw, p, SR_MII, 0x8000, buf, 3);
+dbg_msg("%04x %04x %04x"NL,
+buf[0], buf[1], buf[2]);
 	port_sgmii_r(sw, p, SR_MII, 0, buf, 6);
 dbg_msg("%04x %04x %04x %04x %04x %04x"NL,
 buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
@@ -7697,6 +7684,7 @@ buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 		} else if (sw->sgmii_mode == 1)
 			sw->port_info[p].fiber = 1;
 	}
+dbg_msg("fiber: %d %d"NL, sw->port_info[p].fiber, sw->sgmii_mode);
 	return ret;
 }  /* port_sgmii_detect */
 
@@ -7776,8 +7764,19 @@ static int sgmii_port_get_speed(struct ksz_sw *sw, uint p, bool force_link)
 	port_sgmii_r(sw, p, SR_MII, MMD_SR_MII_STATUS, &status, 1);
 	port_sgmii_r(sw, p, SR_MII, MMD_SR_MII_AUTO_NEG_STATUS, &data, 1);
 
+	/* 10/100/1000: 1f0001 = 01ad  1f0005 = 4000  1f8002 = 0008
+	 *              1f0001 = 01bd  1f0005 = d000  1f8002 = 001a
+	 * 1000:        1f0001 = 018d  1f0005 = 0000  1f8002 = 0000
+	 *              1f0001 = 01ad  1f0005 = 40a0  1f8002 = 0000
+	 *              1f0001 = 01ad  1f0005 = 41a0  1f8002 = 0000
+	 * fiber:       1f0001 = 0189  1f0005 = 0000  1f8002 = 0000
+	 *              1f0001 = 01ad  1f0005 = 41a0  1f8002 = 0000
+	 */
+
 	/* Running in fiber mode. */
-	if (info->fiber && (status & PORT_LINK_STATUS) && !data) {
+	if (info->fiber && !data &&
+	    (status & (PORT_AUTO_NEG_ACKNOWLEDGE | PORT_LINK_STATUS)) ==
+	    (PORT_AUTO_NEG_ACKNOWLEDGE | PORT_LINK_STATUS)) {
 		data = SR_MII_STAT_LINK_UP |
 		       (SR_MII_STAT_1000_MBPS << SR_MII_STAT_S) |
 		       SR_MII_STAT_FULL_DUPLEX;
@@ -7789,6 +7788,13 @@ static int sgmii_port_get_speed(struct ksz_sw *sw, uint p, bool force_link)
 	if (info->link == link)
 		return ret;
 dbg_msg(" sgmii %04x %04x"NL, status, data);
+	do {
+		u16 buf[6];
+
+		port_sgmii_r(sw, p, SR_MII, 0, buf, 6);
+dbg_msg("%04x %04x %04x %04x %04x %04x"NL,
+buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
+	} while (0);
 
 	/* Need to update control register with same link setting. */
 	if (data & SR_MII_STAT_LINK_UP) {
@@ -8631,6 +8637,7 @@ static void sw_enable(struct ksz_sw *sw)
 				port_cfg_power(sw, port, false);
 		}
 	}
+	if (fewer)
 dbg_msg(" fewer: %d %d"NL, fewer, sw->eth_cnt);
 	if (fewer)
 		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
@@ -8688,7 +8695,7 @@ dbg_msg(" fewer: %d %d"NL, fewer, sw->eth_cnt);
 
 	/*
 	 * There may be some entries in the dynamic MAC table before the
-	 * the learning is turned off.  Once the entries in the table the
+	 * the learning is turned off.  Once the entries are in the table the
 	 * switch may keep updating them even learning is off.
 	 */
 	if (sw->dev_count > 1)
@@ -8803,12 +8810,23 @@ static void sw_setup(struct ksz_sw *sw)
 		port = get_phy_port(sw, n);
 		if (port >= sw->phy_port_cnt)
 			continue;
+
+		/*
+		 * Switch actually cannot do auto-negotiation with old 10Mbit
+		 * hub.
+		 */
+		port_r16(sw, port, P_PHY_CTRL, &val);
+		val &= ~PORT_FULL_DUPLEX;
+		port_w16(sw, port, P_PHY_CTRL, val);
 		if (sw->features & IS_9893)
 			port_setup_9893(sw, port);
 		else
 			port_setup_eee(sw, port);
-#ifdef NO_EEE
-		/* Disable EEE for now. */
+
+		/* Do not disable EEE if 1588 PTP is not used. */
+		if (!(sw->features & PTP_HW))
+			continue;
+
 		port_mmd_read(sw, port, MMD_DEVICE_ID_EEE_ADV, MMD_EEE_ADV,
 			&val, 1);
 /*
@@ -8820,15 +8838,6 @@ static void sw_setup(struct ksz_sw *sw)
 		val = 0;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_EEE_ADV, MMD_EEE_ADV,
 			&val, 1);
-#endif
-
-		/*
-		 * Switch actually cannot do auto-negotiation with old 10Mbit
-		 * hub.
-		 */
-		port_r16(sw, port, P_PHY_CTRL, &val);
-		val &= ~PORT_FULL_DUPLEX;
-		port_w16(sw, port, P_PHY_CTRL, val);
 	}
 	for (n = 0; n <= sw->mib_port_cnt; n++) {
 		port = get_phy_port(sw, n);
@@ -8892,7 +8901,9 @@ static void sw_setup(struct ksz_sw *sw)
 	if (sw->features & AVB_SUPPORT)
 		sw_setup_multi(sw);
 #ifdef CONFIG_KSZ_STP
+	sw->ops->release(sw);
 	sw_setup_stp(sw);
+	sw->ops->acquire(sw);
 #endif
 #ifdef CONFIG_1588_PTP
 	if (sw->features & PTP_HW)
@@ -8955,8 +8966,6 @@ static void sw_reset(struct ksz_sw *sw)
 
 		port_sgmii_r(sw, p, SR_MII, MMD_SR_MII_CTRL, &ctrl, 1);
 		ctrl |= SR_MII_RESET;
-		port_sgmii_w(sw, p, SR_MII, MMD_SR_MII_CTRL, &ctrl, 1);
-		ctrl &= ~SR_MII_RESET;
 		port_sgmii_w(sw, p, SR_MII, MMD_SR_MII_CTRL, &ctrl, 1);
 	}
 	for (p = sw->phy_port_cnt; p < sw->port_cnt; p++) {
@@ -9166,6 +9175,7 @@ static int sw_reg_set(struct ksz_sw *sw, u32 reg, size_t count, void *buf)
 	addr = (SW_D *) buf;
 	if (sw_chk_reg(sw, reg, count)) {
 		sw->reg->w(sw, reg, buf, count);
+		sw_chk_regs(sw, reg, buf, count);
 		return count;
 	}
 	for (i = 0; i < count; i += SW_SIZE, reg += SW_SIZE, addr++) {
@@ -10167,8 +10177,6 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 #endif
 		len += sprintf(buf + len, "\t%08lx = different MAC addresses"NL,
 			DIFF_MAC_ADDR);
-		len += sprintf(buf + len, "\t%08lx = QuietWire"NL,
-			QW_HW);
 #ifdef CONFIG_1588_PTP
 		len += sprintf(buf + len, "\t%08lx = 1588 PTP"NL,
 			PTP_HW);
@@ -13376,7 +13384,7 @@ dbg_msg(" 2 vid: %x"NL, vlan_tci);
 	}
 #endif
 
-#if 1
+#if 0
 /*
  * THa  2016/02/03
  * A company switch is sending frames that causes the dropped count to
@@ -14635,6 +14643,45 @@ static void sw_init_mib(struct ksz_sw *sw)
 	sw->port_state[sw->HOST_PORT].state = media_connected;
 }  /* sw_init_mib */
 
+static void setup_device_node(struct ksz_sw *sw)
+{
+	struct sw_priv *ks = sw->dev;
+	struct device_node *np;
+
+	if (!ks->of_dev)
+		return;
+	np = ks->of_dev->of_node;
+	if (np) {
+		struct device_node *ports, *port;
+		struct ksz_port_info *info;
+		const char *name;
+		u32 mode, reg;
+		int err;
+
+		ports = of_get_child_by_name(np, "ports");
+		if (ports) {
+			for_each_available_child_of_node(ports, port) {
+				err = of_property_read_u32(port, "reg", &reg);
+				if (err)
+					break;
+dbg_msg(" reg: %d\n", reg);
+				name = of_get_property(port, "label", NULL);
+				if (name)
+dbg_msg(" name: %s\n", name);
+				err = of_property_read_u32(port, "mode", &mode);
+				if (err)
+					continue;
+dbg_msg(" mode: %d\n", mode);
+				info = get_port_info(sw, reg);
+
+				/* Expect only one port is SGMII. */
+				if (info->intf == INTF_SGMII)
+					sw->sgmii_mode = (u8) mode;
+			}
+		}
+	}
+}
+
 static int sw_open_dev(struct ksz_sw *sw, struct net_device *dev, u8 *addr)
 {
 	int mode = 0;
@@ -15775,13 +15822,7 @@ static void link_update_work(struct work_struct *work)
 		p = get_phy_port(sw, i);
 		if (!(port->link_ports & (1 << p)))
 			continue;
-#ifdef CONFIG_1588_PTP
-		if (sw->features & PTP_HW) {
-			struct ptp_info *ptp = &sw->ptp_hw;
 
-			ptp->link_ports = port->link_ports;
-		}
-#endif
 #ifdef CONFIG_KSZ_AVB
 		info = get_port_info(sw, p);
 		speed = (media_connected == info->state) ?
@@ -15800,6 +15841,7 @@ static void link_update_work(struct work_struct *work)
 		if (sw->features & PTP_HW) {
 			struct ptp_info *ptp = &sw->ptp_hw;
 
+			ptp->link_ports = port->link_ports;
 			if (ptp->started)
 				set_latency(&ptp->set_latency);
 		}
@@ -16444,6 +16486,7 @@ dbg_msg("%s d:%d c:%d"NL, __func__, *dev_cnt, sw->eth_cnt);
 
 static void sw_leave_dev(struct ksz_sw *sw)
 {
+	int dev_count = sw->dev_count + sw->dev_offset;
 	int i;
 
 #ifdef CONFIG_KSZ_STP
@@ -16454,7 +16497,7 @@ static void sw_leave_dev(struct ksz_sw *sw)
 	if (sw->features & MRP_SUPPORT)
 		leave_mrp(&sw->mrp);
 #endif
-	for (i = 0; i < sw->dev_count; i++) {
+	for (i = 0; i < dev_count; i++) {
 		sw->netdev[i] = NULL;
 		sw->netport[i] = NULL;
 	}
@@ -16592,7 +16635,8 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		info = get_port_info(sw, pi);
 		if (info->phy)
 			info->state = media_disconnected;
-		else if (info->intf == INTF_RGMII)
+		else if (info->intf == INTF_RGMII ||
+			 info->intf == INTF_SGMII)
 			port->live_ports |= (1 << pi);
 		if (pi == sw->HOST_PORT)
 			continue;
@@ -17499,7 +17543,7 @@ static int ksz_mii_init(struct sw_priv *ks)
 	bus->priv = ks;
 
 	for (i = 0; i < PHY_MAX_ADDR; i++)
-		bus->irq[i] = ks->irq;
+		bus->irq[i] = -1;
 
 	err = mdiobus_register(bus);
 	if (err < 0)
@@ -17691,6 +17735,8 @@ static void ksz9897_mib_read_work(struct work_struct *work)
 				if (p != sw->HOST_PORT)
 					determine_rate(sw, mib);
 				info = get_port_info(sw, p);
+
+				/* No interrupt when cable is removed. */
 				if (info->fiber &&
 				    info->state == media_connected &&
 				    mib->rate[0].no_change &&
@@ -18035,10 +18081,10 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info = &sw->port_info[i];
 		info->phy_p = p;
 		info->phy_m = BIT(p);
-		info->phy_id = p + 1;
 		info = &sw->port_info[p];
 		info->log_p = i;
 		info->log_m = BIT(l);
+		info->phy_id = p + 1;
 	}
 	info = &sw->port_info[sw->HOST_PORT];
 	info->log_m = BIT(i);
@@ -18178,8 +18224,6 @@ dbg_msg("%02x %02x"NL, id1, id2);
 	}
 #endif
 
-	if ((FAMILY_ID_85 & 0xf0) == (id1 & 0xf0))
-		sw->features |= QW_HW;
 	sku = KSZ9897_SKU;
 	port_count = 7;
 	if ((CHIP_ID_67 & 0x0f) == (id2 & 0x0f)) {
@@ -18237,9 +18281,7 @@ dbg_msg("%02x %02x"NL, id1, id2);
 #endif
 			}
 		} else {
-			if (id & SW_QW_ABLE)
-				sw->features |= QW_HW;
-			else
+			if (!(id & SW_QW_ABLE))
 				sw->features |= GIGABIT_SUPPORT;
 		}
 		if (id & SW_AVB_ABLE) {
@@ -18299,13 +18341,13 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 			}
 		}
 	}
-	if (ks->dev->of_node) {
+	if (ks->of_dev && ks->of_dev->of_node) {
 		int score;
 		char name[80];
 
-		if (!of_modalias_node(ks->dev->of_node, name, sizeof(name)))
+		if (!of_modalias_node(ks->of_dev->of_node, name, sizeof(name)))
 			dbg_msg(" compatible: %s"NL, name);
-		score = of_device_is_compatible(ks->dev->of_node,
+		score = of_device_is_compatible(ks->of_dev->of_node,
 						"microchip,ksz8565");
 		if (score > 0 && sw->chip_id == KSZ8567_SW_CHIP) {
 			sku = KSZ8565_SKU;
@@ -18399,6 +18441,7 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 			sgmii = 1;
 	}
 	sw->sgmii_mode = sgmii;
+	setup_device_node(sw);
 
 #ifdef DEBUG_MSG
 	flush_work(&db.dbg_print);
@@ -18504,6 +18547,8 @@ dbg_msg("?%02x"NL, *data_hi);
 			speed = 1000;
 			if (gbit)
 				break;
+
+		/* fallthrough */
 		case 0:
 			phy = PHY_INTERFACE_MODE_MII;
 			speed = 100;
@@ -18544,7 +18589,8 @@ dbg_msg("?%02x"NL, *data_hi);
 dbg_msg("host: %d %d"NL, sw->HOST_PORT, sw->interface);
 		if (info->phy)
 			info->state = media_disconnected;
-		else if (info->intf == INTF_RGMII) {
+		else if (info->intf == INTF_RGMII ||
+			 info->intf == INTF_SGMII) {
 			info->state = media_connected;
 			sw->live_ports |= (1 << pi);
 		}
@@ -18667,9 +18713,6 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	sw->ops->release(sw);
 	sw->ops->init(sw);
 
-#ifndef USE_LOG_MASK
-	sw->overrides |= SYSFS_PHY_PORT;
-#endif
 	if (sysfs_sw)
 		sw->overrides |= SYSFS_1_BASE;
 

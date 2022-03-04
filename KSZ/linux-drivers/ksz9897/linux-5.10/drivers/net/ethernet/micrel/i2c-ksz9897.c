@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 I2C driver
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -107,8 +107,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Aug 24, 2021"
-#define SW_DRV_VERSION			"1.2.4"
+#define SW_DRV_RELDATE			"Mar 3, 2022"
+#define SW_DRV_VERSION			"1.2.5"
 
 /* -------------------------------------------------------------------------- */
 
@@ -153,7 +153,6 @@ static void i2c_wrreg(struct sw_priv *priv, u32 addr, void *txb, size_t txl)
 	struct i2c_msg msg;
 	struct i2c_client *i2c = hw_priv->i2cdev;
 	struct i2c_adapter *adapter = i2c->adapter;
-	struct ksz_sw *sw = &priv->sw;
 
 	if (!mutex_is_locked(&priv->lock))
 		pr_alert("W not locked\n");
@@ -172,7 +171,6 @@ static void i2c_wrreg(struct sw_priv *priv, u32 addr, void *txb, size_t txl)
 
 	if (i2c_transfer(adapter, &msg, 1) != 1)
 		pr_alert("i2c_transfer() failed\n");
-	sw->ops->chk_regs(sw, addr, &hw_priv->txd[I2C_CMD_LEN], txl);
 }
 
 static void i2c_wrreg_size(struct sw_priv *priv, u32 reg, unsigned val,

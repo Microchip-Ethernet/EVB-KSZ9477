@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -6807,9 +6807,7 @@ static void sw_setup_stp(struct ksz_sw *sw)
 	alu->valid = 1;
 	if (sw->stp)
 		alu->forward = FWD_STP_DEV | FWD_HOST | FWD_HOST_OVERRIDE;
-	sw->ops->release(sw);
 	sw_w_sta_mac_table(sw, alu->index, alu->type, entry);
-	sw->ops->acquire(sw);
 }  /* sw_setup_stp */
 #endif
 
@@ -7669,12 +7667,12 @@ static int port_sgmii_detect(struct ksz_sw *sw, uint p)
 	buf[0] = port_sgmii_phy_r(sw, p, SR_MII_PHY_JTAG_CHIP_ID_LO);
 	buf[1] = port_sgmii_phy_r(sw, p, SR_MII_PHY_JTAG_CHIP_ID_HI);
 dbg_msg("jtag: %04x %04x"NL, buf[1], buf[0]);
-	port_sgmii_r(sw, p, SR_MII, 0, buf, 6);
-dbg_msg("%04x %04x %04x %04x %04x %04x"NL,
-buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 	port_sgmii_r(sw, p, SR_MII, 0x8000, buf, 3);
 dbg_msg("%04x %04x %04x"NL,
 buf[0], buf[1], buf[2]);
+	port_sgmii_r(sw, p, SR_MII, 0, buf, 6);
+dbg_msg("%04x %04x %04x %04x %04x %04x"NL,
+buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 
 	/* Cannot detect whether the SGMII PHY is plugged in reliably. */
 	if (sw->sgmii_mode) {
@@ -8638,6 +8636,7 @@ static void sw_enable(struct ksz_sw *sw)
 				port_cfg_power(sw, port, false);
 		}
 	}
+	if (fewer)
 dbg_msg(" fewer: %d %d"NL, fewer, sw->eth_cnt);
 	if (fewer)
 		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
@@ -8827,7 +8826,6 @@ static void sw_setup(struct ksz_sw *sw)
 		if (!(sw->features & PTP_HW))
 			continue;
 
-		/* Disable EEE for now. */
 		port_mmd_read(sw, port, MMD_DEVICE_ID_EEE_ADV, MMD_EEE_ADV,
 			&val, 1);
 /*
@@ -8902,7 +8900,9 @@ static void sw_setup(struct ksz_sw *sw)
 	if (sw->features & AVB_SUPPORT)
 		sw_setup_multi(sw);
 #ifdef CONFIG_KSZ_STP
+	sw->ops->release(sw);
 	sw_setup_stp(sw);
+	sw->ops->acquire(sw);
 #endif
 #ifdef CONFIG_1588_PTP
 	if (sw->features & PTP_HW)
@@ -14619,6 +14619,45 @@ static void sw_init_mib(struct ksz_sw *sw)
 	sw->port_state[sw->HOST_PORT].state = media_connected;
 }  /* sw_init_mib */
 
+static void setup_device_node(struct ksz_sw *sw)
+{
+	struct sw_priv *ks = sw->dev;
+	struct device_node *np;
+
+	if (!ks->of_dev)
+		return;
+	np = ks->of_dev->of_node;
+	if (np) {
+		struct device_node *ports, *port;
+		struct ksz_port_info *info;
+		const char *name;
+		u32 mode, reg;
+		int err;
+
+		ports = of_get_child_by_name(np, "ports");
+		if (ports) {
+			for_each_available_child_of_node(ports, port) {
+				err = of_property_read_u32(port, "reg", &reg);
+				if (err)
+					break;
+dbg_msg(" reg: %d\n", reg);
+				name = of_get_property(port, "label", NULL);
+				if (name)
+dbg_msg(" name: %s\n", name);
+				err = of_property_read_u32(port, "mode", &mode);
+				if (err)
+					continue;
+dbg_msg(" mode: %d\n", mode);
+				info = get_port_info(sw, reg);
+
+				/* Expect only one port is SGMII. */
+				if (info->intf == INTF_SGMII)
+					sw->sgmii_mode = (u8) mode;
+			}
+		}
+	}
+}
+
 static int sw_open_dev(struct ksz_sw *sw, struct net_device *dev, u8 *addr)
 {
 	int mode = 0;
@@ -16490,7 +16529,8 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		info = get_port_info(sw, pi);
 		if (info->phy)
 			info->state = media_disconnected;
-		else if (info->intf == INTF_RGMII)
+		else if (info->intf == INTF_RGMII ||
+			 info->intf == INTF_SGMII)
 			port->live_ports |= (1 << pi);
 		if (pi == sw->HOST_PORT)
 			continue;
@@ -18156,13 +18196,13 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 			}
 		}
 	}
-	if (ks->dev->of_node) {
+	if (ks->of_dev && ks->of_dev->of_node) {
 		int score;
 		char name[80];
 
-		if (!of_modalias_node(ks->dev->of_node, name, sizeof(name)))
+		if (!of_modalias_node(ks->of_dev->of_node, name, sizeof(name)))
 			dbg_msg(" compatible: %s"NL, name);
-		score = of_device_is_compatible(ks->dev->of_node,
+		score = of_device_is_compatible(ks->of_dev->of_node,
 						"microchip,ksz8565");
 		if (score > 0 && sw->chip_id == KSZ8567_SW_CHIP) {
 			sku = KSZ8565_SKU;
@@ -18256,6 +18296,7 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 			sgmii = 1;
 	}
 	sw->sgmii_mode = sgmii;
+	setup_device_node(sw);
 
 #ifdef DEBUG_MSG
 	flush_work(&db.dbg_print);
@@ -18403,7 +18444,8 @@ dbg_msg("?%02x"NL, *data_hi);
 dbg_msg("host: %d %d"NL, sw->HOST_PORT, sw->interface);
 		if (info->phy)
 			info->state = media_disconnected;
-		else if (info->intf == INTF_RGMII) {
+		else if (info->intf == INTF_RGMII ||
+			 info->intf == INTF_SGMII) {
 			info->state = media_connected;
 			sw->live_ports |= (1 << pi);
 		}

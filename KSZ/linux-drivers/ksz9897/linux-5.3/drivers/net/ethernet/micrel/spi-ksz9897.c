@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 SPI driver
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  * Copyright (c) 2013-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -60,14 +60,10 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
+#undef MAX_REQUEST_SIZE
 #define MAX_REQUEST_SIZE		80
 
 #include "ksz_cfg_9897.h"
-
-
-#if 1
-#define NO_EEE
-#endif
 
 
 #ifdef CONFIG_KSZ_DLR
@@ -115,8 +111,8 @@
 
 #define KS9897MLI_DEV0			"ksz9897"
 
-#define SW_DRV_RELDATE			"Sep 16, 2020"
-#define SW_DRV_VERSION			"1.2.3"
+#define SW_DRV_RELDATE			"Mar 3, 2022"
+#define SW_DRV_VERSION			"1.2.5"
 
 /* -------------------------------------------------------------------------- */
 
@@ -216,7 +212,6 @@ static void spi_wrreg(struct sw_priv *priv, u32 addr, void *txb, size_t txl)
 	ret = spi_sync(spi, msg);
 	if (ret < 0)
 		pr_alert("spi_sync() failed: %x %u\n", addr, txl);
-	sw->ops->chk_regs(sw, addr, tx, txl);
 }
 
 static void spi_wrreg_size(struct sw_priv *priv, u32 reg, u32 val, size_t size)
@@ -593,6 +588,7 @@ static int ksz9897_probe(struct spi_device *spi)
 	hw_priv->spidev = spi;
 
 	priv->dev = &spi->dev;
+	priv->of_dev = &spi->dev;
 
 	priv->sw.reg = &sw_reg_ops;
 

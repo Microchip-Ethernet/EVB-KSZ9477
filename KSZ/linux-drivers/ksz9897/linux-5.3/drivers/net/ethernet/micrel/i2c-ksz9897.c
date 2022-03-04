@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 I2C driver
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -54,14 +54,10 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
+#undef MAX_REQUEST_SIZE
 #define MAX_REQUEST_SIZE		80
 
 #include "ksz_cfg_9897.h"
-
-
-#if 1
-#define NO_EEE
-#endif
 
 
 #ifdef CONFIG_KSZ_DLR
@@ -108,8 +104,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Sep 16, 2020"
-#define SW_DRV_VERSION			"1.2.3"
+#define SW_DRV_RELDATE			"Mar 3, 2022"
+#define SW_DRV_VERSION			"1.2.5"
 
 /* -------------------------------------------------------------------------- */
 
@@ -154,7 +150,6 @@ static void i2c_wrreg(struct sw_priv *priv, u32 addr, void *txb, size_t txl)
 	struct i2c_msg msg;
 	struct i2c_client *i2c = hw_priv->i2cdev;
 	struct i2c_adapter *adapter = i2c->adapter;
-	struct ksz_sw *sw = &priv->sw;
 
 	if (!mutex_is_locked(&priv->lock))
 		pr_alert("W not locked\n");
@@ -173,7 +168,6 @@ static void i2c_wrreg(struct sw_priv *priv, u32 addr, void *txb, size_t txl)
 
 	if (i2c_transfer(adapter, &msg, 1) != 1)
 		pr_alert("i2c_transfer() failed\n");
-	sw->ops->chk_regs(sw, addr, &hw_priv->txd[I2C_CMD_LEN], txl);
 }
 
 static void i2c_wrreg_size(struct sw_priv *priv, u32 reg, unsigned val,
@@ -513,6 +507,7 @@ static int ksz9897_probe(struct i2c_client *i2c,
 	hw_priv->i2cdev = i2c;
 
 	priv->dev = &i2c->dev;
+	priv->of_dev = &i2c->dev;
 
 	priv->sw.reg = &sw_reg_ops;
 

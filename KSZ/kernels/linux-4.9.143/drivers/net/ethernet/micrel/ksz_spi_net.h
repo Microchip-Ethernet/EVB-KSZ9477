@@ -1,7 +1,7 @@
 /**
  * Microchip SPI switch common header
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2012-2015 Micrel, Inc.
@@ -102,6 +102,7 @@ struct smi_hw_priv {
 struct sw_priv {
 	void *hw_dev;
 	struct device *dev;
+	struct device *of_dev;
 	int intr_mode;
 	int irq;
 

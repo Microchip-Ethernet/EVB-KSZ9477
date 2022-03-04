@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 IBA driver
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  * Copyright (c) 2013-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -36,6 +36,7 @@
 
 #include <linux/net_tstamp.h>
 
+#undef MAX_REQUEST_SIZE
 #define MAX_REQUEST_SIZE		80
 
 #include "ksz_cfg_9897.h"
@@ -87,8 +88,8 @@
 
 #define KS9897MLI_DEV0			"ksz9897"
 
-#define SW_DRV_RELDATE			"Sep 30, 2021"
-#define SW_DRV_VERSION			"1.2.4"
+#define SW_DRV_RELDATE			"Mar 3, 2022"
+#define SW_DRV_VERSION			"1.2.5"
 
 /* -------------------------------------------------------------------------- */
 

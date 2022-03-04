@@ -270,21 +270,25 @@ static int macb_sw_chk(struct macb *bp)
 #endif
 
 #if defined(CONFIG_KSZ_IBA_ONLY) || defined(CONFIG_KSZ_SMI)
-static int get_sw_irq(struct macb *bp)
+static int get_sw_irq(struct macb *bp, struct device **ext_dev)
 {
 	struct device *dev;
 	int spi_bus;
 	int spi_select;
 	char name[20];
 
-	spi_select = 0;
 	for (spi_bus = 0; spi_bus < 2; spi_bus++) {
-		sprintf(name, "spi%d.%d\n", spi_bus, spi_select);
-		dev = bus_find_device_by_name(&spi_bus_type, NULL, name);
-		if (dev && dev->of_node) {
-			int irq = of_irq_get(dev->of_node, 0);
+		for (spi_select = 0; spi_select < 4; spi_select++) {
+			sprintf(name, "spi%d.%d\n", spi_bus, spi_select);
+			dev = bus_find_device_by_name(&spi_bus_type, NULL,
+						      name);
+			if (dev && dev->of_node) {
+				int irq = of_irq_get(dev->of_node, 0);
 
-			return irq;
+				if (ext_dev)
+					*ext_dev = dev;
+				return irq;
+			}
 		}
 	}
 	return -1;
@@ -886,7 +890,7 @@ static int macb_mii_init(struct macb *bp)
 
 #ifdef CONFIG_KSZ_SMI
 	if (!err) {
-		int irq = get_sw_irq(bp);
+		int irq = get_sw_irq(bp, NULL);
 
 		err = smi_probe(&bp->sw_pdev, bp->mii_bus, irq);
 
@@ -5682,7 +5686,7 @@ static int create_sw_dev(struct net_device *dev, struct macb *bp)
 	ks->hw_dev = dev;
 	ks->dev = &dev->dev;
 
-	ks->irq = get_sw_irq(bp);
+	ks->irq = get_sw_irq(bp, &ks->of_dev);
 	if (ks->irq == bp->dev->phydev->irq)
 		ks->irq = 0;
 

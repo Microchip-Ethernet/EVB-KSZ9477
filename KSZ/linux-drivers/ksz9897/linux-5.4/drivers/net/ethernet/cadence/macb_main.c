@@ -1128,7 +1128,7 @@ static int macb_mii_init(struct macb *bp)
 
 #ifdef CONFIG_KSZ_SMI
 	if (!err) {
-		int irq = get_sw_irq(bp);
+		int irq = get_sw_irq(bp, NULL);
 
 		err = smi_probe(&bp->sw_pdev, bp->mii_bus, irq);
 

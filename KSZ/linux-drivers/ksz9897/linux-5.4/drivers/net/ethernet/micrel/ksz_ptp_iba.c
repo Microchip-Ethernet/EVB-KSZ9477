@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code in IBA format
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -16,22 +16,6 @@
  * GNU General Public License for more details.
  */
 
-
-static u32 ptp_unit_index(struct ptp_info *ptp, int shift, u8 unit)
-{
-	u32 index;
-#ifndef USE_OLD_PTP_UNIT_INDEX
-	struct ksz_sw *sw = ptp->parent;
-
-	index = sw->cached.ptp_unit_index;
-	index &= ~(PTP_UNIT_M << shift);
-	index |= (u32) unit << shift;
-	sw->cached.ptp_unit_index = index;
-#else
-	index = unit;
-#endif
-	return index;
-}  /* ptp_unit_index */
 
 static void *get_time_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
@@ -616,8 +600,8 @@ static void ptp_tx_off_iba(struct ptp_info *ptp, u8 tso)
 	u16 tso_bit = (1 << tso);
 	int rc;
 	u32 buf[8 + 8];
-	void *func[4];
-	void *data_in[3];
+	void *func[5];
+	void *data_in[4];
 	u32 *data = buf;
 	u32 *data_out;
 	int i = 0;
@@ -642,10 +626,9 @@ static void ptp_tx_off_iba(struct ptp_info *ptp, u8 tso)
 
 		ptp->cascade_gpo[ptp->outputs[tso].gpo].tso &= ~tso_bit;
 		ptp->cascade_tx &= ~tso_bit;
-	} else {
-		data_in[i] = data;
-		func[i++] = tx_init_pre;
 	}
+	data_in[i] = data;
+	func[i++] = tx_init_pre;
 
 	data_out = data;
 	data = iba_prepare(info, -1, data);
@@ -659,13 +642,14 @@ static void ptp_tx_off_iba(struct ptp_info *ptp, u8 tso)
 static void *tx_on_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+	iba_cmd_set(info, IBA_CMD_WRITE_0, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
+		TRIG_ENABLE);
 	iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
 		TRIG_ENABLE);
 	return info->fptr;
 }  /* tx_on_pre */
 
-static void *tx_trigger_time_iba(struct ksz_iba_info *info, u8 tso, u32 sec,
-	u32 nsec)
+static void *tx_trigger_time_iba(struct ksz_iba_info *info, u32 sec, u32 nsec)
 {
 	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_TARGET_SEC,
 		sec);
@@ -674,145 +658,82 @@ static void *tx_trigger_time_iba(struct ksz_iba_info *info, u8 tso, u32 sec,
 	return info->fptr;
 }  /* tx_trigger_time_iba */
 
+static void *tx_restart_pre(struct ksz_iba_info *info, void *in, void *obj)
+{
+	u32 *data = in;
+	u32 sec = data[0];
+	u32 nsec = data[1];
+
+	tx_trigger_time_iba(info, sec, nsec);
+	tx_on_pre(info, NULL, NULL);
+	return info->fptr;
+}  /* tx_restart_pre */
+
+static void ptp_tx_restart_iba(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec)
+{
+	struct ksz_sw *sw = ptp->parent;
+	struct ksz_iba_info *info = &sw->info->iba;
+	int rc;
+	void *func[3];
+	void *data_in[2];
+	u32 buf[8];
+	u32 *data = buf;
+	int i = 0;
+
+	data_in[i] = data;
+	data[0] = PTP_TOU_INDEX_S;
+	data[1] = tso;
+	data += 2;
+	func[i++] = ptp_unit_index_pre;
+
+	data_in[i] = data;
+	data[0] = sec;
+	data[1] = nsec;
+	data += 2;
+	func[i++] = tx_restart_pre;
+
+	func[i] = NULL;
+	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
+	rc = info->ops->reqs(info, data_in, NULL, ptp, func, NULL);
+}  /* ptp_tx_restart_iba */
+
 static void *tx_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 *data = in;
-	u8 tso = data[3];
-	u8 gpo = data[4];
-	u8 event = data[5];
-	u32 pulse = data[6];
-	u32 cycle = data[7];
-	u16 cnt = data[8];
-	u32 sec = data[9];
-	u32 nsec = data[10];
-	u32 iterate = data[11];
-	int intr = data[12];
-	int now = data[13];
-	int opt = data[14];
-	struct ptp_info *ptp = obj;
-	u32 ctrl;
-	u32 pattern = 0;
-	u16 tso_bit = (1 << tso);
-	struct ptp_output *cur = &ptp->outputs[tso];
+	u32 ctrl = data[0];
+	u32 pulse = data[1];
+	u32 cycle = data[2];
+	u32 pattern = data[3];
+	u32 sec = data[4];
+	u32 nsec = data[5];
 
-	/* Config pattern. */
-	ctrl = trig_event_gpo(gpo, event);
-	if (intr)
-		ctrl |= TRIG_NOTIFY;
-	if (now)
-		ctrl |= TRIG_NOW;
-	if (opt)
-		ctrl |= TRIG_EDGE;
-	ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
 	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CTRL__4, ctrl);
-
-	/* Config pulse width. */
-	if (TRIG_REG_OUTPUT == event) {
-		pattern = pulse & TRIG_BIT_PATTERN_M;
-		cur->level = 0;
-		if (cnt) {
-			u32 reg;
-
-			reg = cnt - 1;
-			reg %= 16;
-			while (reg) {
-				pulse >>= 1;
-				reg--;
-			}
-			if (pulse & 1)
-				cur->level = 1;
-		}
-		pulse = 0;
-	} else if (event >= TRIG_NEG_PULSE) {
-		if (0 == pulse)
-			pulse = 1;
-		else if (pulse > TRIG_PULSE_WIDTH_M)
-			pulse = TRIG_PULSE_WIDTH_M;
+	if (pulse)
 		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_24,
 			REG_TRIG_PULSE_WIDTH__4 + 1, pulse);
-	}
-
-	/* Config cycle width. */
-	if (event >= TRIG_NEG_PERIOD) {
-		u32 data = cnt;
-		int min_cycle = pulse * PULSE_NSEC + MIN_CYCLE_NSEC;
-
-		if (cycle < min_cycle)
-			cycle = min_cycle;
+	if (cycle) {
 		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
 			REG_TRIG_CYCLE_WIDTH, cycle);
-
-		/* Config trigger count. */
-		data <<= TRIG_CYCLE_CNT_S;
-		pattern |= data;
 		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32,
 			REG_TRIG_CYCLE_CNT, pattern);
 	}
 
-	cur->len = 0;
-	if (event >= TRIG_NEG_PERIOD) {
-		if (cnt)
-			cur->len += cycle * cnt;
-		else
-			cur->len += 0xF0000000;
-	} else if (event >= TRIG_NEG_PULSE)
-		cur->len += pulse * PULSE_NSEC;
-	else
-		cur->len += MIN_CYCLE_NSEC;
-
-	cur->start.sec = sec;
-	cur->start.nsec = nsec;
-	cur->iterate = iterate;
-	cur->trig = cur->start;
-	cur->stop = cur->start;
-	add_nsec(&cur->stop, cur->len);
-	cur->gpo = gpo;
-
-	switch (event) {
-	case TRIG_POS_EDGE:
-	case TRIG_NEG_PULSE:
-	case TRIG_NEG_PERIOD:
-		cur->level = 1;
-		break;
-	case TRIG_REG_OUTPUT:
-		break;
-	default:
-		cur->level = 0;
-		break;
+	/* Trigger time is set later in cascade mode. */
+	if (sec) {
+		tx_trigger_time_iba(info, sec, nsec);
+		tx_on_pre(info, NULL, NULL);
 	}
-
-	if (ptp->cascade)
-		return info->fptr;
-
-	/*
-	 * Need to reset after completion.  Otherwise, this output pattern
-	 * does not behave consistently in cascade mode.
-	 */
-	if (TRIG_NEG_EDGE == event)
-		ptp->cascade_tx |= tso_bit;
-
-	ptp->cascade_gpo[gpo].total = 0;
-	if (cur->level)
-		ptp->cascade_gpo[gpo].tso |= tso_bit;
-	else
-		ptp->cascade_gpo[gpo].tso &= ~tso_bit;
-
-	/* Config trigger time. */
-	tx_trigger_time_iba(info, tso, sec, nsec);
-
 	return info->fptr;
 }  /* tx_event_pre */
 
-static void ptp_tx_event_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
-	u32 pulse, u32 cycle, u16 cnt, u32 sec, u32 nsec, u32 iterate,
-	int intr, int now, int opt)
+static void ptp_tx_event_iba(struct ptp_info *ptp, u8 tso, u32 ctrl, u32 pulse,
+	u32 cycle, u32 pattern, u32 sec, u32 nsec)
 {
 	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
-	struct ptp_output *cur = &ptp->outputs[tso];
 	int rc;
-	void *func[5];
-	void *data_in[4];
+	void *func[3];
+	void *data_in[2];
 	u32 buf[20];
 	u32 *data = buf;
 	int i = 0;
@@ -823,34 +744,15 @@ static void ptp_tx_event_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	data += 2;
 	func[i++] = ptp_unit_index_pre;
 
-	/* Hardware immediately keeps level high on new GPIO if not reset. */
-	if (cur->level && gpo != cur->gpo) {
-		data_in[i] = data;
-		func[i++] = tx_reset_pre;
-
-		ptp->cascade_gpo[cur->gpo].tso &= ~(1 << tso);
-	}
-
 	data_in[i] = data;
-	data[3] = tso;
-	data[4] = gpo;
-	data[5] = event;
-	data[6] = pulse;
-	data[7] = cycle;
-	data[8] = cnt;
-	data[9] = sec;
-	data[10] = nsec;
-	data[11] = iterate;
-	data[12] = intr;
-	data[13] = now;
-	data[14] = opt;
-	data += 15;
+	data[0] = ctrl;
+	data[1] = pulse;
+	data[2] = cycle;
+	data[3] = pattern;
+	data[4] = sec;
+	data[5] = nsec;
+	data += 6;
 	func[i++] = tx_event_pre;
-
-	if (!ptp->cascade) {
-		data_in[i] = data;
-		func[i++] = tx_on_pre;
-	}
 
 	func[i] = NULL;
 	iba_assert(info, __func__, i, sizeof(func), buf, data, sizeof(buf));
@@ -869,7 +771,6 @@ static void *pps_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 	u32 pulse = (20000000 / 8);	/* 20 ms */
 	u32 cycle = 1000000000;
 	u16 cnt = 0;
-	u8 tso = ptp->pps_tso;
 	u8 event = TRIG_POS_PERIOD;
 
 	/* Config pattern. */
@@ -902,7 +803,7 @@ static void *pps_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 		nsec = NANOSEC_IN_SEC + ptp->pps_offset;
 		sec--;
 	}
-	tx_trigger_time_iba(info, tso, sec, nsec);
+	tx_trigger_time_iba(info, sec, nsec);
 
 	return info->fptr;
 }  /* pps_event_pre */
@@ -973,7 +874,7 @@ static void *ptp_10MHz_pre(struct ksz_iba_info *info, void *in, void *obj)
 	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CYCLE_CNT,
 		pattern);
 
-	tx_trigger_time_iba(info, tso, sec, nsec);
+	tx_trigger_time_iba(info, sec, nsec);
 
 	return info->fptr;
 }  /* ptp_10MHz_pre */
@@ -1050,8 +951,8 @@ static void *tx_cascade_on_pre(struct ksz_iba_info *info, void *in,
 	struct ptp_output *cur = obj;
 	u32 ctrl;
 
-	tx_trigger_time_iba(info, tso, cur->trig.sec, cur->trig.nsec);
-	tx_cascade_cycle_iba(info, tso, cur->iterate);
+	tx_trigger_time_iba(info, cur->trig.sec, cur->trig.nsec);
+	tx_cascade_cycle_iba(info, tso, (u32)cur->iterate);
 
 	ctrl = data[2];
 	ctrl |= TRIG_CASCADE_ENABLE;
@@ -1088,10 +989,6 @@ static int ptp_tx_cascade_iba(struct ptp_info *ptp, u8 first, u8 total,
 	last = first + total - 1;
 	if (last >= MAX_TRIG_UNIT)
 		return 1;
-	if (check_cascade(ptp, first, total, &repeat, sec, nsec)) {
-		dbg_msg("cascade repeat timing is not right"NL);
-		return 1;
-	}
 	tso = last;
 	for (n = 0; n < total; n++, tso--) {
 		cur = &ptp->outputs[tso];
@@ -1282,6 +1179,7 @@ static struct ptp_reg_ops ptp_iba_ops = {
 	.read_event		= ptp_read_event_iba,
 
 	.tx_off			= ptp_tx_off_iba,
+	.tx_restart		= ptp_tx_restart_iba,
 	.tx_event		= ptp_tx_event_iba,
 	.pps_event		= ptp_pps_event_iba,
 	.ptp_10MHz		= ptp_10MHz_iba,

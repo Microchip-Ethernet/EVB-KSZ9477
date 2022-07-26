@@ -107,8 +107,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Mar 3, 2022"
-#define SW_DRV_VERSION			"1.2.5"
+#define SW_DRV_RELDATE			"Jul 25, 2022"
+#define SW_DRV_VERSION			"1.2.6"
 
 /* -------------------------------------------------------------------------- */
 

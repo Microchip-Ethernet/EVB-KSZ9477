@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common header
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -647,11 +647,15 @@ struct ptp_event {
 
 struct ptp_output {
 	struct ptp_utime trig;
+	struct ptp_utime intr;
 	struct ptp_utime start;
 	struct ptp_utime stop;
 	struct ksz_ptp_time gap;
-	u32 iterate;
-	u32 len;
+	u64 iterate;
+	u64 len;
+	u32 cycle;
+	u16 cnt;
+	u8 event;
 	int gpo;
 	int level;
 };
@@ -729,9 +733,9 @@ struct ptp_reg_ops {
 	void (*read_event)(struct ptp_info *ptp, u8 tsi);
 
 	void (*tx_off)(struct ptp_info *ptp, u8 tso);
-	void (*tx_event)(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
-		u32 pulse, u32 cycle, u16 cnt, u32 sec, u32 nsec, u32 iterate,
-		int intr, int now, int opt);
+	void (*tx_restart)(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec);
+	void (*tx_event)(struct ptp_info *ptp, u8 tso, u32 ctrl, u32 pulse,
+		u32 cycle, u32 pattern, u32 sec, u32 nsec);
 	void (*pps_event)(struct ptp_info *ptp, u8 gpo, u32 sec);
 	void (*ptp_10MHz)(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec);
 	int (*tx_cascade)(struct ptp_info *ptp, u8 first, u8 total,
@@ -873,9 +877,6 @@ struct ptp_info {
 	spinlock_t tx_msg_lock;
 	struct ptp_msg_info rx_msg_info[MANAGEMENT_MSG + 1];
 	struct ptp_msg_info tx_msg_info[MANAGEMENT_MSG + 1];
-#if 0
-	struct ptp_msg_options rx_msg_chk[MANAGEMENT_MSG + 1];
-#endif
 	u16 seqid_sync[MAX_PTP_PORT];
 	u16 seqid_fup[MAX_PTP_PORT];
 	u16 seqid_pdelay_req[MAX_PTP_PORT];
@@ -938,6 +939,11 @@ struct ptp_info {
 	struct ptp_clock_identity masterIdentity;
 	struct ptp_event events[MAX_TIMESTAMP_UNIT];
 	struct ptp_output outputs[MAX_TRIG_UNIT + 1];
+	u16 tso_cnt[MAX_TRIG_UNIT + 1];
+	u8 tso_chk[MAX_TRIG_UNIT + 1];
+	u8 cascade_first;
+	u8 cascade_total;
+	u8 cascade_tso;
 	int dev_major;
 	struct file_dev_info *dev[2];
 	struct file_dev_info *tsi_dev[MAX_TIMESTAMP_UNIT];

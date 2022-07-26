@@ -3070,10 +3070,7 @@ static void ksz_iba_init(struct ksz_iba_info *iba, struct ksz_sw *sw)
 	u16 tag_type;
 
 	/* Running nuttcp UDP TX can affect IBA communication if too short. */
-	data = 200;
-#ifdef CONFIG_KSZ_IBA_ONLY
 	data = 800;
-#endif
 	iba->delay_ticks = msecs_to_jiffies(data);
 
 	if (!iba->use_iba) {

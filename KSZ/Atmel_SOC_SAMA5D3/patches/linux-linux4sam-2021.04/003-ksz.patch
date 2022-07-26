@@ -692,8 +692,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ks
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ksz9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/i2c-ksz9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ksz9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/i2c-ksz9897.c	2022-07-25 20:12:20.250748587 -0700
-@@ -0,0 +1,653 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/i2c-ksz9897.c	2022-07-26 02:15:25.751764353 -0700
+@@ -0,0 +1,651 @@
 +/**
 + * Microchip KSZ9897 I2C driver
 + *
@@ -849,7 +849,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ks
 +	struct i2c_msg msg;
 +	struct i2c_client *i2c = hw_priv->i2cdev;
 +	struct i2c_adapter *adapter = i2c->adapter;
-+	struct ksz_sw *sw = &priv->sw;
 +
 +	if (!mutex_is_locked(&priv->lock))
 +		pr_alert("W not locked\n");
@@ -868,7 +867,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ks
 +
 +	if (i2c_transfer(adapter, &msg, 1) != 1)
 +		pr_alert("i2c_transfer() failed\n");
-+	sw->ops->chk_regs(sw, addr, &hw_priv->txd[I2C_CMD_LEN], txl);
 +}
 +
 +static void i2c_wrreg_size(struct sw_priv *priv, u32 reg, unsigned val,
@@ -48536,8 +48534,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_pt
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.h linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_ptp_9897.h
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_ptp_9897.h	2022-07-25 17:27:19.000000000 -0700
-@@ -0,0 +1,1135 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_ptp_9897.h	2022-07-26 02:36:31.448286761 -0700
+@@ -0,0 +1,1133 @@
 +/**
 + * Microchip PTP common header
 + *
@@ -49482,8 +49480,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_pt
 +	u8 cascade_first;
 +	u8 cascade_total;
 +	u8 cascade_tso;
-+	u32 cascade_sec;
-+	u32 cascade_nsec;
 +	int dev_major;
 +	struct file_dev_info *dev[2];
 +	struct file_dev_info *tsi_dev[MAX_TIMESTAMP_UNIT];
@@ -129355,8 +129351,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ks
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ksz9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/spi-ksz9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ksz9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/spi-ksz9897.c	2022-07-25 20:13:01.718137069 -0700
-@@ -0,0 +1,684 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/spi-ksz9897.c	2022-07-26 02:15:52.513859202 -0700
+@@ -0,0 +1,681 @@
 +/**
 + * Microchip KSZ9897 SPI driver
 + *
@@ -129573,9 +129569,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ks
 +	ret = spi_sync(spi, msg);
 +	if (ret < 0)
 +		pr_alert("spi_sync() failed: %x %u\n", addr, txl);
-+#if 0
-+	sw->ops->chk_regs(sw, addr, tx, txl);
-+#endif
 +}
 +
 +static void spi_wrreg_size(struct sw_priv *priv, u32 reg, u32 val, size_t size)

@@ -944,8 +944,6 @@ struct ptp_info {
 	u8 cascade_first;
 	u8 cascade_total;
 	u8 cascade_tso;
-	u32 cascade_sec;
-	u32 cascade_nsec;
 	int dev_major;
 	struct file_dev_info *dev[2];
 	struct file_dev_info *tsi_dev[MAX_TIMESTAMP_UNIT];

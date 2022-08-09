@@ -520,6 +520,7 @@ struct ptp_cfg_options {
 #define PTP_CMD_ON_TIME			0x04
 #define PTP_CMD_REL_TIME		0x08
 #define PTP_CMD_CLK_OPT			0x10
+#define PTP_CMD_SW_OPER			0x20
 #define PTP_CMD_CASCADE_RESET_OPER	0x40
 #define PTP_CMD_CANCEL_OPER		0x80
 
@@ -654,10 +655,14 @@ struct ptp_output {
 	u64 iterate;
 	u64 len;
 	u32 cycle;
+	u32 hw_ctrl;
+	u32 hw_pulse;
+	u32 hw_cycle;
+	u32 hw_pattern;
 	u16 cnt;
 	u8 event;
-	int gpo;
-	int level;
+	u8 gpo;
+	u8 level;
 };
 
 #define CLOCK_ENTRIES		2
@@ -733,7 +738,8 @@ struct ptp_reg_ops {
 	void (*read_event)(struct ptp_info *ptp, u8 tsi);
 
 	void (*tx_off)(struct ptp_info *ptp, u8 tso);
-	void (*tx_restart)(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec);
+	void (*tx_restart)(struct ptp_info *ptp, u8 tso, u32 ctrl, u32 sec,
+		u32 nsec);
 	void (*tx_event)(struct ptp_info *ptp, u8 tso, u32 ctrl, u32 pulse,
 		u32 cycle, u32 pattern, u32 sec, u32 nsec);
 	void (*pps_event)(struct ptp_info *ptp, u8 gpo, u32 sec);
@@ -925,7 +931,6 @@ struct ptp_info {
 	int tso_used;
 	int tso_sys;
 	int ts_status;
-	int cascade;
 	int cascade_rx;
 	int cascade_tx;
 	struct {
@@ -973,6 +978,10 @@ struct ptp_info {
 	uint overrides;
 
 	u32 clk_add:1;
+	u32 clk_change:1;
+	u32 cascade:1;
+	u32 cascade_sw_each:1;
+	u32 cascade_sw_only:1;
 
 	struct work_struct adj_clk;
 	struct work_struct set_latency;

@@ -641,9 +641,20 @@ static void ptp_tx_off_iba(struct ptp_info *ptp, u8 tso)
 
 static void *tx_on_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
+	struct ptp_info *ptp = obj;
+	u32 *data = in;
+	u8 tso = (u8)data[0];
+
 	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_32, REG_PTP_CTRL_STAT__4, 0);
+
+	/* Do a reset on last TOU in previous cascade operation. */
+	if (ptp->cascade_tx & (1 << (tso + 16))) {
+		ptp->cascade_tx &= ~(1 << (tso + 16));
+		iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32,
+			REG_PTP_CTRL_STAT__4, TRIG_RESET);
+	}
 	iba_cmd_set(info, IBA_CMD_WRITE_0, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
-		TRIG_ENABLE);
+		TRIG_ENABLE | TRIG_RESET);
 	iba_cmd_set(info, IBA_CMD_WRITE_1, IBA_CMD_32, REG_PTP_CTRL_STAT__4,
 		TRIG_ENABLE);
 	return info->fptr;
@@ -661,15 +672,20 @@ static void *tx_trigger_time_iba(struct ksz_iba_info *info, u32 sec, u32 nsec)
 static void *tx_restart_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 *data = in;
-	u32 sec = data[0];
-	u32 nsec = data[1];
+	u32 ctrl = data[1];
+	u32 sec = data[2];
+	u32 nsec = data[3];
 
+	if (ctrl)
+		iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CTRL__4,
+			    ctrl);
 	tx_trigger_time_iba(info, sec, nsec);
-	tx_on_pre(info, NULL, NULL);
+	tx_on_pre(info, in, obj);
 	return info->fptr;
 }  /* tx_restart_pre */
 
-static void ptp_tx_restart_iba(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec)
+static void ptp_tx_restart_iba(struct ptp_info *ptp, u8 tso, u32 ctrl, u32 sec,
+			       u32 nsec)
 {
 	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *info = &sw->info->iba;
@@ -683,13 +699,16 @@ static void ptp_tx_restart_iba(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec)
 	data_in[i] = data;
 	data[0] = PTP_TOU_INDEX_S;
 	data[1] = tso;
-	data += 2;
+
+	/* Re-use tso for next command. */
+	data += 1;
 	func[i++] = ptp_unit_index_pre;
 
 	data_in[i] = data;
-	data[0] = sec;
-	data[1] = nsec;
-	data += 2;
+	data[1] = ctrl;
+	data[2] = sec;
+	data[3] = nsec;
+	data += 4;
 	func[i++] = tx_restart_pre;
 
 	func[i] = NULL;
@@ -700,12 +719,12 @@ static void ptp_tx_restart_iba(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec)
 static void *tx_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 {
 	u32 *data = in;
-	u32 ctrl = data[0];
-	u32 pulse = data[1];
-	u32 cycle = data[2];
-	u32 pattern = data[3];
-	u32 sec = data[4];
-	u32 nsec = data[5];
+	u32 ctrl = data[1];
+	u32 pulse = data[2];
+	u32 cycle = data[3];
+	u32 pattern = data[4];
+	u32 sec = data[5];
+	u32 nsec = data[6];
 
 	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_TRIG_CTRL__4, ctrl);
 	if (pulse)
@@ -721,7 +740,7 @@ static void *tx_event_pre(struct ksz_iba_info *info, void *in, void *obj)
 	/* Trigger time is set later in cascade mode. */
 	if (sec) {
 		tx_trigger_time_iba(info, sec, nsec);
-		tx_on_pre(info, NULL, NULL);
+		tx_on_pre(info, in, obj);
 	}
 	return info->fptr;
 }  /* tx_event_pre */
@@ -745,13 +764,14 @@ static void ptp_tx_event_iba(struct ptp_info *ptp, u8 tso, u32 ctrl, u32 pulse,
 	func[i++] = ptp_unit_index_pre;
 
 	data_in[i] = data;
-	data[0] = ctrl;
-	data[1] = pulse;
-	data[2] = cycle;
-	data[3] = pattern;
-	data[4] = sec;
-	data[5] = nsec;
-	data += 6;
+	data[0] = tso;
+	data[1] = ctrl;
+	data[2] = pulse;
+	data[3] = cycle;
+	data[4] = pattern;
+	data[5] = sec;
+	data[6] = nsec;
+	data += 7;
 	func[i++] = tx_event_pre;
 
 	func[i] = NULL;
@@ -829,6 +849,8 @@ static void ptp_pps_event_iba(struct ptp_info *ptp, u8 gpo, u32 sec)
 	func[i++] = pps_event_pre;
 
 	data_in[i] = data;
+	data[0] = tso;
+	data += 1;
 	func[i++] = tx_on_pre;
 
 	func[i] = NULL;
@@ -916,6 +938,8 @@ static void ptp_10MHz_iba(struct ptp_info *ptp, u8 tso, u8 gpo, u32 sec)
 		func[k++] = ptp_10MHz_pre;
 
 		data_in[k] = data;
+		data[0] = tso;
+		data += 1;
 		func[k++] = tx_on_pre;
 
 		data_out = data;
@@ -1000,6 +1024,12 @@ static int ptp_tx_cascade_iba(struct ptp_info *ptp, u8 first, u8 total,
 		data += 2;
 		func[k++] = ptp_unit_index_pre;
 
+		/* Need reset on last TOU in previous cascade operation. */
+		if (ptp->cascade_tx & (1 << (tso + 16))) {
+			data_in[k] = data;
+			func[k++] = tx_reset_pre;
+			ptp->cascade_tx &= ~(1 << (tso + 16));
+		}
 		data_in[k] = data;
 		data[0] = IBA_CMD_32;
 		data[1] = REG_TRIG_CTRL__4;
@@ -1037,14 +1067,9 @@ static int ptp_tx_cascade_iba(struct ptp_info *ptp, u8 first, u8 total,
 		ptp->cascade_tx |= (1 << tso);
 	}
 
-	/* Do not reset last unit to keep level high. */
-	if (ptp->outputs[last].level) {
-		ptp->cascade_tx &= ~(1 << last);
-		ptp->cascade_gpo[ptp->outputs[last].gpo].tso |= (1 << last);
-	} else
-		ptp->cascade_gpo[ptp->outputs[last].gpo].tso &= ~(1 << last);
-
 	data_in[k] = data;
+	data[0] = last;
+	data += 1;
 	func[k++] = tx_on_pre;
 
 	func[k] = NULL;
@@ -1052,118 +1077,6 @@ static int ptp_tx_cascade_iba(struct ptp_info *ptp, u8 first, u8 total,
 	rc = info->ops->reqs(info, data_in, NULL, cur, func, NULL);
 	return 0;
 }  /* ptp_tx_cascade_iba */
-
-static void *start_pre_1(struct ksz_iba_info *info, void *in, void *obj)
-{
-	iba_cmd_set(info, IBA_CMD_READ, IBA_CMD_16, REG_PTP_MSG_CONF1, 0);
-	iba_cmd(info, IBA_CMD_READ, IBA_CMD_16, REG_PTP_MSG_CONF2);
-	iba_cmd(info, IBA_CMD_READ, IBA_CMD_16, REG_PTP_DOMAIN_VERSION);
-	return info->fptr;
-}  /* start_pre_1 */
-
-static int start_post_1(struct ksz_iba_info *info, void *out, void *obj)
-{
-	u32 *data = out;
-	int i = 0;
-
-	while (info->regs[i].cmd != (u32) -1) {
-		if (IBA_CMD_READ == (info->regs[i].cmd >> IBA_CMD_S)) {
-			u32 reg = (info->regs[i].cmd & IBA_CMD_ADDR_M);
-			u32 size = (info->regs[i].cmd & IBA_CMD_32);
-
-			switch (reg) {
-			case REG_PTP_MSG_CONF1:
-				data[0] = info->ops->get_val(size,
-					info->regs[i].data[0]);
-				break;
-			case REG_PTP_MSG_CONF2:
-				data[1] = info->ops->get_val(size,
-					info->regs[i].data[0]);
-				break;
-			case REG_PTP_DOMAIN_VERSION:
-				data[2] = info->ops->get_val(size,
-					info->regs[i].data[0]);
-				break;
-			}
-		}
-		i++;
-	}
-	return i;
-}  /* start_post_1 */
-
-static void *start_pre_2(struct ksz_iba_info *info, void *in, void *obj)
-{
-	struct ptp_info *ptp = obj;
-
-	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16, REG_PTP_MSG_CONF1,
-		ptp->mode);
-	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_16, REG_PTP_MSG_CONF2,
-		ptp->cfg);
-	iba_cmd_set(info, IBA_CMD_WRITE, IBA_CMD_32, REG_PTP_INT_STATUS__4,
-		0xffffffff);
-	return info->fptr;
-}  /* start_pre_2 */
-
-static void ptp_start_iba(struct ptp_info *ptp, int init)
-{
-	struct ksz_sw *sw = ptp->parent;
-	struct ksz_iba_info *info = &sw->info->iba;
-	u32 data[3];
-	u16 ctrl;
-	struct timespec ts;
-	struct ptp_utime t;
-
-	if (!ptp->version) {
-		ptp_hw_enable(ptp);
-		ptp_check(ptp);
-		if (ptp->test_access_time)
-			ptp->test_access_time(ptp);
-		ptp_init_hw(ptp);
-	} else {
-		if (init && (sw->features & NEW_CAP))
-			ptp_hw_enable(ptp);
-
-		/* Update access time calculated with SPI. */
-		if (ptp->get_delay > 80000)
-			ptp->get_delay = 80000;
-	}
-	ptp->ops->acquire(ptp);
-	info->ops->req(info, data, data, NULL, start_pre_1, start_post_1);
-	ctrl = data[0];
-	if (ctrl == ptp->mode) {
-		ptp->cfg = data[1];
-		ptp->domain = data[2] & PTP_DOMAIN_M;
-		if (!init) {
-			ptp->ops->release(ptp);
-			return;
-		}
-	} else if (!init)
-		ptp->mode = ctrl;
-	if (ptp->mode != ptp->def_mode) {
-		dbg_msg("mode changed: %04x %04x; %04x %04x"NL,
-			ptp->mode, ptp->def_mode, ptp->cfg, ptp->def_cfg);
-		ptp->mode = ptp->def_mode;
-		ptp->cfg = ptp->def_cfg;
-		ptp->ptp_synt = false;
-	}
-	dbg_msg("ptp_start: %04x %04x"NL,
-		ptp->mode, ptp->cfg);
-	info->ops->req(info, data, NULL, ptp, start_pre_2, NULL);
-	ptp->tx_intr = PTP_PORT_XDELAY_REQ_INT;
-	ptp_tx_intr_enable(ptp);
-	ptp->ops->release(ptp);
-
-	ts = ktime_to_timespec(ktime_get_real());
-	t.sec = ts.tv_sec;
-	t.nsec = ts.tv_nsec;
-	ptp->ops->acquire(ptp);
-	set_ptp_time_iba(ptp, &t);
-	ptp->cur_time = t;
-	ptp->ops->release(ptp);
-
-	prepare_pps(ptp);
-	ptp->started = true;
-}  /* ptp_start_iba */
 
 static struct ptp_reg_ops ptp_iba_ops = {
 	.get_time		= get_ptp_time_iba,
@@ -1185,5 +1098,5 @@ static struct ptp_reg_ops ptp_iba_ops = {
 	.ptp_10MHz		= ptp_10MHz_iba,
 	.tx_cascade		= ptp_tx_cascade_iba,
 
-	.start			= ptp_start_iba,
+	.start			= ptp_start,
 };

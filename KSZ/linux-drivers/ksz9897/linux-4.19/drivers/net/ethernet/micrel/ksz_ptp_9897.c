@@ -26,6 +26,9 @@
 #if 0
 #define DBG_MSG_DROP
 #endif
+#if 0
+#define TEST_SW_EXEC
+#endif
 
 
 static int mhz_gpo;
@@ -173,24 +176,6 @@ static void add_large_nsec(u32 *sec, u32 *nsec, u64 delay)
 	*nsec = rem;
 }  /* add_large_nsec */
 
-static void sub_large_nsec(u32 *sec, u32 *nsec, u64 delay)
-{
-	u64 s = delay;
-	u32 rem;
-
-	s = div_u64_u32_rem(s, NANOSEC_IN_SEC, &rem);
-
-	/* Cannot get into negative value. */
-	if (*sec + 1 > s) {
-		*sec -= s;
-		if (*nsec < rem) {
-			*nsec += NANOSEC_IN_SEC;
-			(*sec)--;
-		}
-		*nsec -= rem;
-	}
-}  /* sub_large_nsec */
-
 static void add_nsec(struct ptp_utime *t, u32 nsec)
 {
 	t->nsec += nsec;
@@ -225,26 +210,39 @@ static void update_ts(struct ptp_ts *ts, u32 cur_sec)
 }  /* update_ts */
 
 #define INIT_NSEC			40
-#define MIN_CYCLE_NSEC			8
-#define MIN_GAP_NSEC			120
+/* Need at least 24 ns for level to go back to initial. */
+#define MIN_CYCLE_NSEC			40
+#define MIN_EDGE_NSEC			8
+#define MIN_GAP_NSEC			40
 #define PULSE_NSEC			8
+
+/* 5 ms */
+#define MIN_TIME_BEFORE_TRIGGER  5000000
 
 static int check_gap(struct ptp_info *ptp, struct ptp_output *a,
 		     struct ptp_output *b)
 {
 	int gap = MIN_GAP_NSEC;
 
-	if (a->event == b->event && a->event >= TRIG_NEG_PERIOD) {
+	/* Driver is doing cascade mode. */
+	if (ptp->cascade_sw_each)
+		return 0;
+
+	/* Only check signals with count. */
+	if (a->event < TRIG_NEG_PERIOD || b->event < TRIG_NEG_PERIOD)
+		return gap;
+	if (a->event == b->event &&
+	    (a->event == TRIG_POS_PERIOD ||
+	     b->event == TRIG_REG_OUTPUT)) {
+		/* 2 combinations. */
 		gap = 0;
-	} else if ((a->event == TRIG_NEG_PERIOD &&
-		   b->event == TRIG_POS_PERIOD) ||
-		   (a->event == TRIG_POS_PERIOD &&
-		   b->event == TRIG_NEG_PERIOD) ||
-		   (a->event == TRIG_NEG_PERIOD &&
-		   b->event == TRIG_REG_OUTPUT) ||
-		   (a->event == TRIG_POS_PERIOD &&
-		   b->event == TRIG_REG_OUTPUT)) {
+	} else if (a->event == TRIG_NEG_PERIOD &&
+		   b->event == TRIG_NEG_PERIOD) {
+		/* 1 combination. */
 		gap = 8;
+	} else {
+		/* 6 combinations. */
+		gap = 0;
 	}
 	return gap;
 }
@@ -283,7 +281,11 @@ static int check_cascade(struct ptp_info *ptp, int first, int total,
 				cur->gap.sec, cur->gap.nsec);
 			dbg_msg("gap too small: %d=%d.%d"NL, i,
 				cur->gap.sec, cur->gap.nsec);
-			return 1;
+
+			/* Allow operation to run for testing verification. */
+			if (cur->event < TRIG_NEG_PERIOD ||
+			    next->event < TRIG_NEG_PERIOD)
+				return 1;
 		}
 	}
 	if (1 == *repeat)
@@ -438,7 +440,7 @@ static void ptp_tso_off(struct ptp_info *ptp, u8 tso, u16 tso_bit)
 		printk(KERN_INFO "tso %d off!"NL, tso);
 		ptp->tso_sys &= ~tso_bit;
 	}
-	tso_bit <<= 8;
+	tso_bit <<= 16;
 	ptp->tso_intr &= ~tso_bit;
 	ptp->tso_dev[tso] = NULL;
 	ptp->tso_cnt[tso] = 0;
@@ -885,10 +887,18 @@ static void ptp_tx_on(struct ptp_info *ptp, u8 tso)
 	ctrl = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 	ctrl &= ~(TRIG_RESET | TS_RESET);
 
+	/* Do a reset on last TOU in previous cascade operation. */
+	if (ptp->cascade_tx & (1 << (tso + 16))) {
+		ptp->cascade_tx &= ~(1 << (tso + 16));
+		ctrl |= TRIG_RESET;
+		ctrl |= TRIG_ENABLE;
+	}
+
 	/* Need to disable and enable for interrupt mechanism to work. */
 	if (ctrl & TRIG_ENABLE) {
 		ctrl &= ~TRIG_ENABLE;
 		sw->reg->w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
+		ctrl &= ~TRIG_RESET;
 	}
 	ctrl |= TRIG_ENABLE;
 	sw->reg->w32(sw, REG_PTP_CTRL_STAT__4, ctrl);
@@ -911,9 +921,15 @@ static void ptp_tx_start(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec)
 	ptp_tx_on(ptp, tso);
 }  /* ptp_tx_start */
 
-static void ptp_tx_restart(struct ptp_info *ptp, u8 tso, u32 sec, u32 nsec)
+static void ptp_tx_restart(struct ptp_info *ptp, u8 tso, u32 ctrl, u32 sec,
+			   u32 nsec)
 {
 	ptp_write_index(ptp, PTP_TOU_INDEX_S, tso);
+	if (ctrl) {
+		struct ksz_sw *sw = ptp->parent;
+
+		sw->reg->w32(sw, REG_TRIG_CTRL__4, ctrl);
+	}
 	ptp_tx_start(ptp, tso, sec, nsec);
 }  /* ptp_tx_restart */
 
@@ -930,6 +946,25 @@ static u32 trig_event_gpo(u8 gpo, u8 event)
 	return ctrl;
 }
 
+static u8 determine_last_level(u32 pattern, u16 cnt)
+{
+	u8 level = 0;
+
+	if (cnt) {
+		u16 reg;
+
+		reg = cnt - 1;
+		reg %= 16;
+		while (reg) {
+			pattern >>= 1;
+			reg--;
+		}
+		if (pattern & 1)
+			level = 1;
+	}
+	return level;
+}  /* determine_last_level */
+
 static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	u32 pulse, u32 cycle, u16 cnt, u16 real_cnt, u32 sec, u32 nsec,
 	u64 iterate, int intr, int now, int opt,
@@ -941,6 +976,9 @@ static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	*hw_pulse = 0;
 	*hw_cycle = 0;
 	*pattern = 0;
+
+	/* Remember the event. */
+	cur->event = event;
 
 	/* Config pattern. */
 	*ctrl = trig_event_gpo(gpo, event);
@@ -955,19 +993,7 @@ static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	/* Config pulse width. */
 	if (TRIG_REG_OUTPUT == event) {
 		*pattern = pulse & TRIG_BIT_PATTERN_M;
-		cur->level = 0;
-		if (cnt) {
-			u32 reg;
-
-			reg = cnt - 1;
-			reg %= 16;
-			while (reg) {
-				pulse >>= 1;
-				reg--;
-			}
-			if (pulse & 1)
-				cur->level = 1;
-		}
+		cur->level = determine_last_level(pulse, cnt);
 		pulse = 0;
 	} else if (event >= TRIG_NEG_PULSE) {
 		if (0 == pulse)
@@ -978,7 +1004,7 @@ static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	}
 
 	/* Config cycle width. */
-	if (event >= TRIG_NEG_PERIOD) {
+	if (cur->event >= TRIG_NEG_PERIOD) {
 		u32 data = cnt;
 		int min_cycle = pulse * PULSE_NSEC + MIN_CYCLE_NSEC;
 
@@ -990,9 +1016,13 @@ static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 		*pattern |= data;
 		*hw_cycle = cycle;
 	}
+	cur->hw_pulse = *hw_pulse;
+	cur->hw_cycle = *hw_cycle;
+	cur->hw_pattern = *pattern;
+	cur->hw_ctrl = *ctrl;
 
 	cur->len = 0;
-	if (event >= TRIG_NEG_PERIOD) {
+	if (cur->event >= TRIG_NEG_PERIOD) {
 		u64 len = cycle;
 
 		len *= real_cnt;
@@ -1000,10 +1030,12 @@ static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 			cur->len += len;
 		else
 			cur->len += 0xFFFFFFF0;
-	} else if (event >= TRIG_NEG_PULSE)
+	} else if (cur->event >= TRIG_NEG_PULSE)
 		cur->len += pulse * PULSE_NSEC;
 	else
-		cur->len += MIN_CYCLE_NSEC;
+		cur->len += MIN_EDGE_NSEC;
+
+	/* Save the count users want in case the operation is restarted. */
 	cur->cnt = 0;
 	if (cnt != real_cnt)
 		cur->cnt = real_cnt - 1;
@@ -1012,7 +1044,6 @@ static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	cur->start.nsec = nsec;
 	cur->iterate = iterate;
 	cur->cycle = cycle;
-	cur->event = event;
 	cur->trig = cur->start;
 	cur->stop = cur->start;
 	add_large_nsec(&cur->stop.sec, &cur->stop.nsec, cur->len);
@@ -1027,8 +1058,10 @@ static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 		add_nsec(&cur->intr, pulse);
 	}
 	cur->gpo = gpo;
+
+	/* Indicate have interrupt notification for internal use. */
 	if (intr && cnt)
-		ptp->tso_intr |= (tso_bit << 8);
+		ptp->tso_intr |= (tso_bit << 16);
 
 	switch (event) {
 	case TRIG_POS_EDGE:
@@ -1050,7 +1083,7 @@ static void ptp_setup_tx(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	 * Need to reset after completion.  Otherwise, this output pattern
 	 * does not behave consistently in cascade mode.
 	 */
-	if (TRIG_NEG_EDGE == event)
+	if (TRIG_NEG_EDGE == cur->event)
 		ptp->cascade_tx |= tso_bit;
 
 	ptp->cascade_gpo[gpo].total = 0;
@@ -1081,7 +1114,7 @@ static void ptp_tx_event(struct ptp_info *ptp, u8 tso, u32 ctrl, u32 pulse,
 
 static void ptp_core_tx_event(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	u32 pulse, u32 cycle, u16 cnt, u32 sec, u32 nsec, u64 iterate,
-	int intr, int now, int opt)
+	int intr, int now, int opt, int sw_oper)
 {
 	struct ptp_output *cur = &ptp->outputs[tso];
 	u16 hw_cnt;
@@ -1095,16 +1128,28 @@ static void ptp_core_tx_event(struct ptp_info *ptp, u8 tso, u8 gpo, u8 event,
 	hw_cnt = cnt;
 
 	/* Hardware cannot handle repeat time of more than 1 second. */
-	if (cnt != 1 && event >= TRIG_NEG_PERIOD && event != TRIG_REG_OUTPUT &&
-	    cycle > NANOSEC_IN_SEC) {
+	if ((sw_oper || cnt != 1) &&
+	    (event >= TRIG_NEG_PERIOD &&
+	     (sw_oper || cycle > NANOSEC_IN_SEC))) {
 
 		/* Save count for cascade mode repeat. */
-		ptp->tso_cnt[tso] = cnt - 1;
-		hw_cnt = 1;
+		if (event != TRIG_REG_OUTPUT) {
+			ptp->tso_cnt[tso] = cnt - 1;
+			hw_cnt = 1;
+		}
 		intr = 1;
-		if (ptp->cascade)
-			ptp->cascade_tso = ptp->cascade_gpo[gpo].first +
-				ptp->cascade_gpo[gpo].total;
+		if (ptp->cascade) {
+			u8 level = 0;
+
+			if (event == TRIG_REG_OUTPUT)
+				level = determine_last_level(pulse, cnt);
+			ptp->cascade_sw_each = 1;
+
+			/* Level will stay high for any TOU doing it. */
+			if (event == TRIG_NEG_PERIOD ||
+			    (event == TRIG_REG_OUTPUT && level))
+				ptp->cascade_sw_only = 1;
+		}
 	}
 
 	/* Hardware immediately keeps level high on new GPIO if not reset. */
@@ -1267,6 +1312,16 @@ static int ptp_tx_cascade(struct ptp_info *ptp, u8 first, u8 total,
 	for (i = 0; i < total; i++, tso--) {
 		cur = &ptp->outputs[tso];
 		ptp_write_index(ptp, PTP_TOU_INDEX_S, tso);
+
+		/* Need reset on last TOU in previous cascade operation. */
+		if (ptp->cascade_tx & (1 << (tso + 16))) {
+			struct ksz_sw *sw = ptp->parent;
+			u32 ctrl;
+
+			ctrl = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
+			ptp_tx_reset(ptp, tso, &ctrl);
+			ptp->cascade_tx &= ~(1 << (tso + 16));
+		}
 		ptp_tx_trigger_time(ptp, tso, cur->trig.sec,
 			cur->trig.nsec);
 		ptp_tx_cascade_cycle(ptp, tso, (u32)cur->iterate);
@@ -1274,12 +1329,6 @@ static int ptp_tx_cascade(struct ptp_info *ptp, u8 first, u8 total,
 		ptp->cascade_tx |= (1 << tso);
 	}
 
-	/* Do not reset last unit to keep level high. */
-	if (ptp->outputs[last].level) {
-		ptp->cascade_tx &= ~(1 << last);
-		ptp->cascade_gpo[ptp->outputs[last].gpo].tso |= (1 << last);
-	} else
-		ptp->cascade_gpo[ptp->outputs[last].gpo].tso &= ~(1 << last);
 	ptp_tx_on(ptp, first);
 	return 0;
 }  /* ptp_tx_cascade */
@@ -1621,8 +1670,8 @@ static void ptp_tx_done(struct ptp_info *ptp, int tso)
 
 	ptp_write_index(ptp, PTP_TOU_INDEX_S, tso);
 	data = sw->reg->r32(sw, REG_TRIG_CTRL__4);
+	last = tso;
 	if (data & TRIG_CASCADE_ENABLE) {
-		last = tso;
 		do {
 			--tso;
 			ptp_write_index(ptp, PTP_TOU_INDEX_S, tso);
@@ -1637,6 +1686,24 @@ static void ptp_tx_done(struct ptp_info *ptp, int tso)
 			ptp_tso_off(ptp, tso, (1 << tso));
 	}
 	ptp_tso_off(ptp, tso, (1 << tso));
+
+	prev = 0;
+	data = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
+	if (ptp->outputs[last].level != !!(data & GPIO_IN)) {
+		dbg_msg(" wrong level: %d=%d %d\n",
+			last, ptp->outputs[last].level, !!(data & GPIO_IN));
+		prev = 1;
+	}
+	if (ptp->cascade_total &&
+	    last >= ptp->cascade_first &&
+	    last < ptp->cascade_first + ptp->cascade_total) {
+		last = ptp->cascade_first + ptp->cascade_total - 1;
+		if (prev && ptp->outputs[last].level == !!(data & GPIO_IN)) {
+			dbg_msg(" correct level: %d=%d\n",
+				last, ptp->outputs[last].level);
+		}
+		ptp->cascade_total = 0;
+	}
 }  /* ptp_tx_done */
 
 static u64 get_factor_unit(u32 unit, u8 factor)
@@ -1658,22 +1725,262 @@ static u64 get_iterate(struct ptp_tso_options *cmd)
 	return iterate;
 }
 
-static bool ptp_do_repeat(struct ptp_info *ptp, u8 tso)
-{
-	struct ptp_output *cur = &ptp->outputs[tso];
-	struct ptp_utime *trig = &cur->trig;
+/* 10 ms */
+#define MIN_NEXT_TRIG_TIME  10000000
 
-	if (ptp->tso_cnt[tso]) {
-		add_large_nsec(&trig->sec, &trig->nsec, cur->cycle);
-		add_large_nsec(&cur->intr.sec, &cur->intr.nsec, cur->cycle);
+static void update_next_trigger(struct ptp_utime *t, struct ptp_utime *trig,
+				u32 nsec)
+{
+	struct ksz_ptp_time d;
+	struct ptp_utime s;
+
+	s.sec = trig->sec;
+	s.nsec = trig->nsec;
+	calc_udiff(t, &s, &d);
+
+	/* When operation is first started. */
+	if (!nsec) {
+		nsec = NANOSEC_IN_SEC;
+		if (s.sec == t->sec && s.nsec < t->nsec)
+			add_nsec(&s, nsec);
 	} else {
-		add_large_nsec(&cur->start.sec, &cur->start.nsec, cur->iterate);
-		add_large_nsec(&cur->stop.sec, &cur->stop.nsec, cur->iterate);
-		*trig = cur->start;
-		cur->intr = cur->stop;
+		/* Move the trigger time closer to current time. */
+		if (d.sec > 1 || d.sec <= -1) {
+			s.sec = t->sec;
+		}
+
+		/* Move the trigger time quickly if the interval is small. */
+		if (nsec < 100000000 && s.nsec < t->nsec) {
+			u32 diff = t->nsec - s.nsec;
+
+			diff /= nsec;
+			diff *= nsec;
+			add_nsec(&s, diff);
+		}
 	}
 
-	ptp->reg->tx_restart(ptp, tso, trig->sec, trig->nsec);
+	/* Find the next trigger time that is long enough to program. */
+	do {
+		calc_udiff(t, &s, &d);
+
+		/* Not enough time to start the operation. */
+		if (d.sec == 0 && d.nsec < MIN_NEXT_TRIG_TIME)
+			add_large_nsec(&s.sec, &s.nsec, nsec);
+	} while (d.sec == 0 && d.nsec < MIN_NEXT_TRIG_TIME);
+	*trig = s;
+}  /* update_next_trigger */
+
+static void update_trig_and_intr(struct ptp_utime *t, struct ptp_utime *r,
+				 struct ptp_utime *i, u32 cycle)
+{
+	struct ksz_ptp_time d;
+
+	calc_udiff(r, i, &d);
+	update_next_trigger(t, r, cycle);
+	*i = *r;
+	add_nsec(i, d.nsec);
+}  /* update_trig_and_intr */
+
+static bool ptp_core_tx_cascade(struct ptp_info *ptp, u8 tso, u8 total,
+	u16 cnt, u32 sec, u32 nsec, int intr)
+{
+	struct ptp_output *cur, *cascade;
+	struct ptp_utime *trig;
+	u16 orig_cnt;
+	u8 i, j;
+
+	/* Sanity check on tso parameter. */
+	j = tso + total - 1;
+	if (j >= MAX_TRIG_UNIT)
+		return false;
+
+	ptp->cascade_first = tso;
+	ptp->cascade_total = total;
+	ptp->cascade = 0;
+
+	/* Set the trigger time of cascaded operation. */
+	trig = &ptp->outputs[MAX_TRIG_UNIT].trig;
+	trig->sec = sec;
+	trig->nsec = nsec;
+
+	/* Assume software needed to repeat operations. */
+	ptp->tso_cnt[MAX_TRIG_UNIT] = cnt - 1;
+dbg_msg("cascade_sw: %d %d\n", ptp->cascade_sw_each, ptp->cascade_sw_only);
+
+	/* Need software to execute each TOU operation individually. */
+	if (ptp->cascade_sw_each) {
+		ptp->ops->acquire(ptp);
+		ptp->cascade_tso = tso;
+
+		/* Prepare the trigger time for each TOU operation. */
+		cur = &ptp->outputs[tso];
+		trig = &cur->trig;
+		if (cur->level)
+			ptp->cascade_gpo[cur->gpo].tso |= (1 << tso);
+		else
+			ptp->cascade_gpo[cur->gpo].tso &= ~(1 << tso);
+		ptp->reg->tx_restart(ptp, tso, 0, trig->sec, trig->nsec);
+		ptp->ops->release(ptp);
+		return true;
+	}
+
+	/* Repeat may not work reliably if iterate is more than 1 second. */
+	orig_cnt = cnt;
+	if (cnt != 1) {
+		j = tso;
+		for (i = 0; i < total; i++, j++) {
+			cur = &ptp->outputs[tso];
+			if (cur->iterate > NANOSEC_IN_SEC) {
+
+				/* Hardware does it once. */
+				cnt = 1;
+				intr = 1;
+				break;
+			}
+		}
+	}
+
+	/* Hardware can execute repeat operation. */
+	if (orig_cnt == cnt)
+		ptp->tso_cnt[MAX_TRIG_UNIT] = 0;
+	ptp->ops->acquire(ptp);
+	ptp->reg->tx_cascade(ptp, tso, total, cnt, sec, nsec, intr);
+
+	/* Do not reset last unit to keep level high. */
+	j = tso + total - 1;
+	if (ptp->outputs[j].level) {
+		ptp->cascade_tx &= ~(1 << j);
+		ptp->cascade_tx |= (1 << (j + 16));
+		ptp->cascade_gpo[ptp->outputs[j].gpo].tso |= (1 << j);
+	} else {
+		ptp->cascade_gpo[ptp->outputs[j].gpo].tso &= ~(1 << j);
+	}
+	ptp->ops->release(ptp);
+
+	/* Remember the count in case the operation needs to be restarted. */
+	cascade = &ptp->outputs[MAX_TRIG_UNIT];
+	cascade->cnt = cnt;
+	j = tso + total - 1;
+	cur = &ptp->outputs[j];
+	cascade->intr = cur->intr;
+	return true;
+}  /* ptp_core_tx_cascade */
+
+static void update_new_cascade_time(struct ptp_info *ptp, u8 tso,
+				    struct ptp_utime *t, struct ptp_utime *r)
+{
+	struct ksz_ptp_time d_start[MAX_TRIG_UNIT];
+	struct ksz_ptp_time d_stop[MAX_TRIG_UNIT];
+	struct ksz_ptp_time d_intr, d_trig;
+	struct ptp_output *first, *cur, *next, *out;
+	struct ptp_utime s, *n;
+	u32 nsec = 1000000000;
+	u8 i;
+
+	cur = &ptp->outputs[tso];
+	tso = ptp->cascade_first;
+	first = &ptp->outputs[tso];
+	if (first != cur) {
+		calc_udiff(&first->start, &cur->start, &d_trig);
+		calc_udiff(&first->stop, &cur->stop, &d_intr);
+	}
+
+	/* Calculate differences between start and stop times. */
+	for (i = 0; i < ptp->cascade_total; i++, tso++) {
+		out = &ptp->outputs[tso];
+		calc_udiff(&out->start, &out->stop, &d_stop[i]);
+		if (i == ptp->cascade_total - 1)
+			break;
+		next = &ptp->outputs[tso + 1];
+		calc_udiff(&out->start, &next->start, &d_start[i]);
+	}
+
+	n = &cur->start;
+	s.sec = t->sec;
+	s.nsec = n->nsec;
+	if (cur->iterate < 4000000000UL)
+		nsec = (u32)cur->iterate;
+	update_next_trigger(t, &s, nsec);
+	*n = s;
+	*r = s;
+
+	/* Current operating TOU may not be the first. */
+	if (first != cur) {
+		s.sec -= d_trig.sec;
+		sub_nsec(&s, d_trig.nsec);
+		first->start = s;
+		s = first->stop;
+		s.sec -= d_intr.sec;
+		sub_nsec(&s, d_intr.nsec);
+		first->stop = s;
+	}
+
+	tso = ptp->cascade_first;
+	for (i = 0; i < ptp->cascade_total; i++, tso++) {
+		out = &ptp->outputs[tso];
+		if (i > 0) {
+			u8 j = i - 1;
+
+			next = &ptp->outputs[tso - 1];
+			out->start.sec = next->start.sec + d_start[j].sec;
+			out->start.nsec = next->start.nsec;
+			add_nsec(&out->start, d_start[j].nsec);
+		}
+		out->stop = out->start;
+		out->stop.sec += d_stop[i].sec;
+		add_nsec(&out->stop, d_stop[i].nsec);
+		out->trig = out->start;
+		out->intr = out->stop;
+	}
+}  /* update_new_cascade_time */
+
+static bool chk_next_trig(struct ptp_info *ptp, struct ptp_utime *t,
+			  struct ptp_output *cur)
+{
+	struct ptp_utime *trig = &cur->trig;
+	struct ksz_ptp_time d;
+	bool rc = false;
+
+	calc_udiff(t, trig, &d);
+	if (d.sec < 0 || (d.sec == 0 && d.nsec < MIN_TIME_BEFORE_TRIGGER)) {
+dbg_msg("%x:%9u %x:%9u %d\n",
+	t->sec & 0xf, t->nsec, trig->sec & 0xf, trig->nsec, d.nsec);
+		rc = true;
+	}
+	if (rc && !ptp->clk_change)
+		rc = false;
+	return rc;
+}  /* chk_next_trig */
+
+static bool ptp_do_repeat(struct ptp_info *ptp, u8 tso, u16 done,
+			  struct ptp_utime *t)
+{
+	struct ptp_output *cur;
+	struct ptp_utime *trig;
+	u8 tso_acting = tso;
+
+	if (ptp->cascade_sw_only) {
+		tso_acting = ptp->cascade_tso;
+	}
+	cur = &ptp->outputs[tso_acting];
+	trig = &cur->trig;
+	add_large_nsec(&trig->sec, &trig->nsec, cur->cycle);
+	add_large_nsec(&cur->intr.sec, &cur->intr.nsec, cur->cycle);
+
+	if (chk_next_trig(ptp, t, cur)) {
+dbg_msg(" mt0 %x:%9u %x:%9u\n",
+	t->sec & 0xf, t->nsec, trig->sec & 0xf, trig->nsec);
+		if (ptp->tso_cnt[tso]) {
+			update_trig_and_intr(t, &cur->trig, &cur->intr,
+					     cur->cycle);
+		}
+	}
+
+	ptp->reg->tx_restart(ptp, tso, 0, trig->sec, trig->nsec);
+
+	/* In case this is done for cascade mode. */
+	if (ptp->tso_cnt[MAX_TRIG_UNIT])
+		ptp->outputs[MAX_TRIG_UNIT].intr = cur->intr;
 
 	/* Not forever. */
 	if (ptp->tso_cnt[tso] != 0xFFFF)
@@ -1682,24 +1989,38 @@ static bool ptp_do_repeat(struct ptp_info *ptp, u8 tso)
 	return true;
 }  /* ptp_do_repeat */
 
-static bool ptp_do_cascade_each(struct ptp_info *ptp, u8 tso)
+static bool ptp_do_cascade_each(struct ptp_info *ptp, u8 tso, u16 done,
+				struct ptp_utime *t)
 {
 	struct ptp_output *cur;
 	struct ptp_utime *trig;
 	u8 tso_next = tso + 1;
 	u8 i, j;
 
+	j = ptp->cascade_first + ptp->cascade_total;
+	ptp->cascade_tso++;
+	if (ptp->cascade_sw_only) {
+		tso = ptp->cascade_tso - 1;
+		tso_next = ptp->cascade_tso;
+	}
+	if (ptp->cascade_tso == j) {
+		ptp->cascade_tso = ptp->cascade_first;
+	}
+
 	/* Last TOU is done in cascaded TOU. */
-	if (tso_next == ptp->cascade_tso) {
+	if (tso_next == j) {
 		if (ptp->tso_cnt[MAX_TRIG_UNIT]) {
 			/* Not forever. */
 			if (ptp->tso_cnt[MAX_TRIG_UNIT] != 0xFFFF)
 				ptp->tso_cnt[MAX_TRIG_UNIT]--;
 		} else {
-			ptp->cascade_tso = 0;
-			for (tso_next = ptp->cascade_first;
-			     tso_next != tso; tso_next++)
-				ptp_tx_done(ptp, tso_next);
+			j = ptp->cascade_first;
+			if (ptp->cascade_sw_only)
+				j++;
+			ptp->cascade_sw_each = 0;
+			ptp->cascade_sw_only = 0;
+			for (i = 0; i < ptp->cascade_total - 1; i++, j++)
+				ptp_tso_off(ptp, j, (1 << j));
 			return false;
 		}
 		j = ptp->cascade_first;
@@ -1722,15 +2043,39 @@ static bool ptp_do_cascade_each(struct ptp_info *ptp, u8 tso)
 	*trig = cur->start;
 	cur->intr = cur->stop;
 
-	ptp->reg->tx_restart(ptp, tso, trig->sec, trig->nsec);
+	if (chk_next_trig(ptp, t, cur)) {
+dbg_msg(" %x:%9u %x:%9u; ", cur->start.sec & 0xf, cur->start.nsec,
+		cur->stop.sec & 0xf, cur->stop.nsec);
+dbg_msg(" mt1: %d %x:%9u\n", tso, t->sec & 0xf, t->nsec);
+		update_new_cascade_time(ptp, tso, t, trig);
+	}
+
+	if (ptp->cascade_sw_only) {
+		tso = ptp->cascade_first;
+		ptp->reg->tx_event(ptp, tso, cur->hw_ctrl, cur->hw_pulse,
+				   cur->hw_cycle, cur->hw_pattern, trig->sec,
+				   trig->nsec);
+		if (cur->level)
+			ptp->cascade_gpo[cur->gpo].tso |= (1 << tso);
+		else
+			ptp->cascade_gpo[cur->gpo].tso &= ~(1 << tso);
+	} else {
+		ptp->reg->tx_restart(ptp, tso, 0, trig->sec, trig->nsec);
+	}
 
 	/* May need software to execute the repetition. */
-	ptp->tso_cnt[tso] = cur->cnt;
+	if (cur->event != TRIG_REG_OUTPUT)
+		ptp->tso_cnt[tso] = cur->cnt;
 
+	/* This is done for cascade mode. */
+	ptp->outputs[MAX_TRIG_UNIT].intr = cur->intr;
+
+	/* Reset check. */
 	tso = ptp->cascade_first;
 	for (i = 0; i < ptp->cascade_total; i++, tso++) {
 		ptp->tso_chk[tso] = 0;
 	}
+	ptp->tso_chk[MAX_TRIG_UNIT] = 0;
 	return true;
 }  /* ptp_do_cascade_each */
 
@@ -1758,6 +2103,8 @@ static bool ptp_do_cascade_repeat(struct ptp_info *ptp)
 	/* Not forever. */
 	if (ptp->tso_cnt[MAX_TRIG_UNIT] != 0xFFFF)
 		ptp->tso_cnt[MAX_TRIG_UNIT]--;
+
+	/* Reset check. */
 	tso = ptp->cascade_first;
 	for (i = 0; i < ptp->cascade_total; i++, tso++) {
 		ptp->tso_chk[tso] = 0;
@@ -1765,25 +2112,6 @@ static bool ptp_do_cascade_repeat(struct ptp_info *ptp)
 	ptp->tso_chk[MAX_TRIG_UNIT] = 0;
 	return true;
 }  /* ptp_do_cascade_repeat */
-
-static void update_next_trigger(struct ptp_utime *t, struct ptp_utime *trig)
-{
-	struct ksz_ptp_time d;
-	struct ptp_utime s;
-
-	if (trig->sec > 10)
-		dbg_msg(" trig too large %d?"NL, trig->sec);
-	s.sec = t->sec + trig->sec;
-	s.nsec = trig->nsec;
-	if (s.sec == t->sec && s.nsec < t->nsec)
-		s.sec++;
-	calc_udiff(t, &s, &d);
-
-	/* Not enough time to start the operation. */
-	if (d.sec == 0 && d.nsec < 5000000)
-		s.sec++;
-	*trig = s;
-}  /* update_next_trigger */
 
 static void ptp_chk_hw_repeat(struct ptp_info *ptp)
 {
@@ -1803,84 +2131,52 @@ static void ptp_chk_hw_repeat(struct ptp_info *ptp)
 
 		/* Process only hardware repeat forever operations here. */
 		cur = &ptp->outputs[i];
-		if (ptp->tso_intr & (1 << (i + 8)) || cur->len != 0xFFFFFFF0)
+		if (ptp->tso_intr & (1 << (i + 16)) || cur->len != 0xFFFFFFF0)
 			continue;
 		if (!t.sec)
 			ptp->reg->get_time(ptp, &t);
-		s.sec = 0;
+		s.sec = t.sec;
 		s.nsec = cur->start.nsec;
-		update_next_trigger(&t, &s);
-		ptp->reg->tx_restart(ptp, i, s.sec, s.nsec);
+		update_next_trigger(&t, &s, cur->cycle);
+		ptp->reg->tx_restart(ptp, i, 0, s.sec, s.nsec);
 		ptp->tso_chk[i] = 0;
 	}
-}  /* ptp_chk_hw_repeat */
+	if (ptp->cascade_total && !ptp->cascade_sw_each &&
+	    !ptp->tso_chk[MAX_TRIG_UNIT]) {
+		cur = &ptp->outputs[MAX_TRIG_UNIT];
 
-static bool ptp_core_tx_cascade(struct ptp_info *ptp, u8 tso, u8 total,
-	u16 cnt, u32 sec, u32 nsec, int intr)
-{
-	struct ptp_output *cur, *cascade;
-	struct ptp_utime *trig;
-	u16 orig_cnt;
-	u8 i, j;
+		/* Turn off hardware executed cascade operation. */
+		if (!cur->cnt) {
+			u8 tso = ptp->cascade_first;
+			struct ptp_output *first = &ptp->outputs[tso];
+			u32 nsec = 1000000000;
 
-	/* Sanity check on tso parameter. */
-	j = tso + total - 1;
-	if (j >= MAX_TRIG_UNIT)
-		return false;
+			if (first->iterate < 1000000000)
+				nsec = (u32)first->iterate;
+			for (i = 0; i < ptp->cascade_total; i++, tso++) {
+				ptp->reg->tx_off(ptp, tso);
+				cur = &ptp->outputs[tso];
 
-	ptp->cascade_first = tso;
-	ptp->cascade_total = total;
-	ptp->cascade = false;
-
-	/* Set the trigger time of cascaded operation. */
-	trig = &ptp->outputs[MAX_TRIG_UNIT].trig;
-	trig->sec = sec;
-	trig->nsec = nsec;
-
-	/* Assume software needed to repeat operations. */
-	ptp->tso_cnt[MAX_TRIG_UNIT] = cnt - 1;
-
-	/* Need software to execute each TOU operation individually. */
-	if (ptp->cascade_tso) {
-
-		/* Prepare the trigger time for each TOU operation. */
-		cur = &ptp->outputs[tso];
-		trig = &cur->trig;
-
-		ptp->ops->acquire(ptp);
-		ptp->reg->tx_restart(ptp, tso, trig->sec, trig->nsec);
-		ptp->ops->release(ptp);
-		return true;
-	}
-
-	/* Repeat may not work reliably if iterate is more than 1 second. */
-	orig_cnt = cnt;
-	if (cnt != 1) {
-		j = tso;
-		for (i = 0; i < total; i++, j++) {
-			cur = &ptp->outputs[tso];
-			if (cur->iterate > NANOSEC_IN_SEC) {
-
-				/* Hardware does it once. */
-				cnt = 1;
-				intr = 1;
-				break;
+				/* Reset so that times can be updated correctly
+				 * in update_cascade_time().
+				 */
+				cur->trig.sec = 0;
 			}
+			if (!t.sec)
+				ptp->reg->get_time(ptp, &t);
+			s.sec = t.sec;
+			s.nsec = first->start.nsec;
+			update_next_trigger(&t, &s, nsec);
+			update_cascade_time(ptp, ptp->cascade_first,
+					    ptp->cascade_total, s.sec, s.nsec);
+			ptp->ops->release(ptp);
+			ptp_core_tx_cascade(ptp, ptp->cascade_first,
+					    ptp->cascade_total, 0,
+					    s.sec, s.nsec, 1);
+			ptp->ops->acquire(ptp);
 		}
 	}
-
-	/* Hardware can execute repeat operation. */
-	if (orig_cnt == cnt)
-		ptp->tso_cnt[MAX_TRIG_UNIT] = 0;
-	ptp->ops->acquire(ptp);
-	ptp->reg->tx_cascade(ptp, tso, total, cnt, sec, nsec, intr);
-	ptp->ops->release(ptp);
-	cascade = &ptp->outputs[MAX_TRIG_UNIT];
-	j = tso + total - 1;
-	cur = &ptp->outputs[j];
-	cascade->intr = cur->intr;
-	return true;
-}  /* ptp_core_tx_cascade */
+}  /* ptp_chk_hw_repeat */
 
 static void generate_tx_event(struct ptp_info *ptp, int gpo)
 {
@@ -1927,6 +2223,8 @@ static void ptp_prepare_pps_check(struct ptp_info *ptp)
 
 	if (ptp->sec_changed > 1 || ptp->sec_changed < -1)
 		sec_jump = true;
+	if (!sec_jump)
+		ptp->clk_change = 1;
 	if (ptp->tso_cnt[MAX_TRIG_UNIT]) {
 		ptp->tso_chk[MAX_TRIG_UNIT] = 1;
 		ptp->outputs[MAX_TRIG_UNIT].cnt = 0;
@@ -2346,7 +2644,6 @@ static void ptp_check(struct ptp_info *ptp)
 	ptp->reg->get_time(ptp, &cur);
 	ptp->reg->adjust_time(ptp, true, 10, 0, true);
 	ptp->reg->get_time(ptp, &now);
-dbg_msg("%08x:%08x %08x:%08x"NL, cur.sec, cur.nsec, now.sec, now.nsec);
 	if (now.sec - cur.sec >= 10) {
 		ptp->features &= ~PTP_ADJ_HACK;
 		ptp->features |= PTP_ADJ_SEC;
@@ -2395,10 +2692,11 @@ dbg_msg("%08x:%08x %08x:%08x"NL, cur.sec, cur.nsec, now.sec, now.nsec);
 
 static void ptp_start(struct ptp_info *ptp, int init)
 {
+	struct ksz_sw *sw = ptp->parent;
+	struct ksz_iba_info *iba = &sw->info->iba;
 	u32 ctrl;
 	struct timespec ts;
 	struct ptp_utime t;
-	struct ksz_sw *sw = ptp->parent;
 
 	if (!ptp->version) {
 		ptp_hw_enable(ptp);
@@ -2406,9 +2704,14 @@ static void ptp_start(struct ptp_info *ptp, int init)
 		if (ptp->test_access_time)
 			ptp->test_access_time(ptp);
 		ptp_init_hw(ptp);
-	} else
-	if (init && (sw->features & NEW_CAP))
-		ptp_hw_enable(ptp);
+	} else {
+		if (init && (sw->features & NEW_CAP))
+			ptp_hw_enable(ptp);
+
+		/* Update access time calculated with SPI. */
+		if (iba->use_iba && ptp->get_delay > 80000)
+			ptp->get_delay = 80000;
+	}
 	ptp->ops->acquire(ptp);
 	ctrl = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
 	if (ctrl == ptp->mode) {
@@ -3463,11 +3766,6 @@ static void ptp_get_rx_info(struct ptp_info *ptp, u8 *data, u8 port,
 		} else
 			ptp->last_rx_ts = rx_msg->data.ts;
 	}
-#if 0
-	if (ptp->overrides & PTP_CHECK_SYNC_TIME)
-dbg_msg(" %x; %08x; %x:%09u"NL, ptp->cur_time.sec, timestamp,
-rx_msg->data.ts.t.sec, rx_msg->data.ts.t.nsec);
-#endif
 
 	msg = ptp_set_rx_info(ptp, data, port, timestamp);
 	if (!msg)
@@ -4103,8 +4401,13 @@ static int proc_dev_rx_event(struct file_dev_info *info, u8 *data)
 	for (i = 0; i < total; i++) {
 		tsi_bit = 1 << tsi;
 		ptp->tsi_used |= tsi_bit;
-		if (intr & !(cmd->flags & PTP_CMD_SILENT_OPER)) {
-			ptp->tsi_intr |= tsi_bit;
+
+		/* Interrupt means notification. */
+		if (intr) {
+
+			/* Not silent means every notification. */
+			if (!(cmd->flags & PTP_CMD_SILENT_OPER))
+				ptp->tsi_intr |= tsi_bit;
 			ptp->tsi_dev[tsi] = info;
 		}
 		events = &ptp->events[tsi];
@@ -4170,11 +4473,29 @@ static int find_avail_tx_unit(struct ptp_info *ptp, int total, int *unit)
 	return 0;
 }  /* find_avail_tx_unit */
 
+/* Actual time should be more than 80 ms in situations where driver needs to
+ * report event times and they are displayed and thus affect the driver
+ * execution to process the interrupt in timely fashion.
+ * Driver execution is only needed for more than 1 second duration anyway.
+ * Exception is doing TRIG_NEG_PERIOD in cascade mode as users want 20/40.
+ */
+#ifndef TEST_SW_EXEC
+#define MIN_TIME_LEFT_IN_CYCLE_IBA  80000000
+#define MIN_TIME_LEFT_IN_CYCLE_SPI  80000000
+#else
+/* 10 ms */
+#define MIN_TIME_LEFT_IN_CYCLE_IBA  10000000
+/* 15 ms */
+#define MIN_TIME_LEFT_IN_CYCLE_SPI  15000000
+#endif
+#define MIN_TIME_LEFT_IN_CYCLE      20000000
+
 static int proc_dev_tx_event(struct file_dev_info *info, u8 *data)
 {
 	struct ptp_info *ptp = info->dev;
 	struct ptp_tso_options *cmd = (struct ptp_tso_options *) data;
 	int gpo;
+	int sw_oper;
 	int intr;
 	int tso;
 	int tso_bit;
@@ -4250,10 +4571,10 @@ static int proc_dev_tx_event(struct file_dev_info *info, u8 *data)
 			cmd->sec < 100) {
 		struct ptp_utime s;
 
-		s.sec = cmd->sec;
-		s.nsec = cmd->nsec;
 		ptp->reg->get_time(ptp, &t);
-		update_next_trigger(&t, &s);
+		s.sec = cmd->sec + t.sec;
+		s.nsec = cmd->nsec;
+		update_next_trigger(&t, &s, 0);
 		cmd->sec = s.sec;
 	}
 	intr = cmd->flags & PTP_CMD_INTR_OPER;
@@ -4261,13 +4582,34 @@ static int proc_dev_tx_event(struct file_dev_info *info, u8 *data)
 		ptp->tso_intr |= tso_bit;
 		ptp->tso_dev[tso] = info;
 	}
+
+	/* Want software to simulate period signal. */
+	sw_oper = cmd->flags & PTP_CMD_SW_OPER;
+	if (sw_oper && cmd->event >= TRIG_NEG_PERIOD) {
+		int min = MIN_TIME_LEFT_IN_CYCLE_IBA;
+		u32 pulse = cmd->pulse * 8;
+		int diff;
+
+		/* No pulse for bit pattern. */
+		if (cmd->event == TRIG_REG_OUTPUT)
+			pulse = 0;
+		diff = cmd->cycle - pulse;
+		if (ptp->delay_ticks > 10)
+			min = MIN_TIME_LEFT_IN_CYCLE_SPI;
+		if (ptp->cascade && cmd->event == TRIG_NEG_PERIOD &&
+		    min > MIN_TIME_LEFT_IN_CYCLE)
+			min = MIN_TIME_LEFT_IN_CYCLE;
+		if (diff < min)
+			sw_oper = 0;
+dbg_msg(" sw_oper: %d\n", !!sw_oper);
+	}
 	ptp->tso_used |= tso_bit;
 
 	iterate = get_iterate(cmd);
 	ptp_core_tx_event(ptp, tso, cmd->gpo, cmd->event, cmd->pulse,
 		cmd->cycle, cmd->cnt, cmd->sec, cmd->nsec, iterate, intr,
 		!(cmd->flags & PTP_CMD_ON_TIME),
-		(cmd->flags & PTP_CMD_CLK_OPT));
+		(cmd->flags & PTP_CMD_CLK_OPT), sw_oper);
 	if (cmd->flags & PTP_CMD_ON_TIME) {
 		status = sw->reg->r32(sw, REG_PTP_TRIG_STATUS__4);
 		status = (status >> TRIG_ERROR_S) & PTP_TRIG_UNIT_M;
@@ -4317,10 +4659,12 @@ static int proc_ptp_tx_cascade_init(struct ptp_info *ptp, u8 *data)
 		}
 
 		/* Reset the last unit in case it is used to raise the level. */
-		first = first + total - 1;
+		if (!ptp->cascade_sw_only)
+			first = first + total - 1;
 		if (ptp->outputs[first].level) {
 			ptp->cascade_tx |= (1 << first);
 			ptp->tso_used |= (1 << first);
+			ptp->outputs[first].level = 0;
 		}
 		ptp->ops->acquire(ptp);
 		for (i = 0; i < total; i++, tso++) {
@@ -4328,14 +4672,20 @@ static int proc_ptp_tx_cascade_init(struct ptp_info *ptp, u8 *data)
 				ptp_tso_off(ptp, tso, (1 << tso));
 		}
 		tso = total;
+		ptp->cascade = 0;
+		ptp->cascade_sw_each = 0;
+		ptp->cascade_sw_only = 0;
 		ptp->cascade_total = 0;
-		ptp->cascade = false;
 		ptp->tso_cnt[MAX_TRIG_UNIT] = 0;
 		ptp->ops->release(ptp);
 		goto proc_ptp_tx_cascade_init_done;
 	}
 
 	if (ptp->cascade)
+		return DEV_IOC_UNIT_UNAVAILABLE;
+
+	/* Only support one software cascade execution. */
+	if (ptp->tso_cnt[MAX_TRIG_UNIT] || ptp->cascade_sw_each)
 		return DEV_IOC_UNIT_UNAVAILABLE;
 
 	/* Find available units for use. */
@@ -4367,29 +4717,55 @@ static int proc_ptp_tx_cascade_init(struct ptp_info *ptp, u8 *data)
 	/* current last unit. */
 	tso = first + total - 1;
 
+	/* Probably using software to execute cascade operation. */
+	if (!!(ptp->cascade_tx & (1 << (i + 16))) != ptp->outputs[i].level)
+dbg_msg("cascade_tx: %d %x %d\n", i, ptp->cascade_tx, ptp->outputs[i].level);
+
 	/* Last operation not ended high. */
-	if (tso == i || !ptp->outputs[i].level)
+	if (!ptp->outputs[i].level ||
+	    !(ptp->cascade_tx & (1 << (i + 16))))
 		goto proc_ptp_tx_cascade_init_set;
 
+	/* Always need reset for last unit in cascade mode unless it is used
+	 * as the first one in new cascade mode.
+	 */
 	ptp->ops->acquire(ptp);
 	ptp_write_index(ptp, PTP_GPIO_INDEX_S, gpo);
 	status = sw->reg->r32(sw, REG_PTP_CTRL_STAT__4);
 
 	/* Current level is high. */
 	if (status & GPIO_IN) {
+		if (i == first) {
+			/* Do not reset unit when started. */
+			ptp->cascade_tx &= ~(1 << (i + 16));
+		} else if (total > 1) {
+			bool again = false;
 
-		/* Set unit to hold the level high. */
-		ptp_core_tx_event(ptp, tso, gpo, TRIG_POS_EDGE, 0, 0, 1,
-			0, 1, 0, PTP_CMD_INTR_OPER, 1, 0);
+			/* Cannot use the last unit to hold the signal. */
+			if (tso == i) {
+				tso = first;
+				again = true;
+			}
 
-		/* Release the signal from the previous last unit. */
-		ptp_gpo_reset(ptp, ptp->outputs[i].gpo, i, NULL);
+			/* Set unit to hold the level high. */
+			/* Need at least 1 second to execute the command. */
+			ptp_core_tx_event(ptp, tso, gpo, TRIG_POS_EDGE,
+					  0, 0, 0, 1, 0, 0,
+					  PTP_CMD_INTR_OPER, 1, 0, 0);
+
+			/* Release the signal from the previous last unit. */
+			ptp_gpo_reset(ptp, ptp->outputs[i].gpo, i, NULL);
+			if (again) {
+				ptp_core_tx_event(ptp, i, gpo, TRIG_POS_EDGE,
+						  0, 0, 0, 1, 0, 0,
+						  PTP_CMD_INTR_OPER, 1, 0, 0);
+			}
+		}
 	}
 	ptp->ops->release(ptp);
 
 proc_ptp_tx_cascade_init_set:
-	ptp->cascade_tso = 0;
-	ptp->cascade = true;
+	ptp->cascade = 1;
 	ptp->cascade_gpo[gpo].first = first;
 	ptp->cascade_gpo[gpo].total = total;
 	tso = first;
@@ -4428,19 +4804,30 @@ static int proc_ptp_tx_cascade(struct ptp_info *ptp, u8 *data)
 		struct ptp_output *cur = &ptp->outputs[tso];
 		struct ptp_utime s;
 
-		s.sec = cmd->sec + cur->trig.sec;
-		s.nsec = cmd->nsec + cur->trig.nsec;
 		ptp->reg->get_time(ptp, &t);
-		update_next_trigger(&t, &s);
-		if (cur->trig.sec < 10)
-			cmd->sec = s.sec - cur->trig.sec;
+		s.sec = cmd->sec + cur->trig.sec + t.sec;
+		s.nsec = cmd->nsec + cur->trig.nsec;
+		update_next_trigger(&t, &s, 0);
+		cmd->sec = s.sec - cur->trig.sec;
+	}
+
+	/* Need to reset the last TOU as it may not be used. */
+	if (ptp->cascade_sw_only && ptp->cascade_gpo[gpo].total) {
+		u8 last = ptp->cascade_gpo[gpo].first +
+			  ptp->cascade_gpo[gpo].total - 1;
+
+		if (last < MAX_TRIG_UNIT &&
+		    ptp->cascade_gpo[gpo].tso & (1 << last)) {
+			ptp->cascade_tx |= (1 << last);
+			ptp_tso_off(ptp, last, (1 << last));
+		}
 	}
 	ptp->ops->release(ptp);
 
 	/* Help check the interval and limit the repeat time. */
 	if (check_cascade(ptp, tso, total, &cmd->cnt, cmd->sec, cmd->nsec)) {
 		printk(KERN_INFO
-		       "cascade repeat timing is not right"NL);
+		       "cascade timing is not right"NL);
 		return DEV_IOC_INVALID_CMD;
 	}
 	update_cascade_time(ptp, tso, total, cmd->sec, cmd->nsec);
@@ -5716,9 +6103,17 @@ static void ptp_chk_rx_events(struct ptp_info *ptp)
 			}
 		}
 		if ((ptp->ts_status & ptp->ts_intr) & tsi_bit) {
+			bool report = event->num >= event->max;
 			u8 data[24];
 
-			if (ptp->tsi_intr & tsi_bit) {
+			/* Delay reporting events until stopped. */
+			if (event->timeout && event->num < event->max) {
+				ptp->tsi_intr |= (tsi_bit << 16);
+			}
+			if (ptp->tsi_intr & tsi_bit)
+				report = true;
+			if (report) {
+				ptp->tsi_intr &= ~(tsi_bit << 16);
 				data[0] = PTP_CMD_GET_EVENT;
 				data[1] = i;
 				proc_ptp_get_event(ptp, data);
@@ -5745,6 +6140,14 @@ static void ptp_chk_rx_events(struct ptp_info *ptp)
 		}
 		if (stop) {
 			ptp->reg->rx_off(ptp, i);
+			if (ptp->tsi_intr & (tsi_bit << 16)) {
+				u8 data[24];
+
+				ptp->tsi_intr &= ~(tsi_bit << 16);
+				data[0] = PTP_CMD_GET_EVENT;
+				data[1] = i;
+				proc_ptp_get_event(ptp, data);
+			}
 			ptp->tsi_intr &= ~tsi_bit;
 			ptp->tsi_used &= ~tsi_bit;
 			ptp->tsi_dev[i] = NULL;
@@ -5771,68 +6174,36 @@ static void ptp_chk_stopped_repeat(struct ptp_info *ptp)
 {
 	struct ptp_output *out;
 	struct ptp_utime *cur, *intr, *trig;
-	struct ptp_utime s, t;
+	struct ptp_utime t;
 	u8 tso;
 	u8 i;
 
 	t.sec = 0;
 	cur = &ptp->cur_time;
-	if (ptp->tso_chk[MAX_TRIG_UNIT] /*&& !ptp->cascade_tso*/) {
+	if (ptp->tso_chk[MAX_TRIG_UNIT]) {
 		out = &ptp->outputs[MAX_TRIG_UNIT];
 		intr = &out->intr;
-		if (ptp->tso_chk[MAX_TRIG_UNIT] > 1 || cur->sec > intr->sec ||
+		if ((ptp->tso_chk[MAX_TRIG_UNIT] > 1) || cur->sec > intr->sec ||
 		    (cur->sec == intr->sec && cur->nsec > intr->nsec)) {
-			struct ksz_ptp_time d_start[MAX_TRIG_UNIT];
-			struct ksz_ptp_time d_stop[MAX_TRIG_UNIT];
-			struct ptp_output *next;
+			struct ptp_output *first, *next;
 
-			tso = ptp->cascade_first + ptp->cascade_total - 1;
 			tso = ptp->cascade_first;
-			for (i = 0; i < ptp->cascade_total; i++, tso++) {
-				out = &ptp->outputs[tso];
-				calc_udiff(&out->start, &out->stop, &d_stop[i]);
-				if (i == ptp->cascade_total - 1)
-					break;
-				next = &ptp->outputs[tso + 1];
-				calc_udiff(&out->start, &next->start,
-					&d_start[i]);
-			}
-			tso = ptp->cascade_first;
-			out = &ptp->outputs[tso];
-			trig = &out->start;
-			s.sec = 0;
-			s.nsec = trig->nsec;
+			first = &ptp->outputs[tso];
+			trig = &first->start;
 			ptp->reg->get_time(ptp, &t);
-			update_next_trigger(&t, &s);
-			trig->sec = s.sec;
-			for (i = 0; i < ptp->cascade_total; i++, tso++) {
-				out = &ptp->outputs[tso];
-				if (i > 0) {
-					u8 j = i - 1;
+			update_new_cascade_time(ptp, tso, &t, trig);
 
-					next = &ptp->outputs[tso - 1];
-					out->start.sec = next->start.sec +
-						d_start[j].sec;
-					out->start.nsec = next->start.nsec;
-					add_nsec(&out->start, d_start[j].nsec);
-				}
-				out->stop = out->start;
-				out->stop.sec += d_stop[i].sec;
-				add_nsec(&out->stop, d_stop[i].nsec);
-				out->trig = out->start;
-				out->intr = out->stop;
-			}
 			tso = ptp->cascade_first + ptp->cascade_total - 1;
 			next = &ptp->outputs[tso];
 			*intr = next->intr;
 
+			/* Reset the repeat count for first TOU. */
 			tso = ptp->cascade_first;
-			if (ptp->cascade_tso) {
-				ptp->tso_cnt[tso] = ptp->outputs[tso].cnt;
+			if (ptp->cascade_sw_each) {
+				ptp->tso_cnt[tso] = first->cnt;
 			}
 			for (i = 0; i < ptp->cascade_total; i++, tso++) {
 				ptp->reg->tx_off(ptp, tso);
-				ptp->tso_chk[tso] = 0;
 			}
 			ptp->tso_chk[MAX_TRIG_UNIT] = 0;
 			out = &ptp->outputs[MAX_TRIG_UNIT];
@@ -5849,25 +6220,20 @@ static void ptp_chk_stopped_repeat(struct ptp_info *ptp)
 			continue;
 		out = &ptp->outputs[i];
 		intr = &out->intr;
-		if (!(ptp->tso_chk[i] > 1 || cur->sec > intr->sec ||
+		if (!((ptp->tso_chk[i] > 1) || cur->sec > intr->sec ||
 		    (cur->sec == intr->sec && cur->nsec > intr->nsec)))
 			continue;
 		if (ptp->tso_cnt[i]) {
-			struct ksz_ptp_time diff;
-
 			ptp->reg->tx_off(ptp, i);
 			trig = &out->trig;
-			calc_udiff(trig, intr, &diff);
-			s.sec = 0;
-			s.nsec = trig->nsec;
 			if (!t.sec)
 				ptp->reg->get_time(ptp, &t);
-			update_next_trigger(&t, &s);
-			trig->sec = s.sec;
-			sub_large_nsec(&trig->sec, &trig->nsec, out->cycle);
-			*intr = *trig;
-			add_nsec(intr, diff.nsec);
-			ptp_do_repeat(ptp, i);
+			update_trig_and_intr(&t, &out->trig, &out->intr,
+					     out->cycle);
+
+			ptp->reg->tx_restart(ptp, i, 0, trig->sec, trig->nsec);
+dbg_msg(" r: %x:%9u %x:%9u\n",
+	t.sec & 0xf, t.nsec, trig->sec & 0xf, trig->nsec);
 			continue;
 		}
 	}
@@ -5932,6 +6298,7 @@ dbg_msg(" msec: %x:%9u %d.%9d %d %d\n",
 		ptp_chk_rx_events(ptp);
 		ptp_chk_stopped_repeat(ptp);
 		ptp->ops->release(ptp);
+		ptp->clk_change = 0;
 	}
 }  /* ptp_update_sec */
 
@@ -6129,16 +6496,17 @@ static void check_sys_time(struct ptp_info *ptp, unsigned long cur_jiffies,
 }  /* check_sys_time */
 #endif
 
-static bool ptp_chk_repeat(struct ptp_info *ptp, u8 tso)
+static bool ptp_chk_repeat(struct ptp_info *ptp, u8 tso, u16 error, u16 done,
+			   struct ptp_utime *t)
 {
 	/* Repeat within regular TOU operation. */
 	if (ptp->tso_cnt[tso]) {
-		return ptp_do_repeat(ptp, tso);
+		return ptp_do_repeat(ptp, tso, done, t);
 	}
 
 	/* Repeat manually for each TOU in cascade mode. */
-	if (ptp->cascade_tso) {
-		return ptp_do_cascade_each(ptp, tso);
+	if (ptp->cascade_sw_each) {
+		return ptp_do_cascade_each(ptp, tso, done, t);
 	}
 
 	/* Repeat within regular TOU cascade operation. */
@@ -6165,11 +6533,11 @@ static void proc_ptp_intr(struct ptp_info *ptp)
 	struct timespec ts;
 	struct ksz_sw *sw = ptp->parent;
 
-	t.sec = 0;
 	cur_ktime = ktime_get_real();
 	ts = ktime_to_timespec(cur_ktime);
 
 proc_chk_trig_intr:
+	t.sec = 0;
 	int_status = sw->reg->r32(sw, REG_PTP_INT_STATUS__4);
 	if (!int_status)
 		goto proc_ptp_intr_done;
@@ -6185,7 +6553,15 @@ proc_chk_trig_intr:
 	done = trig_status & PTP_TRIG_UNIT_M;
 	for (i = 0; i < MAX_TRIG_UNIT; i++) {
 		if (status & (1 << i)) {
-			if (ptp_chk_repeat(ptp, i))
+			if (!t.sec)
+				ptp->reg->get_time(ptp, &t);
+#if 1
+			if (error && ptp->clk_change) {
+				dbg_msg(" done: %x:%9u %u %x %x\n",
+					t.sec & 0xf, t.nsec, i, error, done);
+			}
+#endif
+			if (ptp_chk_repeat(ptp, i, error, done, &t))
 				continue;
 			if (ptp->tso_intr & (1 << i)) {
 				struct ptp_output *cur = &ptp->outputs[i];
@@ -6254,6 +6630,7 @@ proc_chk_ts_intr:
 			ptp->cur_time.sec = event->t[0].sec;
 			ptp->cur_time.nsec = event->t[0].nsec;
 			ptp->update_sec_jiffies = 0;
+			ptp->clk_change = 0;
 			ptp->sec_lo++;
 			sys_time.sec = ts.tv_sec;
 			sys_time.nsec = ts.tv_nsec;
@@ -6441,9 +6818,6 @@ static int ixxat_ptp_ioctl(struct ptp_info *ptp, unsigned int cmd,
 				ts.t = tx_msg.ts.t;
 			}
 		}
-#if 0
-printk("%u:%09u"NL, ts.t.sec, ts.t.nsec);
-#endif
 		ptp_data.ts.sec = ts.t.sec;
 		ptp_data.ts.nsec = ts.t.nsec;
 		err = copy_to_user(ifr->ifr_data, &ptp_data, sizeof(ptp_data));
@@ -7315,7 +7689,7 @@ static void ptp_init(struct ptp_info *ptp, u8 *mac_addr)
 	ptp->utc_offset = CURRENT_UTC_OFFSET;
 	ptp->get_delay = 100000;
 	ptp->set_delay = 100000;
-	ptp->delay_ticks = 2;
+	ptp->delay_ticks = 20 * HZ / 1000;
 	ptp->access = create_singlethread_workqueue("ptp_access");
 	init_ptp_work(ptp);
 	mutex_init(&ptp->lock);
@@ -7602,10 +7976,16 @@ static struct ptp_reg_ops ptp_reg_ops = {
 static void ptp_use_iba(struct ptp_info *ptp, bool iba)
 {
 #ifdef CONFIG_KSZ_IBA
-	if (iba)
+	static int last_delay_ticks = 20 * HZ / 1000;
+
+	if (iba) {
 		ptp->reg = &ptp_iba_ops;
-	else
+		last_delay_ticks = ptp->delay_ticks;
+		ptp->delay_ticks = 10 * HZ / 1000;
+	} else {
 		ptp->reg = &ptp_reg_ops;
+		ptp->delay_ticks = last_delay_ticks;
+	}
 #endif
 }
 

@@ -4408,7 +4408,8 @@ static int proc_dev_rx_event(struct file_dev_info *info, u8 *data)
 			/* Not silent means every notification. */
 			if (!(cmd->flags & PTP_CMD_SILENT_OPER))
 				ptp->tsi_intr |= tsi_bit;
-			ptp->tsi_dev[tsi] = info;
+			if (cmd->timeout || (ptp->tsi_intr & tsi_bit))
+				ptp->tsi_dev[tsi] = info;
 		}
 		events = &ptp->events[tsi];
 		events->num = 0;

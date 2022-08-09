@@ -1584,10 +1584,10 @@ static void help_msg(char h) {
 		printf("\tee tsi\t\t\t\tcancel input unit\n");
 		printf("\tge tsi\t\t\t\tget event from unit\n");
 		printf("\tpe tsi\t\t\t\tpoll event from unit\n");
-		printf("\tme [timeout]\n");
+		printf("\tme [timeout in ms]\n");
 		printf("\tre [rx_flags]\n");
 		printf("\tte gpi\n");
-		printf("\tae [0|1]\t\t\t\tanalyze events\n");
+		printf("\tae [0|1]\t\t\tanalyze events\n");
 		printf("\tze\t\t\t\trestart second tracking\n");
 		need_nl = 1;
 	}
@@ -1603,9 +1603,9 @@ static void help_msg(char h) {
 		printf("\tbo tso gpo total [cnt] [flags]");
 		printf("\tcascade start\n");
 		printf("\tdo tso gpo total\t\tcancel cascade output\n");
-		printf("\teo\t\t\t\tturn on cascade debug\n");
+		printf("\teo [0|1]\t\t\t\tturn on cascade debug\n");
 		printf("\tzo gpo\n");
-		printf("\tmo gpo\n");
+		printf("\tmo [test_gpo]\n");
 		printf("\tco [tx_cnt]\n");
 		printf("\tyo [tx_cycle] [factor]\n");
 		printf("\tpo [tx_pattern]\n");
@@ -1618,7 +1618,7 @@ static void help_msg(char h) {
 		printf("\tro [tx_flags]\n");
 		printf("\tfo [unit_factor]\n");
 		printf("\tio\t\t\t\toutput parameter info\n");
-		printf("\tirig code\t\t\tIRIG sample output on GPIO 1\n");
+		printf("\tirig code\t\t\tIRIG sample output on test GPIO\n");
 		printf("\tgo gpo\t\t\t\tunits holding GPIO high\n");
 		need_nl = 1;
 	}
@@ -2114,9 +2114,15 @@ void get_cmd(FILE *fp)
 				print_err(rc);
 				break;
 			case 'z':
-				rc = rx_event(fd, 10, 0, 0, 0,
+				rx_unit = 10;
+				tx_unit = 6;
+				if (ptp_tsi_units != 12) {
+					rx_unit = 1;
+					tx_unit = 0;
+				}
+				rc = rx_event(fd, rx_unit, 0, 0, 0,
 					PTP_CMD_CANCEL_OPER, 0, NULL);
-				rc = rx_event(fd, 10, 6, 1, 1,
+				rc = rx_event(fd, rx_unit, tx_unit, 1, 1,
 					PTP_CMD_INTR_OPER |
 					PTP_CMD_SILENT_OPER, 0, &rx_unit);
 				print_err(rc);

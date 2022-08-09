@@ -40899,8 +40899,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ms
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_ptp_9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_ptp_9897.c	2022-08-08 14:27:15.528688613 -0700
-@@ -0,0 +1,8005 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_ptp_9897.c	2022-08-08 21:20:43.549849026 -0700
+@@ -0,0 +1,8012 @@
 +/**
 + * Microchip PTP common code
 + *
@@ -43595,10 +43595,11 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_pt
 +
 +static void ptp_start(struct ptp_info *ptp, int init)
 +{
++	struct ksz_sw *sw = ptp->parent;
++	struct ksz_iba_info *iba = &sw->info->iba;
 +	u32 ctrl;
 +	struct timespec64 ts;
 +	struct ptp_utime t;
-+	struct ksz_sw *sw = ptp->parent;
 +
 +	if (!ptp->version) {
 +		ptp_hw_enable(ptp);
@@ -43606,9 +43607,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_pt
 +		if (ptp->test_access_time)
 +			ptp->test_access_time(ptp);
 +		ptp_init_hw(ptp);
-+	} else
-+	if (init && (sw->features & NEW_CAP))
-+		ptp_hw_enable(ptp);
++	} else {
++		if (init && (sw->features & NEW_CAP))
++			ptp_hw_enable(ptp);
++
++		/* Update access time calculated with SPI. */
++		if (iba->use_iba && ptp->get_delay > 80000)
++			ptp->get_delay = 80000;
++	}
 +	ptp->ops->acquire(ptp);
 +	ctrl = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
 +	if (ctrl == ptp->mode) {
@@ -45305,7 +45311,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_pt
 +			/* Not silent means every notification. */
 +			if (!(cmd->flags & PTP_CMD_SILENT_OPER))
 +				ptp->tsi_intr |= tsi_bit;
-+			ptp->tsi_dev[tsi] = info;
++			if (cmd->timeout || (ptp->tsi_intr & tsi_bit))
++				ptp->tsi_dev[tsi] = info;
 +		}
 +		events = &ptp->events[tsi];
 +		events->num = 0;

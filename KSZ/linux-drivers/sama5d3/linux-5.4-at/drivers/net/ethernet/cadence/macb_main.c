@@ -74,7 +74,7 @@ static void get_sysfs_data_(struct net_device *dev,
 #if defined(CONFIG_IBA_KSZ9897)
 #include "../micrel/iba-ksz9897.c"
 #elif defined(CONFIG_HAVE_KSZ9897)
-#include "../micrel/spi-ksz9897.c"
+#include "../micrel/i2c-ksz9897.c"
 #elif defined(CONFIG_HAVE_KSZ8795)
 #include "../micrel/spi-ksz8795.c"
 #elif defined(CONFIG_SMI_KSZ8895)
@@ -84,7 +84,7 @@ static void get_sysfs_data_(struct net_device *dev,
 #elif defined(CONFIG_SMI_KSZ8863)
 #include "../micrel/smi-ksz8863.c"
 #elif defined(CONFIG_HAVE_KSZ8863)
-#include "../micrel/spi-ksz8863.c"
+#include "../micrel/i2c-ksz8863.c"
 #elif defined(CONFIG_IBA_LAN937X)
 #include "../microchip/iba-lan937x.c"
 #elif defined(CONFIG_SMI_LAN937X)

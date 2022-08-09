@@ -1333,7 +1333,7 @@ int get_rx_event_info(void *fd,
 	return rc;
 }  /* get_rx_event_info */
 
-int proc_rx_event(u8 *data, size_t len)
+int proc_rx_event(u8 *data, size_t len, int stop_rx)
 {
 	int i;
 	u32 edge;
@@ -1350,6 +1350,8 @@ int proc_rx_event(u8 *data, size_t len)
 		printf("%d is not correct\n", len);
 		return DEV_IOC_INVALID_SIZE;
 	}
+	if (stop_rx)
+		return 0;
 	printf("\n");
 	printf("unit: %d=%d\n", info->unit, info->event);
 	edge = info->edge;

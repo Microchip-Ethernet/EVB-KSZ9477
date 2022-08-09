@@ -31,6 +31,9 @@ static u8 ptp_tsi_units;
 static u8 ptp_tsi_events;
 static u8 ptp_tsi_extra;
 
+static u8 test_gpo = 1;
+static int stop_rx;
+
 int tsm_init(int id)
 {
 	char device[20];
@@ -77,6 +80,8 @@ int tsm_init(int id)
 		printf("units=%d events=%d num=%d\n",
 			ptp_tsi_units, ptp_tsi_events, ptp_tsi_extra);
 	}
+	if (ptp_tsi_units != 12)
+		test_gpo = 0;
 
 	return 0;
 }
@@ -210,14 +215,22 @@ struct ptp_utime out_event[2][20];
 int first_rx = 0;
 u8 irig_in[100];
 int irig_index;
+u8 prev_level;
+int prev_unit;
+struct ptp_utime prev_event;
 
 void setup_rx_event(u8 *data, size_t len)
 {
 	int i;
+	int j;
 	int unit;
+	int unit_0;
+	int unit_1;
 	u32 edge;
+	u8 level;
 	struct ptp_tsi_info *info = (struct ptp_tsi_info *) data;
 	struct ptp_utime *t;
+	struct ptp_utime *s;
 	struct ptp_utime *in = NULL;
 
 	i = info->num * sizeof(struct ptp_utime) +
@@ -239,29 +252,60 @@ void setup_rx_event(u8 *data, size_t len)
 	}
 	unit = info->unit;
 	if (unit < first_rx)
-#if 0
-		unit += 15;
-#else
 		unit += ptp_tsi_units + ptp_tsi_extra / ptp_tsi_events;
-#endif
 	unit -= first_rx;
 	edge = info->edge;
+	unit *= ptp_tsi_events;
 	t = info->t;
-	for (i = 0; i < info->num; i++) {
-		if (2 == info->event)
-#if 0
-			in = &in_event[edge & 1][unit * 2 + i];
-#else
-#endif
-			in = &in_event[edge & 1][unit * ptp_tsi_events + i];
+	if (prev_level == 2) {
+		level = !(edge & 1);
+		s = t;
+	} else {
+		level = prev_level;
+		s = &prev_event;
+	}
+	unit_0 = unit_1 = unit;
+	j = unit;
+	for (i = 0; i < info->num; i++, j++) {
+		if (2 == info->event) {
+			prev_level = level;
+			level = edge & 1;
+			if (level == prev_level && j > prev_unit) {
+				printf("! %u %x:%9u\n", prev_level, s->sec,
+					s->nsec);
+				printf("! %u %x:%9u\n", level, t->sec,
+					t->nsec);
+				if (level) {
+					unit = unit_0++;
+				} else {
+					unit = unit_1++;
+				}
+				in = &in_event[!level][unit];
+				in->sec = s->sec;
+				in->nsec = s->nsec + 8;
+				i++;
+				info->num++;
+			}
+			if (level) {
+				unit = unit_1++;
+			} else {
+				unit = unit_0++;
+			}
+			in = &in_event[edge & 1][unit];
+			if (prev_unit < j)
+				prev_unit = j;
+		}
 		if (in) {
 			in->sec = t->sec;
 			in->nsec = t->nsec;
 			++in;
 		}
 		edge >>= 1;
+		s = t;
 		++t;
 	}
+	prev_level = level;
+	prev_event = *s;
 }
 
 void clear_rx_event(void)
@@ -270,6 +314,8 @@ void clear_rx_event(void)
 	in_event[0][31].nsec = 1;
 	in_event[1][31].nsec = 1;
 	irig_index = 0;
+	prev_level = 2;
+	prev_unit = 0;
 }
 
 static struct ptp_utime *next_event(struct ptp_utime *prev)
@@ -296,6 +342,7 @@ static int later_time(struct ptp_utime *prev, struct ptp_utime *next)
 static void format_ns(s64 ns, char *str, size_t len)
 {
 	u32 sec, msec, usec, nsec;
+	s64 val;
 	int neg = 0;
 	int n;
 
@@ -303,20 +350,26 @@ static void format_ns(s64 ns, char *str, size_t len)
 		neg = 1;
 		ns = -ns;
 	}
+	val = ns;
 	sec = msec = usec = 0;
-	if (ns >= 1000) {
-		usec = ns / 1000;
-		nsec = ns % 1000;
+	if (val >= 1000) {
+		nsec = val % 1000;
+		val = val / 1000;
+		if (val >= 1000) {
+			usec = val % 1000;
+			val = val / 1000;
+			if (val >= 1000) {
+				msec = val % 1000;
+				val = val / 1000;
+				sec = (u32)val;
+			} else {
+				msec = (u32)val;
+			}
+		} else {
+			usec = (u32)val;
+		}
 	} else {
-		nsec = (u32)ns;
-	}
-	if (usec >= 1000) {
-		msec = usec / 1000;
-		usec = usec % 1000;
-	}
-	if (msec >= 1000) {
-		sec = msec / 1000;
-		msec = msec % 1000;
+		nsec = (u32)val;
 	}
 	if (sec > 0)
 		n = snprintf(str, len, "%u.%03u,%03u,%03u", sec, msec, usec,
@@ -328,11 +381,39 @@ static void format_ns(s64 ns, char *str, size_t len)
 	else
 		n = snprintf(str, len, "%u", nsec);
 	if (neg) {
-		char tmp[20];
+		char tmp[40];
 
-		n = snprintf(tmp, 20, "-%s", str);
+		n = snprintf(tmp, 40, "-%s", str);
 		strncpy(str, tmp, len);
 	}
+}
+
+static char *format_ns_s(u32 ns, char *str, size_t len, int full)
+{
+	int n = 0;
+	u32 nsec;
+
+	if (ns) {
+		nsec = ns % 1000;
+		if (!nsec) {
+			char c;
+
+			c = 'u';
+			ns /= 1000;
+			nsec = ns % 1000;
+			if (!nsec) {
+				c = 'm';
+				ns /= 1000;
+			}
+			n = snprintf(str, len, "%u%c", ns, c);
+		} else {
+			if (full)
+				n = snprintf(str, len, "%09u", ns);
+		}
+	}
+	if (!n)
+		n = snprintf(str, len, "%u", ns);
+	return str;
 }
 
 static void check_rx_event(void)
@@ -429,6 +510,8 @@ void analyze_rx_event(void)
 	u32 sec;
 	u32 prev_up = 0;
 	u32 prev_dn = 0;
+	char dur_ns[20];
+	size_t str_len = 20;
 	struct ptp_utime *dn;
 	struct ptp_utime *next = out_event[0];
 	struct ptp_utime *prev = out_event[1];
@@ -461,13 +544,14 @@ void analyze_rx_event(void)
 			printf("up=");
 		else
 			printf("dn=");
+		nsec -= prev->nsec;
 		if (sec != prev->sec)
 			printf("%d:", sec - prev->sec);
 		else if (up)
-			prev_up = ((nsec - prev->nsec) + 5) / 10 * 10;
+			prev_up = (nsec + 5) / 10 * 10;
 		else {
 			if (!factor) {
-				prev_dn = ((nsec - prev->nsec) + 5) / 10 * 10;
+				prev_dn = (nsec + 5) / 10 * 10;
 				num = prev_dn % 10;
 				while (!num && prev_dn) {
 					++factor;
@@ -484,12 +568,15 @@ void analyze_rx_event(void)
 				} else
 					factor = 0;
 			}
-			prev_dn = ((nsec - prev->nsec) + 5) / 10 * 10;
+			prev_dn = (nsec + 5) / 10 * 10;
 		}
-		printf("%d ", nsec - prev->nsec);
-		if (factor && !up)
-			if ((prev_up + prev_dn) / factor == 10)
+		printf("%s ", format_ns_s(nsec, dur_ns, str_len,
+			sec != prev->sec));
+		if (factor && !up) {
+			if ((prev_up + prev_dn) / factor == 10 &&
+			    irig_index < 100)
 				irig_in[irig_index++] = prev_up / factor;
+		}
 		dn = prev + 1;
 		prev = next;
 		next = dn;
@@ -557,13 +644,14 @@ static int check_gap(u8 a, u8 b)
 {
 	int gap = 120;
 
-	if (a == b && a >= TRIG_NEG_PERIOD) {
+	if (a < TRIG_NEG_PERIOD || b < TRIG_NEG_PERIOD)
+		return gap;
+	if (a == b && (a == TRIG_POS_PERIOD || b == TRIG_REG_OUTPUT)) {
 		gap = 0;
-	} else if ((a == TRIG_NEG_PERIOD && b == TRIG_POS_PERIOD) ||
-		   (a == TRIG_POS_PERIOD && b == TRIG_NEG_PERIOD) ||
-		   (a == TRIG_NEG_PERIOD && b == TRIG_REG_OUTPUT) ||
-		   (a == TRIG_POS_PERIOD && b == TRIG_REG_OUTPUT)) {
+	} else if (a == TRIG_NEG_PERIOD && b == TRIG_NEG_PERIOD) {
 		gap = 8;
+	} else {
+		gap = 0;
 	}
 	return gap;
 }
@@ -599,8 +687,10 @@ static void cascade_chk(u64 *start, u64 *len, u64 *stop, u64 *iterate, u8 *ev,
 		format_ns(gap[i], stop_ns, str_len);
 		format_ns(start[i + 1], start_ns, str_len);
 		if (gap[i] < 0 && (i < cnt - 1 || 1 != repeat)) {
-			format_ns(gap[i], len_ns, str_len);
-			printf("gap too small: %d=%s\n", i, len_ns);
+			if (dbg_cascade) {
+				format_ns(gap[i], len_ns, str_len);
+				printf("gap too small: %d=%s\n", i, len_ns);
+			}
 			return;
 		}
 	}
@@ -693,7 +783,6 @@ void irig(u32 num, u32 cycle)
 	int n;
 	int rc;
 	int tso;
-	int cascade = 0;
 	int tx_flags = PTP_CMD_INTR_OPER | PTP_CMD_SILENT_OPER |
 		PTP_CMD_ON_TIME | PTP_CMD_REL_TIME;
 	u32 cascade_sec;
@@ -703,6 +792,9 @@ void irig(u32 num, u32 cycle)
 	u16 pattern;
 	int *fd = &dev[1].fd;
 
+	/* Limit to 1 ms. */
+	if (cycle > 1000000)
+		cycle = 1000000;
 	hi = (num >> 4) & 0xff;
 	lo = num & 0xff;
 	pulse[0] = 8;
@@ -727,25 +819,25 @@ void irig(u32 num, u32 cycle)
 	pulse[n++] = 8;
 	num >>= 4;
 	if (num) {
-	lo = num & 0xff;
-	for (i = 0; i < 4; i++, n++) {
-		if (lo & 1)
-			pulse[n] = 5;
-		else
-			pulse[n] = 2;
-		lo >>= 1;
-	}
-	pulse[n++] = 2;
-	num >>= 4;
-	lo = num & 0xff;
-	for (i = 0; i < 4; i++, n++) {
-		if (lo & 1)
-			pulse[n] = 5;
-		else
-			pulse[n] = 2;
-		lo >>= 1;
-	}
-	pulse[n++] = 8;
+		lo = num & 0xff;
+		for (i = 0; i < 4; i++, n++) {
+			if (lo & 1)
+				pulse[n] = 5;
+			else
+				pulse[n] = 2;
+			lo >>= 1;
+		}
+		pulse[n++] = 2;
+		num >>= 4;
+		lo = num & 0xff;
+		for (i = 0; i < 4; i++, n++) {
+			if (lo & 1)
+				pulse[n] = 5;
+			else
+				pulse[n] = 2;
+			lo >>= 1;
+		}
+		pulse[n++] = 8;
 	}
 	for (i = 0; i < n; i++)
 		printf("%d ", pulse[i]);
@@ -754,17 +846,16 @@ void irig(u32 num, u32 cycle)
 	n = 8;
 #endif
 	tso = 0;
-	cascade_sec = 2;
+	cascade_sec = 0;
 	cascade_nsec = 0;
 	nsec = 0;
 	i = 0;
 	while (i < n) {
-		rc = tx_cascade_init(fd, tso, 1, 1, 0, NULL);
+		rc = tx_cascade_init(fd, tso, test_gpo, 1, 0, NULL);
 		if (rc) {
 			printf("init failed: %d\n", tso);
 			break;
 		}
-		cascade = 1;
 		if (i + 1 < n && 10 + pulse[i + 1] < 16) {
 			pattern = irig_pattern[pulse[i]] |
 				(irig_pattern[pulse[i + 1]] << 10);
@@ -778,13 +869,14 @@ void irig(u32 num, u32 cycle)
 #if 0
 printf("%d %d %x\n", pulse[i], pulse[i+1], pattern);
 #endif
-		rc = tx_event(fd, tso, 1, TRIG_REG_OUTPUT, pattern, cycle, cnt,
-			0, cascade_sec, cascade_nsec, tx_flags, 0, NULL);
+		rc = tx_event(fd, tso, test_gpo, TRIG_REG_OUTPUT, pattern,
+			cycle, cnt, 0, cascade_sec, cascade_nsec, tx_flags, 0,
+			NULL);
 		if (rc) {
 			printf("tx failed: %d\n", tso);
 			break;
 		}
-		rc = tx_cascade(fd, tso, 1, 1, 1, tx_flags);
+		rc = tx_cascade(fd, tso, test_gpo, 1, 1, tx_flags);
 		if (rc) {
 			printf("cascade failed: %d\n", tso);
 			break;
@@ -795,9 +887,10 @@ printf("%d %d %x\n", pulse[i], pulse[i+1], pattern);
 			cascade_sec++;
 		}
 		cascade_nsec = (u32) nsec;
-		cascade = 0;
 		tso++;
 		i += m;
+		if (tso >= 3)
+			break;
 	}
 }
 
@@ -1494,7 +1587,7 @@ static void help_msg(char h) {
 		printf("\tme [timeout]\n");
 		printf("\tre [rx_flags]\n");
 		printf("\tte gpi\n");
-		printf("\tae\t\t\t\tanalyze events\n");
+		printf("\tae [0|1]\t\t\t\tanalyze events\n");
 		printf("\tze\t\t\t\trestart second tracking\n");
 		need_nl = 1;
 	}
@@ -1503,8 +1596,8 @@ static void help_msg(char h) {
 		if (need_nl)
 			printf("\n");
 		printf("\tto tso gpo event\n");
-		printf("\t\t[pulse] [cycle] [cnt] ");
-		printf("[iterate] [gap|sec] [nsec] [flags]\n");
+		printf("\t\t[pulse|pattern] [cycle] [cnt] ");
+		printf("[iterate] [factor] [gap|sec] [nsec] [flags]\n");
 		printf("\too tso\t\t\t\tcancel output unit\n");
 		printf("\tao tso gpo total [flags]\tcascade init\n");
 		printf("\tbo tso gpo total [cnt] [flags]");
@@ -1512,13 +1605,14 @@ static void help_msg(char h) {
 		printf("\tdo tso gpo total\t\tcancel cascade output\n");
 		printf("\teo\t\t\t\tturn on cascade debug\n");
 		printf("\tzo gpo\n");
+		printf("\tmo gpo\n");
 		printf("\tco [tx_cnt]\n");
-		printf("\tyo [tx_cycle]\n");
+		printf("\tyo [tx_cycle] [factor]\n");
 		printf("\tpo [tx_pattern]\n");
-		printf("\tuo [tx_pulse]\n");
+		printf("\tuo [tx_pulse] [factor]\n");
 		printf("\tso [tx_sec]\n");
-		printf("\tno [tx_nsec]\n");
-		printf("\tvo [cascade_iterate]\n");
+		printf("\tno [tx_nsec] [factor]\n");
+		printf("\tvo [cascade_iterate] [factor]\n");
 		printf("\two [cascade_gap]\n");
 		printf("\txo [cascade_cnt]\n");
 		printf("\tro [tx_flags]\n");
@@ -1581,6 +1675,71 @@ static void help_msg(char h) {
 	}
 }
 
+static void test_cases(int *fd, int test, u32 pulse, u32 cycle, u16 cnt,
+	u32 iterate, u8 factor, u32 gap, u32 sec, u32 nsec, int flags)
+{
+	int rc;
+
+	rc = tx_cascade_init(fd, 0, test_gpo, 2, 0, NULL);
+	print_err(rc);
+	if (rc)
+		return;
+	switch (test) {
+	case 0:
+		rc = tx_event(fd, 0, test_gpo, TRIG_POS_EDGE,
+			pulse, cycle, 1, 0, sec, nsec, flags,
+			0, NULL);
+		print_err(rc);
+		rc = tx_event(fd, 1, test_gpo, TRIG_NEG_EDGE,
+			pulse, cycle, 1, 0, sec, nsec + 8 + gap, flags,
+			0, NULL);
+		print_err(rc);
+		rc = tx_cascade(fd, 0, test_gpo, 2, 1, flags);
+		print_err(rc);
+		break;
+	case 1:
+		rc = tx_event(fd, 0, test_gpo, TRIG_POS_PERIOD,
+			pulse, cycle, 1, 0, sec, nsec, flags,
+			0, NULL);
+		print_err(rc);
+		rc = tx_event(fd, 1, test_gpo, TRIG_POS_EDGE,
+			pulse, cycle, 1, 0, sec, nsec + cycle + gap, flags,
+			0, NULL);
+		print_err(rc);
+		rc = tx_cascade(fd, 0, test_gpo, 2, 1, flags);
+		print_err(rc);
+		break;
+	case 2:
+		rc = tx_event(fd, 0, test_gpo, TRIG_POS_PERIOD,
+			pulse, cycle, 1, 0, sec, nsec, flags,
+			0, NULL);
+		print_err(rc);
+		rc = tx_event(fd, 1, test_gpo, TRIG_NEG_EDGE,
+			pulse, cycle, 1, 0, sec, nsec + cycle + gap, flags,
+			0, NULL);
+		print_err(rc);
+		rc = tx_cascade(fd, 0, test_gpo, 2, 1, flags);
+		print_err(rc);
+		break;
+	case 3:
+		rc = tx_event(fd, 0, test_gpo, TRIG_NEG_PERIOD,
+			pulse, cycle - 40, 1, iterate, sec, nsec + 16,
+			flags, factor, NULL);
+		print_err(rc);
+		rc = tx_event(fd, 1, test_gpo, TRIG_NEG_PERIOD,
+			20000000 / 8, 980000000, 4, iterate, sec,
+			nsec + cycle + gap, flags,
+			factor, NULL);
+		print_err(rc);
+		rc = tx_cascade(fd, 0, test_gpo, 2, 2, flags);
+		print_err(rc);
+		break;
+	}
+	if (rc)
+		rc = tx_cascade_init(fd, 0, test_gpo, 2, PTP_CMD_CANCEL_OPER,
+				     NULL);
+}  /* test_cases */
+
 void get_cmd(FILE *fp)
 {
 	int count;
@@ -1591,6 +1750,7 @@ void get_cmd(FILE *fp)
 	int cont = 1;
 	char cmd[80];
 	char line[80];
+	char last_line[80];
 	int rx_unit;
 	int tx_unit;
 	int rx_latency;
@@ -1605,6 +1765,8 @@ void get_cmd(FILE *fp)
 	u32 cascade_gap = 0;
 	u16 cascade_cnt = 1;
 	u32 cascade_iterate = 10000;
+	u8 iterate_factor = 0;
+	u8 tx_factor = 0;
 	u8 unit_factor = 0;
 	u32 rx_timeout = 2000;
 	int rx_flags = PTP_CMD_INTR_OPER;
@@ -1635,8 +1797,8 @@ void get_cmd(FILE *fp)
 	u8 ev[MAX_TSO_CNT + 1];
 	int *fd = &dev[1].fd;
 	int ptp_clk_id = 0;
-	char str_ns[20];
-	size_t str_len = 20;
+	char str_ns[40];
+	size_t str_len = 40;
 
 	get_global_cfg(fd, &ptp_master, &ptp_2step, &ptp_p2p,
 		&ptp_as, &ptp_unicast, &ptp_alternate, &ptp_csum, &ptp_check,
@@ -1646,11 +1808,16 @@ void get_cmd(FILE *fp)
 	printf("access delay = %u\n", ptp_access_delay);
 	if (!ptp_started)
 		printf("PTP not started!  Some operations may not work.\n");
+	last_line[0] = '\0';
 	clear_rx_event();
 	do {
 		printf("> ");
 		if (fgets(line, 80, fp) == NULL)
 			break;
+		if (line[0] == ' ' && line[1] == '\n')
+			strncpy(line, last_line, 80);
+		else
+			strncpy(last_line, line, 80);
 		cmd[0] = '\0';
 		count = sscanf(line, "%s %u %u %u %u %u %u %u %u %u %u", cmd,
 			(unsigned int *) &num[0],
@@ -2003,6 +2170,11 @@ void get_cmd(FILE *fp)
 						rx_timeout);
 				break;
 			case 'a':
+				if (count >= 2) {
+					stop_rx = !!num[0];
+					if (stop_rx)
+						break;
+				}
 				analyze_rx_event();
 				break;
 			}
@@ -2019,13 +2191,33 @@ void get_cmd(FILE *fp)
 					cascade_cnt);
 				printf("sec = %u; nsec = %u\n",
 					cascade_sec, cascade_nsec);
-				printf("factor = %u\n", unit_factor);
+				printf("factor = %u %u\n", unit_factor,
+					iterate_factor);
 				break;
 			case 'n':
 				if (count >= 2) {
-					tx_nsec = num[0];
-				} else
-					printf("tx_nsec = %u\n", tx_nsec);
+					u8 factor = unit_factor;
+
+					if (count >= 3 && num[1] <= 6) {
+						factor = (u8)num[1];
+					}
+					num[0] = get_factor_unit(num[0],
+						factor, NULL);
+					if (num[0] >= 1000000000)
+						num[0] = 0;
+					if (cascade)
+						cascade_nsec = num[0];
+					else
+						tx_nsec = num[0];
+				} else {
+					if (cascade)
+						format_ns(cascade_nsec,
+							str_ns, str_len);
+					else
+						format_ns(tx_nsec,
+							str_ns, str_len);
+					printf("tx_nsec = %s\n", str_ns);
+				}
 				break;
 			case 's':
 				if (count >= 2) {
@@ -2040,8 +2232,6 @@ void get_cmd(FILE *fp)
 					num[1] = 1;
 				else
 					num[1] = 2;
-				if (num[1] < 0)
-					num[1] = 0;
 				rc = tx_event(fd, num[1], 0, 0, tx_pulse,
 					tx_cycle, tx_cnt, 0, tx_sec, tx_nsec,
 					PTP_CMD_CANCEL_OPER, 0, NULL);
@@ -2050,6 +2240,13 @@ void get_cmd(FILE *fp)
 					20000000 / 8, 1000000000, 0,
 					0, 1, 0, PTP_CMD_REL_TIME, 0, NULL);
 				print_err(rc);
+				break;
+			case 'm':
+				if (count >= 2) {
+					if (num[0] < 2)
+						test_gpo = num[0];
+				} else
+					printf("test_gpo = %u\n", test_gpo);
 				break;
 			case 'r':
 				if (hcount >= 2)
@@ -2068,6 +2265,8 @@ void get_cmd(FILE *fp)
 						printf("rel ");
 					if (tx_flags & PTP_CMD_CLK_OPT)
 						printf("clk ");
+					if (tx_flags & PTP_CMD_SW_OPER)
+						printf("sw ");
 					if (tx_flags)
 						printf("\n");
 				}
@@ -2079,9 +2278,11 @@ void get_cmd(FILE *fp)
 				if (count < 11)
 					printf("[");
 				if (TRIG_REG_OUTPUT == num[2]) {
-					if (count < 5) {
+					if (hcount >= 5)
+						num[3] = hex[3];
+					else {
 						num[3] = tx_pattern;
-						printf("%x ", num[3]);
+						printf("0x%x ", num[3]);
 					}
 				} else {
 					if (count < 5) {
@@ -2105,6 +2306,7 @@ void get_cmd(FILE *fp)
 					num[5] = tx_cnt;
 					printf("%u ", num[5]);
 				}
+				tx_factor = iterate_factor;
 				if (cascade) {
 					u32 gap;
 
@@ -2112,14 +2314,20 @@ void get_cmd(FILE *fp)
 						num[6] = cascade_iterate;
 						printf("%u ", num[6]);
 					}
-					if (count < 9)
-						num[7] = cascade_gap;
-					gap = num[7];
+					if (count >= 9) {
+						if (num[7] <= 9)
+							tx_factor = (u8)num[7];
+					} else {
+						printf("<%u> ", tx_factor);
+					}
+					if (count < 10)
+						num[8] = cascade_gap;
+					gap = num[8];
 					num[7] = cascade_sec;
 					num[8] = cascade_nsec;
 					printf("%u:%u ", num[7], num[8]);
 					num[6] = get_factor_unit(num[6],
-						unit_factor,
+						tx_factor,
 						&iterate[cascade - 1]);
 					update_cascade_time(num[2], num[3],
 						num[4], num[5], gap,
@@ -2139,6 +2347,13 @@ void get_cmd(FILE *fp)
 					if (count < 10) {
 						num[8] = tx_nsec;
 						printf(":%u ", num[8]);
+					} else {
+						num[8] = get_factor_unit(num[8],
+							tx_factor, NULL);
+						if (num[8] > 1000000000) {
+							num[8] = 0;
+							num[7]++;
+						}
 					}
 				}
 
@@ -2149,7 +2364,7 @@ void get_cmd(FILE *fp)
 				}
 				rc = tx_event(fd, num[0], num[1], num[2],
 					num[3], num[4], num[5], num[6], num[7],
-					num[8], num[9], unit_factor, &tx_unit);
+					num[8], num[9], tx_factor, &tx_unit);
 				if (print_err(rc))
 					break;
 				printf("unit = %d\n", tx_unit);
@@ -2223,13 +2438,13 @@ void get_cmd(FILE *fp)
 				break;
 			case 'y':
 				if (count >= 2) {
-					int f = unit_factor;
+					u8 factor = unit_factor;
 
-					while (f) {
-						num[0] *= 10;
-						f--;
+					if (count >= 3 && num[1] <= 9) {
+						factor = (u8)num[1];
 					}
-					tx_cycle = num[0];
+					tx_cycle = get_factor_unit(num[0],
+						factor, NULL);
 				} else {
 					format_ns(tx_cycle,
 						str_ns, str_len);
@@ -2244,12 +2459,13 @@ void get_cmd(FILE *fp)
 				break;
 			case 'u':
 				if (count >= 2) {
-					int f = unit_factor;
+					u8 factor = unit_factor;
 
-					while (f) {
-						num[0] *= 10;
-						f--;
+					if (count >= 3 && num[1] <= 6) {
+						factor = (u8)num[1];
 					}
+					num[0] = get_factor_unit(num[0],
+						factor, NULL);
 					tx_pulse = num[0] / 8;
 					if (tx_pulse < 1)
 						tx_pulse = 1;
@@ -2275,6 +2491,9 @@ void get_cmd(FILE *fp)
 					case 6:
 						strncpy(unit_str, "(ms)", 8);
 						break;
+					case 9:
+						strncpy(unit_str, "(s)", 8);
+						break;
 					default:
 						strncpy(unit_str, " ", 8);
 						break;
@@ -2286,14 +2505,15 @@ void get_cmd(FILE *fp)
 			case 'v':
 				if (count >= 2) {
 					cascade_iterate = num[0];
+					if (count >= 3 && num[1] <= 9)
+						iterate_factor = (u8)num[1];
+					else
+						iterate_factor = unit_factor;
 				} else {
 					u64 big_iterate = cascade_iterate;
-					int f = unit_factor;
-				
-					while (f) {
-						big_iterate *= 10;
-						f--;
-					}	
+
+					get_factor_unit(cascade_iterate,
+						iterate_factor, &big_iterate);
 					format_ns(big_iterate,
 						str_ns, str_len);
 					printf("cascade_iterate = %s\n",
@@ -2324,45 +2544,13 @@ void get_cmd(FILE *fp)
 					break;
 				printf("%04x\n", tx_unit);
 				break;
-			case 'j':
-				rc = tx_event(fd, 0, 1, TRIG_POS_EDGE,
-					tx_pulse, tx_cycle,
-					tx_cnt, 0, tx_sec, tx_nsec, tx_flags,
-					0, NULL);
-				print_err(rc);
-				rc = tx_event(fd, 1, 1, TRIG_NEG_EDGE,
-					tx_pulse, tx_cycle,
-					tx_cnt, 0, tx_sec,
-					tx_nsec + 8 + cascade_gap, tx_flags,
-					0, NULL);
-				print_err(rc);
-				break;
-			case 'k':
-				rc = tx_event(fd, 0, 1, TRIG_POS_PERIOD,
-					tx_pulse, tx_cycle,
-					tx_cnt, 0, tx_sec, tx_nsec, tx_flags,
-					0, NULL);
-				print_err(rc);
-				rc = tx_event(fd, 1, 1, TRIG_POS_EDGE,
-					tx_pulse, tx_cycle,
-					tx_cnt, 0, tx_sec,
-					tx_nsec + tx_cycle + cascade_gap,
-					tx_flags, 0, NULL);
-				print_err(rc);
-				break;
-			case 'l':
-				rc = tx_event(fd, 0, 1, TRIG_POS_PERIOD,
-					tx_pulse, tx_cycle,
-					tx_cnt, 0, tx_sec, tx_nsec, tx_flags,
-					0, NULL);
-				print_err(rc);
-				rc = tx_event(fd, 1, 1, TRIG_POS_EDGE,
-					tx_pulse, tx_cycle,
-					tx_cnt, 0, tx_sec,
-					tx_nsec + tx_cycle + cascade_gap,
-					tx_flags, 0, NULL);
-				print_err(rc);
-				break;
+			}
+			if (line[0] >= '0' && line[0] <= '9') {
+				test_cases(fd, line[0] - '0',
+					   tx_pulse, tx_cycle, tx_cnt,
+					   cascade_iterate, iterate_factor,
+					   cascade_gap,
+					   tx_sec, tx_nsec, tx_flags);
 			}
 #if 0
 		} else if ('m' == line[1]) {
@@ -2629,7 +2817,7 @@ void *notification_task(void *param)
 			if ((data[0] & 0x0f) == PTP_CMD_RESP) {
 				switch (data[0] & 0xf0) {
 				case PTP_CMD_GET_EVENT:
-					if (!proc_rx_event(data, len))
+					if (!proc_rx_event(data, len, stop_rx))
 						setup_rx_event(data, len);
 					break;
 				case PTP_CMD_GET_OUTPUT:

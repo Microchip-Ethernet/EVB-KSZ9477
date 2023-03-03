@@ -18906,12 +18906,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hsr.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_hsr.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hsr.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_hsr.c	2021-08-27 14:49:48.212003779 -0700
-@@ -0,0 +1,2325 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_hsr.c	2023-03-03 12:07:05.866241233 -0800
+@@ -0,0 +1,2348 @@
 +/**
 + * Microchip HSR code
 + *
-+ * Copyright (c) 2016-2020 Microchip Technology Inc.
++ * Copyright (c) 2016-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright 2011-2014 Autronica Fire and Security AS
@@ -18929,6 +18929,16 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 + * GNU General Public License for more details.
 + */
 +
++
++#if 1
++#define ANY_CAN_CREATE_ENTRY
++#endif
++#if 0
++#define REDBOX_NOT_SEND_SUPERVISION
++#endif
++#if 1
++#define REDBOX_NOT_REPLACE_MAC_ADDR
++#endif
 +
 +static int dbg_hsr;
 +
@@ -19200,8 +19210,10 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +			return node;
 +	}
 +
++#ifndef ANY_CAN_CREATE_ENTRY
 +	if (!is_sup)
 +		return NULL; /* Only supervision frame may create node entry */
++#endif
 +
 +	exthdr = ethhdr;
 +	if (exthdr->h_proto == htons(ETH_P_8021Q))
@@ -19226,7 +19238,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +for (i = 0; i < 20; i++)
 +dbg_msg("%02x ", skb->data[i]);
 +dbg_msg("  %04x\n", ethhdr->h_proto);
++#ifndef ANY_CAN_CREATE_ENTRY
 +		WARN_ONCE(1, "%s: Non-HSR frame\n", __func__);
++#endif
 +		seq_out = 0;
 +	}
 +
@@ -20038,17 +20052,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +		if (1 != node->slave)
 +			continue;
 +
-+		/*
-+		 * Cannot use different source MAC address because
-+		 * self-address filtering is used to drop frames sent by self.
-+		 */
 +		memcpy(vlan->h_source, node->MacAddressA, ETH_ALEN);
-+		memcpy(vlan->h_source, info->src_addr, ETH_ALEN);
 +
 +		hsr_stype = (struct hsr_sup_type *)(hsr_stag + 1);
 +		hsr_sp = (struct hsr_sup_payload *)(hsr_stype + 1);
 +		ether_addr_copy(hsr_sp->MacAddressA, node->MacAddressA);
++#ifndef REDBOX_NOT_SEND_SUPERVISION
 +		send_hsr_supervision_frame(master);
++#endif
 +	}
 +
 +	hsr->announce_timer.expires = jiffies +
@@ -20252,6 +20263,19 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +		skb = frame_get_tagged_skb(frame, port);
 +		skb->protocol = htons(ETH_P_HSR);
++
++		/*
++		 * Cannot use different source MAC address because
++		 * self-address filtering is used to drop frames sent by self.
++		 */
++		if (!hsr_addr_is_self(port->hsr,
++		    eth_hdr(frame->skb_hsr)->h_source)) {
++			info = container_of(from->hsr, struct ksz_hsr_info,
++					    hsr);
++
++			memcpy(eth_hdr(frame->skb_hsr)->h_source,
++			       info->src_addr, ETH_ALEN);
++		}
 +		return;
 +	} else {
 +		int forward;
@@ -20576,17 +20600,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +		vlan = (struct vlan_ethhdr *) info->slave_sup_frame;
 +
-+		/*
-+		 * Cannot use different source MAC address because
-+		 * self-address filtering is used to drop frames sent by self.
-+		 */
 +		memcpy(vlan->h_source, node->MacAddressA, ETH_ALEN);
-+		memcpy(vlan->h_source, info->src_addr, ETH_ALEN);
 +
 +		hsr_stype = (struct hsr_sup_type *)(hsr_stag + 1);
 +		hsr_sp = (struct hsr_sup_payload *)(hsr_stype + 1);
 +		ether_addr_copy(hsr_sp->MacAddressA, node->MacAddressA);
++#ifndef REDBOX_NOT_SEND_SUPERVISION
 +		send_hsr_supervision_frame(master);
++#endif
 +	} else {
 +
 +		/* Remove the fixed entries in MAC table. */
@@ -20608,8 +20629,10 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +			return ret;
 +	}
 +
++#ifndef REDBOX_NOT_REPLACE_MAC_ADDR
 +	/* Replace source MAC address. */
 +	memcpy(&new_skb->data[6], info->src_addr, ETH_ALEN);
++#endif
 +
 +	/* Send frame to HSR device. */
 +	hsr_dev_xmit(info, info->dev, new_skb);
@@ -87337,12 +87360,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2022-07-25 20:29:58.000000000 -0700
-@@ -0,0 +1,19183 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2023-03-03 12:31:14.208975998 -0800
+@@ -0,0 +1,19189 @@
 +/**
 + * Microchip gigabit switch common code
 + *
-+ * Copyright (c) 2015-2022 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2010-2015 Micrel, Inc.
@@ -101514,7 +101537,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (1 == priv->port_cnt)
 +		port = priv->first_port;
 +
-+#if 0
 +	do {
 +		u16 prio;
 +		u16 vid;
@@ -101556,7 +101578,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			skb->len -= VLAN_HLEN;
 +		}
 +	} while (0);
-+#endif
 +
 +	if (port) {
 +		port = get_phy_port(sw, port);
@@ -103350,6 +103371,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (phydev->phy_link_change) {
 +		phydev->phy_link_change(phydev, phy_link, true);
 +	} else if (phy_link != link) {
++		if (phy_link)
++			netif_carrier_on(dev);
++		else
++			netif_carrier_off(dev);
++	}
++
++	/* HSR processing needs netif_carrier_ok to be current. */
++	if ((sw->features & HSR_HW) && phy_link != netif_carrier_ok(dev)) {
 +		if (phy_link)
 +			netif_carrier_on(dev);
 +		else

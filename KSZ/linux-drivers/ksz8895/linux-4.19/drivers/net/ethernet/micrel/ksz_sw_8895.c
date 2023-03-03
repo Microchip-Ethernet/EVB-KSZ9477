@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common code
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -6608,7 +6608,8 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		len = (skb->len + 1 + padlen + 4) & ~3;
 	}
 	if (need_new_copy) {
-		skb = skb_copy_expand(org_skb, 0, len, GFP_ATOMIC);
+		skb = skb_copy_expand(org_skb, skb_headroom(org_skb), len,
+				      GFP_ATOMIC);
 		if (!skb)
 			return NULL;
 		consume_skb(org_skb);

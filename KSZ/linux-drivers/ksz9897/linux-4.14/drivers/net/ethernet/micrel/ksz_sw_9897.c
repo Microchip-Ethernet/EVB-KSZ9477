@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2022 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -14151,7 +14151,6 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (1 == priv->port_cnt)
 		port = priv->first_port;
 
-#if 0
 	do {
 		u16 prio;
 		u16 vid;
@@ -14193,7 +14192,6 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			skb->len -= VLAN_HLEN;
 		}
 	} while (0);
-#endif
 
 	if (port) {
 		port = get_phy_port(sw, port);
@@ -14209,7 +14207,8 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		len = (skb->len + tag_len + padlen + 4) & ~3;
 	}
 	if (need_new_copy) {
-		skb = skb_copy_expand(org_skb, 0, len, GFP_ATOMIC);
+		skb = skb_copy_expand(org_skb, skb_headroom(org_skb), len,
+				      GFP_ATOMIC);
 		if (!skb)
 			return NULL;
 		consume_skb(org_skb);

@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2022 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -14159,7 +14159,6 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (1 == priv->port_cnt)
 		port = priv->first_port;
 
-#if 0
 	do {
 		u16 prio;
 		u16 vid;
@@ -14201,7 +14200,6 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			skb->len -= VLAN_HLEN;
 		}
 	} while (0);
-#endif
 
 	if (port) {
 		port = get_phy_port(sw, port);
@@ -16007,6 +16005,14 @@ dbg_msg(" %*pb\n", __ETHTOOL_LINK_MODE_MASK_NBITS, phydev->lp_advertising);
 	if (phydev->phy_link_change) {
 		phydev->phy_link_change(phydev, phy_link, true);
 	} else if (phy_link != link) {
+		if (phy_link)
+			netif_carrier_on(dev);
+		else
+			netif_carrier_off(dev);
+	}
+
+	/* HSR processing needs netif_carrier_ok to be current. */
+	if ((sw->features & HSR_HW) && phy_link != netif_carrier_ok(dev)) {
 		if (phy_link)
 			netif_carrier_on(dev);
 		else

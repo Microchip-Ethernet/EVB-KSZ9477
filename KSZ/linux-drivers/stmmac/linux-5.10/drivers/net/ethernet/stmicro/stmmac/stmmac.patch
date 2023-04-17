@@ -73,7 +73,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/stmicro/stmmac/stmmac.h linu
  enum stmmac_state {
 diff -Napur linux-5.10.68-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c linux-5.10.68/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 --- linux-5.10.68-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2021-09-22 03:28:07.000000000 -0700
-+++ linux-5.10.68/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2021-11-01 15:01:37.134097680 -0700
++++ linux-5.10.68/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2023-03-14 13:36:27.876185496 -0700
 @@ -40,6 +40,59 @@
  #include <net/pkt_cls.h>
  #include "stmmac_ptp.h"
@@ -103,7 +103,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +#if defined(CONFIG_IBA_KSZ9897)
 +#include "../../micrel/iba-ksz9897.c"
 +#elif defined(CONFIG_HAVE_KSZ9897)
-+#include "../../micrel/spi-ksz9897.c"
++#include "../../micrel/i2c-ksz9897.c"
 +#elif defined(CONFIG_HAVE_KSZ8795)
 +#include "../../micrel/spi-ksz8795.c"
 +#elif defined(CONFIG_SMI_KSZ8895)
@@ -113,7 +113,7 @@ diff -Napur linux-5.10.68-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +#elif defined(CONFIG_SMI_KSZ8863)
 +#include "../../micrel/smi-ksz8863.c"
 +#elif defined(CONFIG_HAVE_KSZ8863)
-+#include "../../micrel/spi-ksz8863.c"
++#include "../../micrel/i2c-ksz8863.c"
 +#elif defined(CONFIG_IBA_LAN937X)
 +#include "../../microchip/iba-lan937x.c"
 +#elif defined(CONFIG_SMI_LAN937X)

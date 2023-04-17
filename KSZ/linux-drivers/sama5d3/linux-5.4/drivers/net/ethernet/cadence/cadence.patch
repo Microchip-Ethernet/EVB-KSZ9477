@@ -92,7 +92,7 @@ diff -Napur linux-5.4.130-orig/drivers/net/ethernet/cadence/macb.h linux-5.4.130
  #ifdef CONFIG_MACB_USE_HWSTAMP
 diff -Napur linux-5.4.130-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.4.130/drivers/net/ethernet/cadence/macb_main.c
 --- linux-5.4.130-orig/drivers/net/ethernet/cadence/macb_main.c	2021-07-07 05:29:57.000000000 -0700
-+++ linux-5.4.130/drivers/net/ethernet/cadence/macb_main.c	2021-11-01 15:14:49.786094656 -0700
++++ linux-5.4.130/drivers/net/ethernet/cadence/macb_main.c	2023-03-14 13:39:46.580193815 -0700
 @@ -38,6 +38,490 @@
  #include <linux/pm_runtime.h>
  #include "macb.h"
@@ -137,7 +137,7 @@ diff -Napur linux-5.4.130-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
 +#if defined(CONFIG_IBA_KSZ9897)
 +#include "../micrel/iba-ksz9897.c"
 +#elif defined(CONFIG_HAVE_KSZ9897)
-+#include "../micrel/spi-ksz9897.c"
++#include "../micrel/i2c-ksz9897.c"
 +#elif defined(CONFIG_HAVE_KSZ8795)
 +#include "../micrel/spi-ksz8795.c"
 +#elif defined(CONFIG_SMI_KSZ8895)
@@ -147,7 +147,7 @@ diff -Napur linux-5.4.130-orig/drivers/net/ethernet/cadence/macb_main.c linux-5.
 +#elif defined(CONFIG_SMI_KSZ8863)
 +#include "../micrel/smi-ksz8863.c"
 +#elif defined(CONFIG_HAVE_KSZ8863)
-+#include "../micrel/spi-ksz8863.c"
++#include "../micrel/i2c-ksz8863.c"
 +#elif defined(CONFIG_IBA_LAN937X)
 +#include "../microchip/iba-lan937x.c"
 +#elif defined(CONFIG_SMI_LAN937X)

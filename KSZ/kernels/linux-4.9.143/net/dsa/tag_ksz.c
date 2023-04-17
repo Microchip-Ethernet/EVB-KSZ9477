@@ -1,6 +1,6 @@
 /*
  * net/dsa/tag_ksz.c - Microchip KSZ Switch tag format handling
- * Copyright (c) 2017-2018 Microchip Technology
+ * Copyright (c) 2017-2023 Microchip Technology
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,19 +23,25 @@ static struct sk_buff *ksz_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct dsa_slave_priv *p = netdev_priv(dev);
 	struct dsa_switch *ds = p->parent;
+	struct dsa_switch_tree *dst = ds->dst;
 	struct ksz_device *sw = ds->priv;
+	int index = ds->index;
 	struct sk_buff *nskb;
-	int len;
+	int maxlen;
 	int padlen;
+	int len;
 
 	len = KSZ_INGRESS_TAG_LEN;
 	if (sw->tag_ops->get_len)
 		len = sw->tag_ops->get_len(sw);
+	maxlen = len;
+	if (ds->index > 0)
+		maxlen *= (ds->index + 1);
 
 	padlen = (skb->len >= ETH_ZLEN) ? 0 : ETH_ZLEN - skb->len;
 
 	nskb = alloc_skb(NET_IP_ALIGN + skb->len +
-			 padlen + len, GFP_ATOMIC);
+			 padlen + maxlen, GFP_ATOMIC);
 	if (!nskb) {
 		kfree_skb(skb);
 		return NULL;
@@ -57,6 +63,13 @@ static struct sk_buff *ksz_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	sw->tag_ops->set_tag(sw, skb_put(nskb, len), skb_mac_header(nskb),
 			     p->port);
+	while (index > 0) {
+		--index;
+		ds = dst->ds[index];
+		sw->tag_ops->set_tag(sw, skb_put(nskb, len),
+				     skb_mac_header(nskb),
+				     ds->rtable[index + 1]);
+	}
 
 	return nskb;
 }
@@ -67,9 +80,11 @@ static int ksz_rcv(struct sk_buff *skb, struct net_device *dev,
 	struct dsa_switch_tree *dst = dev->dsa_ptr;
 	struct dsa_switch *ds;
 	struct ksz_device *sw;
-	u8 *tag;
-	int len;
 	int source_port;
+	int maxlen;
+	int index;
+	int len;
+	u8 *tag;
 
 	if (unlikely(dst == NULL))
 		goto out_drop;
@@ -90,11 +105,24 @@ static int ksz_rcv(struct sk_buff *skb, struct net_device *dev,
 		len = sw->tag_ops->get_tag(sw, tag, &source_port);
 	else
 		source_port = tag[0] & 7;
+	maxlen = len;
+
+	index = 0;
+	while (ds->rtable[index + 1] == source_port) {
+		++index;
+		maxlen += len;
+		ds = dst->ds[index];
+		tag -= len;
+		if (sw->tag_ops->get_tag)
+			len = sw->tag_ops->get_tag(sw, tag, &source_port);
+		else
+			source_port = tag[0] & 7;
+	}
 
 	if (source_port >= DSA_MAX_PORTS || !ds->ports[source_port].netdev)
 		goto out_drop;
 
-	pskb_trim_rcsum(skb, skb->len - len);
+	pskb_trim_rcsum(skb, skb->len - maxlen);
 
 	skb->dev = ds->ports[source_port].netdev;
 	skb_push(skb, ETH_HLEN);

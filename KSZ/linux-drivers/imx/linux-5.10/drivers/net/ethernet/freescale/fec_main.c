@@ -804,14 +804,14 @@ fec_enet_txq_submit_frag_skb(struct fec_enet_priv_tx_q *txq,
 		/* Handle the last BD specially */
 		if (frag == nr_frags - 1) {
 			status |= (BD_ENET_TX_INTR | BD_ENET_TX_LAST);
-#ifndef CONFIG_1588_PTP
 			if (fep->bufdesc_ex) {
 				estatus |= BD_ENET_TX_INT;
+#ifndef CONFIG_1588_PTP
 				if (unlikely(skb_shinfo(skb)->tx_flags &
 					SKBTX_HW_TSTAMP && fep->hwts_tx_en))
 					estatus |= BD_ENET_TX_TS;
-			}
 #endif
+			}
 		}
 
 		if (fep->bufdesc_ex) {
@@ -970,14 +970,14 @@ static int fec_enet_txq_submit_skb(struct fec_enet_priv_tx_q *txq,
 		}
 	} else {
 		status |= (BD_ENET_TX_INTR | BD_ENET_TX_LAST);
-#ifndef CONFIG_1588_PTP
 		if (fep->bufdesc_ex) {
 			estatus = BD_ENET_TX_INT;
+#ifndef CONFIG_1588_PTP
 			if (unlikely(skb_shinfo(skb)->tx_flags &
 				SKBTX_HW_TSTAMP && fep->hwts_tx_en))
 				estatus |= BD_ENET_TX_TS;
-		}
 #endif
+		}
 	}
 	bdp->cbd_bufaddr = cpu_to_fec32(addr);
 	bdp->cbd_datlen = cpu_to_fec16(buflen);
@@ -1085,10 +1085,8 @@ fec_enet_txq_put_data_tso(struct fec_enet_priv_tx_q *txq, struct sk_buff *skb,
 		status |= (BD_ENET_TX_LAST | BD_ENET_TX_TC);
 	if (is_last) {
 		status |= BD_ENET_TX_INTR;
-#ifndef CONFIG_1588_PTP
 		if (fep->bufdesc_ex)
 			ebdp->cbd_esc |= cpu_to_fec32(BD_ENET_TX_INT);
-#endif
 	}
 
 	bdp->cbd_sc = cpu_to_fec16(status);
@@ -1926,8 +1924,8 @@ fec_enet_rx_queue(struct net_device *ndev, int budget, u16 queue_id)
 	bool	need_swap = fep->quirks & FEC_QUIRK_SWAP_FRAME;
 
 #ifdef CONFIG_KSZ_SWITCH
-	struct ksz_sw *sw = fep->port.sw;
 	struct net_device *orig_dev = ndev;
+	struct ksz_sw *sw = fep->port.sw;
 #endif
 
 #ifdef CONFIG_M532x
@@ -3596,12 +3594,10 @@ fec_enet_alloc_txq_buffers(struct net_device *ndev, unsigned int queue)
 		bdp->cbd_sc = cpu_to_fec16(0);
 		bdp->cbd_bufaddr = cpu_to_fec32(0);
 
-#ifndef CONFIG_1588_PTP
 		if (fep->bufdesc_ex) {
 			struct bufdesc_ex *ebdp = (struct bufdesc_ex *)bdp;
 			ebdp->cbd_esc = cpu_to_fec32(BD_ENET_TX_INT);
 		}
-#endif
 
 		bdp = fec_enet_get_nextdesc(bdp, &txq->bd);
 	}
@@ -3822,6 +3818,7 @@ static int fec_enet_sw_init(struct fec_enet_private *fep)
 #endif
 	prep_sw_dev(sw, fep, 0, port_count, mib_port_count, dev_label);
 
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 	/* Only the main one needs to set adjust_link for configuration. */
 	if (fep->netdev->phydev->mdio.bus &&
 	    !fep->netdev->phydev->adjust_link) {
@@ -3831,6 +3828,7 @@ static int fec_enet_sw_init(struct fec_enet_private *fep)
 		fep->speed = 0;
 		fep->full_duplex = 0;
 	}
+#endif
 
 	INIT_DELAYED_WORK(&hw_priv->promisc_reset, promisc_reset_work);
 

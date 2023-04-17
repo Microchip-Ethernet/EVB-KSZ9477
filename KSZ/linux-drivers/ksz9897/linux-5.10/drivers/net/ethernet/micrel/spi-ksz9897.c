@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 SPI driver
  *
- * Copyright (c) 2015-2022 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  * Copyright (c) 2013-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -113,7 +113,7 @@
 
 #define KS9897MLI_DEV0			"ksz9897"
 
-#define SW_DRV_RELDATE			"Jul 25, 2022"
+#define SW_DRV_RELDATE			"Mar 25, 2023"
 #define SW_DRV_VERSION			"1.2.6"
 
 /* -------------------------------------------------------------------------- */
@@ -604,6 +604,7 @@ static int ksz9897_probe(struct spi_device *spi)
 	spi_message_add_tail(&hw_priv->spi_xfer2[1], &hw_priv->spi_msg2);
 
 	priv->irq = spi->irq;
+	priv->spi_mode = (spi->mode & 3) | 4;
 
 	return ksz_probe(priv);
 }

@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 switch common header
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -353,6 +353,7 @@ struct ksz_port_cfg {
  * @phy_addr:	PHY address used by first port.
  */
 struct ksz_sw_info {
+	struct ksz_mac_table reserved_table[ACTUAL_MCAST_TABLE_ENTRIES];
 	struct ksz_mac_table mac_table[MULTI_MAC_TABLE_ENTRIES];
 	struct ksz_alu_table alu_table[MULTI_MAC_TABLE_ENTRIES];
 	int forward;
@@ -995,6 +996,7 @@ struct ksz_port {
 	u8 state;
 	uint iba_ready:1;
 	uint need_mac:1;
+	uint opened:1;
 	uint ready:1;
 	uint report:1;
 	u16 link_ports;

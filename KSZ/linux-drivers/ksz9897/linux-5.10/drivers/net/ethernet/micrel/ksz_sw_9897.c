@@ -3757,8 +3757,8 @@ static inline int port_chk_broad_storm(struct ksz_sw *sw, uint p)
 /* Driver set switch broadcast storm protection at 10% rate. */
 #define BROADCAST_STORM_PROTECTION_RATE	10
 
-/* 148,800 frames * 67 ms / 100 */
-#define BROADCAST_STORM_VALUE		9969
+/* 148,800 frames * 50 ms / 100 */
+#define BROADCAST_STORM_VALUE		7440
 
 /**
  * sw_cfg_broad_storm - configure broadcast storm threshold
@@ -6215,6 +6215,8 @@ static void sw_setup_reserved_multicast(struct ksz_sw *sw)
 		table[7].ports = sw->PORT_MASK & ~sw->HOST_MASK;
 		sw_w_m_sta_mac_table(sw, addr, true, 8, table);
 	}
+	memcpy(sw->info->reserved_table, table,
+	       sizeof(struct ksz_mac_table) * ACTUAL_MCAST_TABLE_ENTRIES);
 }  /* sw_setup_reserved_multicast */
 
 static int sw_get_gbit(struct ksz_sw *sw, u8 data)
@@ -7876,12 +7878,9 @@ static void sgmii_port_set_speed(struct ksz_sw *sw, uint p, int speed,
 	}
 	adv <<= SR_MII_AUTO_NEG_PAUSE_S;
 	adv |= SR_MII_AUTO_NEG_FULL_DUPLEX;
-	adv |= SR_MII_AUTO_NEG_HALF_DUPLEX;
-	if (duplex) {
-		if (1 == duplex)
-			adv &= ~SR_MII_AUTO_NEG_FULL_DUPLEX;
-		else if (2 == duplex)
-			adv &= ~SR_MII_AUTO_NEG_HALF_DUPLEX;
+	if (1 == duplex) {
+		adv &= ~SR_MII_AUTO_NEG_FULL_DUPLEX;
+		adv |= SR_MII_AUTO_NEG_HALF_DUPLEX;
 	}
 	if (adv != cfg) {
 dbg_msg("ADV: %04x"NL, adv);
@@ -8165,7 +8164,7 @@ static int port_get_link_speed(struct ksz_port *port)
 		if (!info->phy) {
 
 			/* By itself. */
-			if (1 == port->port_cnt &&
+			if (1 == port->port_cnt && port->report &&
 			    (sw->phy_intr & (1 << p)))
 				change |= 1 << p;
 			continue;
@@ -8834,6 +8833,7 @@ static void sw_setup(struct ksz_sw *sw)
 		if (!(sw->features & PTP_HW))
 			continue;
 
+		/* Disable EEE for now. */
 		port_mmd_read(sw, port, MMD_DEVICE_ID_EEE_ADV, MMD_EEE_ADV,
 			&val, 1);
 /*
@@ -8944,7 +8944,7 @@ static void sw_reset_hw(struct ksz_sw *sw)
 	delay_micro(1);
 
 	/* Turn off SPI auto edge detection. */
-	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0);
+	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0x40);
 }  /* sw_reset_hw */
 
 static void sw_reset(struct ksz_sw *sw)
@@ -13254,6 +13254,8 @@ static int sw_need_dest(struct ksz_sw *sw, u8 *addr)
 
 	if (addr[0] & 0x01) {
 		int i;
+
+#ifdef USE_UNK_MCAST
 		struct ksz_mac_table *entry;
 		struct ksz_alu_table *alu;
 
@@ -13271,6 +13273,18 @@ static int sw_need_dest(struct ksz_sw *sw, u8 *addr)
 		}
 		if (i < 0 && (sw->overrides & UNK_MCAST_BLOCK))
 			need = 1;
+#else
+		if (!memcmp(addr, sw->info->reserved_table[0].addr, 5) &&
+		    addr[5] < RESERVED_MCAST_TABLE_ENTRIES) {
+			i = mcast_reserved_map[addr[5]];
+			if (sw->info->reserved_table[i].ports ==
+                            sw->HOST_MASK) {
+				need = 1;
+				if (sw->info->reserved_table[i].override)
+					need = 2;
+			}
+		}
+#endif
 	} else if (!memcmp(addr, sw->info->mac_addr, ETH_ALEN))
 		need = 1;
 	return need;
@@ -14704,7 +14718,7 @@ static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 }  /* sw_set_phylink_support */
 
 static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
-	struct phylink_link_state *s)
+					    struct phylink_link_state *s)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
@@ -14721,8 +14735,8 @@ dbg_msg(" fixed state: %d %d %d\n", sw->interface, info->interface, s->speed);
 }  /* sw_port_phylink_get_fixed_state */
 
 static void sw_port_phylink_validate(struct phylink_config *config,
-				      unsigned long *supported,
-				      struct phylink_link_state *state)
+				     unsigned long *supported,
+				     struct phylink_link_state *state)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
@@ -14757,8 +14771,8 @@ static void sw_port_phylink_mac_config(struct phylink_config *config,
 }
 
 static void sw_port_phylink_mac_link_down(struct phylink_config *config,
-					   unsigned int mode,
-					   phy_interface_t interface)
+					  unsigned int mode,
+					  phy_interface_t interface)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
@@ -14774,11 +14788,11 @@ static void sw_port_phylink_mac_link_down(struct phylink_config *config,
 }
 
 static void sw_port_phylink_mac_link_up(struct phylink_config *config,
-					 struct phy_device *phydev,
-					 unsigned int mode,
-					 phy_interface_t interface,
-					 int speed, int duplex,
-					 bool tx_pause, bool rx_pause)
+					struct phy_device *phydev,
+					unsigned int mode,
+					phy_interface_t interface,
+					int speed, int duplex,
+					bool tx_pause, bool rx_pause)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
@@ -14881,18 +14895,17 @@ static void setup_device_node(struct ksz_sw *sw)
 {
 	struct sw_priv *ks = sw->dev;
 	struct device_node *np;
+	struct device_node *ports, *port;
+	struct device_node *ethernet;
+	struct ksz_port_info *info;
+	const char *name;
+	u32 mode, reg;
+	int err;
 
 	if (!ks->of_dev)
 		return;
 	np = ks->of_dev->of_node;
 	if (np) {
-		struct device_node *ports, *port;
-		struct device_node *ethernet;
-		struct ksz_port_info *info;
-		const char *name;
-		u32 mode, reg;
-		int err;
-
 		ports = of_get_child_by_name(np, "ports");
 		if (ports) {
 			for_each_available_child_of_node(ports, port) {
@@ -14903,6 +14916,14 @@ dbg_msg(" reg: %d\n", reg);
 				ethernet = of_parse_phandle(port, "ethernet", 0);
 				if (ethernet)
 dbg_msg(" found eth\n");
+				if (ethernet) {
+					name = of_get_property(port,
+							       "phy-mode",
+							       NULL);
+					if (name && !strcmp(name, "rmii"))
+						sw->interface =
+							PHY_INTERFACE_MODE_RMII;
+				}
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
@@ -14995,6 +15016,7 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 			}
 		}
 	}
+	port->opened = true;
 	port->report = true;
 
 	sw->ops->acquire(sw);
@@ -15077,6 +15099,8 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 #ifdef CONFIG_KSZ_MRP
 	struct mrp_info *mrp = &sw->mrp;
 #endif
+
+	port->opened = false;
 
 #ifdef CONFIG_KSZ_IBA
 	if (2 <= sw->info->iba.use_iba && dev == sw->main_dev)
@@ -16056,6 +16080,10 @@ static void link_update_work(struct work_struct *work)
 	bool duplex;
 #endif
 
+	/* Netdevice associated with port was closed. */
+	if (!port->opened)
+		return;
+
 #ifdef CONFIG_KSZ_DLR
 	if (sw->features & DLR_HW) {
 		struct ksz_dlr_info *dlr = &sw->info->dlr;
@@ -16099,6 +16127,7 @@ static void link_update_work(struct work_struct *work)
 		p = get_phy_port(sw, i);
 		if (!(port->link_ports & (1 << p)))
 			continue;
+
 #ifdef CONFIG_KSZ_AVB
 		info = get_port_info(sw, p);
 		speed = (media_connected == info->state) ?
@@ -16129,7 +16158,7 @@ static void link_update_work(struct work_struct *work)
 	/* The switch is always linked; speed and duplex are also fixed. */
 	if (sw->dev_offset) {
 		port = sw->netport[0];
-		if (port && netif_running(port->netdev)) {
+		if (port && port->opened && netif_running(port->netdev)) {
 			info = get_port_info(sw, sw->HOST_PORT);
 			sw_report_link(sw, port, info);
 		}
@@ -17486,17 +17515,6 @@ static int kszphy_probe(struct phy_device *phydev)
 	return 0;
 }
 
-/* Just a placeholder to indicate PHY interrupt support. */
-static int kszphy_ack_interrupt(struct phy_device *phydev)
-{
-	return 0;
-}
-
-static int kszphy_config_intr(struct phy_device *phydev)
-{
-	return 0;
-}
-
 static int kszphy_get_features(struct phy_device *phydev)
 {
 	struct phy_priv *priv = phydev->priv;
@@ -17555,8 +17573,6 @@ static struct phy_driver kszsw_phy_driver[] = {
 	.name		= "Microchip KSZ989X Switch",
 	.probe		= kszphy_probe,
 	.get_features	= kszphy_get_features,
-	.ack_interrupt	= kszphy_ack_interrupt,
-	.config_intr	= kszphy_config_intr,
 	.config_init	= kszphy_config_init,
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
@@ -18398,8 +18414,19 @@ static int ksz_probe_next(struct sw_priv *ks)
 	sw->ops->acquire(sw);
 
 #ifndef CONFIG_KSZ_IBA_ONLY
-	/* Turn off SPI auto edge detection. */
-	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0);
+	if (ks->spi_mode) {
+		/* Turn off SPI auto edge detection. */
+		sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0x40);
+
+#ifdef CONFIG_SPI_ATMEL
+		/* Switch may not be accessible the very first time when SPI
+		 * mode is not 0 in newer kernels where Atmel SPI was changed
+		 * to use standard SPI transfer function.
+		 */
+		if (ks->spi_mode & 2)
+			sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0x40);
+#endif
+	}
 #endif
 
 	/* simple check for a valid chip being connected to the bus */
@@ -18650,7 +18677,6 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 			sgmii = 1;
 	}
 	sw->sgmii_mode = sgmii;
-	setup_device_node(sw);
 
 #ifdef DEBUG_MSG
 	flush_work(&db.dbg_print);
@@ -18820,6 +18846,7 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	sw->ops->release(sw);
 
 	sw_init_phy_priv(ks);
+	setup_device_node(sw);
 
 	ret = ksz_mii_init(ks);
 	if (ret)
@@ -19077,10 +19104,11 @@ static int ksz_remove(struct sw_priv *ks)
 		sw_stop_interrupt(ks);
 	}
 
-	ksz_mii_exit(ks);
 	ksz_stop_timer(&ks->monitor_timer_info);
 	ksz_stop_timer(&ks->mib_timer_info);
 	flush_work(&ks->mib_read);
+	cancel_delayed_work_sync(&ks->link_read);
+	ksz_mii_exit(ks);
 
 #ifdef KSZSW_REGS_SIZE
 	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);
@@ -19094,11 +19122,6 @@ static int ksz_remove(struct sw_priv *ks)
 	exit_sw_sysfs(sw, &ks->sysfs, ks->dev);
 #endif
 	sw->ops->exit(sw);
-	cancel_delayed_work_sync(&ks->link_read);
-
-#ifndef CONFIG_KSZ_IBA_ONLY
-	delete_debugfs(ks);
-#endif
 
 #ifdef CONFIG_KSZ_STP
 	ksz_stp_exit(&sw->info->rstp);
@@ -19114,6 +19137,10 @@ static int ksz_remove(struct sw_priv *ks)
 #ifdef CONFIG_KSZ_IBA
 	ksz_iba_exit(&sw->info->iba);
 #endif
+#ifndef CONFIG_KSZ_IBA_ONLY
+	delete_debugfs(ks);
+#endif
+
 	kfree(sw->info);
 #ifndef CONFIG_KSZ_IBA_ONLY
 	kfree(ks->hw_dev);

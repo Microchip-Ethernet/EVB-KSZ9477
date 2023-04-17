@@ -1,7 +1,7 @@
 /**
  * Microchip IBA code
  *
- * Copyright (c) 2015-2022 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -3075,13 +3075,8 @@ static void ksz_iba_init(struct ksz_iba_info *iba, struct ksz_sw *sw)
 	data = 800;
 	iba->delay_ticks = msecs_to_jiffies(data);
 
-	if (!iba->use_iba) {
-		sw->ops->acquire(sw);
-		data = sw->old->r32(sw, REG_SW_IBA__4);
-		tag_type = (data & SW_IBA_FRAME_TPID_M);
-		sw->ops->release(sw);
-	} else
-		tag_type = ETH_P_IBA;
+	/* Cannot really read hardware for current tag type. */
+	tag_type = ETH_P_IBA;
 
 	iba->sw_dev = sw;
 	iba->packet = kzalloc(IBA_LEN_MAX, GFP_KERNEL);

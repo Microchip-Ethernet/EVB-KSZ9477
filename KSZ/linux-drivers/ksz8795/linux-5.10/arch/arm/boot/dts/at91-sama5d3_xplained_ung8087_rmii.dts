@@ -70,7 +70,7 @@
 					spi-cpol;
 					interrupt-parent = <&pioB>;
 					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
-					status = "okay";
+					status = "disabled";
 					ports {
 						#address-cells = <1>;
 						#size-cells = <0>;
@@ -190,7 +190,7 @@
 					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
-					status = "disabled";
+					status = "okay";
 					ports {
 						#address-cells = <1>;
 						#size-cells = <0>;
@@ -360,7 +360,7 @@
 				phy-mode = "rgmii-id";
 				#address-cells = <1>;
 				#size-cells = <0>;
-				status = "okay";
+				status = "disabled";
 
 				fixed-link {
 					speed = <1000>;
@@ -495,7 +495,7 @@
 				phy-mode = "rmii";
 				#address-cells = <1>;
 				#size-cells = <0>;
-				status = "disabled";
+				status = "okay";
 
 				fixed-link {
 					speed = <100>;

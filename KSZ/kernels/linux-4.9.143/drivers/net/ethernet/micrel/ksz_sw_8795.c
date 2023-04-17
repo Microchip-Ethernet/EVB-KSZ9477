@@ -2412,8 +2412,8 @@ static inline int port_chk_broad_storm(struct ksz_sw *sw, uint p)
 /* Driver set switch broadcast storm protection at 10% rate. */
 #define BROADCAST_STORM_PROTECTION_RATE	10
 
-/* 148,800 frames * 67 ms / 100 */
-#define BROADCAST_STORM_VALUE		9969
+/* 148,800 frames * 50 ms / 100 */
+#define BROADCAST_STORM_VALUE		7440
 
 /**
  * sw_cfg_broad_storm - configure broadcast storm threshold

@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 SPI driver
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -58,7 +58,7 @@
 
 #define KS8895_DEV			"ksz8895"
 
-#define SW_DRV_RELDATE			"Aug 24, 2021"
+#define SW_DRV_RELDATE			"Mar 25, 2023"
 #define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */

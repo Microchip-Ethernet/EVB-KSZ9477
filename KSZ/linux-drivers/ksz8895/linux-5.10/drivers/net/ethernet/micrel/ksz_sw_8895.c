@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common code
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -1334,8 +1334,8 @@ static inline int port_chk_broad_storm(struct ksz_sw *sw, uint p)
 /* Driver set switch broadcast storm protection at 10% rate. */
 #define BROADCAST_STORM_PROTECTION_RATE	10
 
-/* 148,800 frames * 67 ms / 100 */
-#define BROADCAST_STORM_VALUE		9969
+/* 148,800 frames * 50 ms / 100 */
+#define BROADCAST_STORM_VALUE		7440
 
 /**
  * sw_cfg_broad_storm - configure broadcast storm threshold
@@ -7082,7 +7082,7 @@ static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 }  /* sw_set_phylink_support */
 
 static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
-	struct phylink_link_state *s)
+					    struct phylink_link_state *s)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
@@ -7098,8 +7098,8 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 }  /* sw_port_phylink_get_fixed_state */
 
 static void sw_port_phylink_validate(struct phylink_config *config,
-				      unsigned long *supported,
-				      struct phylink_link_state *state)
+				     unsigned long *supported,
+				     struct phylink_link_state *state)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
@@ -7134,8 +7134,8 @@ static void sw_port_phylink_mac_config(struct phylink_config *config,
 }
 
 static void sw_port_phylink_mac_link_down(struct phylink_config *config,
-					   unsigned int mode,
-					   phy_interface_t interface)
+					  unsigned int mode,
+					  phy_interface_t interface)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
@@ -7147,11 +7147,11 @@ static void sw_port_phylink_mac_link_down(struct phylink_config *config,
 }
 
 static void sw_port_phylink_mac_link_up(struct phylink_config *config,
-					 struct phy_device *phydev,
-					 unsigned int mode,
-					 phy_interface_t interface,
-					 int speed, int duplex,
-					 bool tx_pause, bool rx_pause)
+					struct phy_device *phydev,
+					unsigned int mode,
+					phy_interface_t interface,
+					int speed, int duplex,
+					bool tx_pause, bool rx_pause)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
@@ -7264,6 +7264,14 @@ dbg_msg(" reg: %d\n", reg);
 				ethernet = of_parse_phandle(port, "ethernet", 0);
 				if (ethernet)
 dbg_msg(" found eth\n");
+				if (ethernet) {
+					name = of_get_property(port,
+							       "phy-mode",
+							       NULL);
+					if (name && !strcmp(name, "rmii"))
+						sw->interface =
+							PHY_INTERFACE_MODE_RMII;
+				}
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
@@ -7329,6 +7337,7 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 			}
 		}
 	}
+	port->opened = true;
 	port->report = true;
 
 	sw->ops->acquire(sw);
@@ -7378,6 +7387,8 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 #ifdef CONFIG_KSZ_MRP
 	struct mrp_info *mrp = &sw->mrp;
 #endif
+
+	port->opened = false;
 
 	/* Need to shut the port manually in multiple device interfaces mode. */
 	if (sw->dev_count > 1 && (!sw->dev_offset || dev != sw->netdev[0])) {
@@ -8176,20 +8187,14 @@ static void link_update_work(struct work_struct *work)
 	struct ksz_sw *sw = port->sw;
 	struct ksz_port_info *info;
 
+	/* Netdevice associated with port was closed. */
+	if (!port->opened)
+		return;
+
 	sw_notify_link_change(sw, port->link_ports);
 
 	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 		sw_report_link(sw, port, port->linked);
-
-	/* There is an extra network device for the main device. */
-	/* The switch is always linked; speed and duplex are also fixed. */
-	if (sw->dev_offset) {
-		port = sw->netport[0];
-		if (port && netif_running(port->netdev)) {
-			info = get_port_info(sw, sw->HOST_PORT);
-			sw_report_link(sw, port, info);
-		}
-	}
 
 #ifdef CONFIG_KSZ_STP
 	if (sw->features & STP_SUPPORT) {
@@ -8199,6 +8204,16 @@ static void link_update_work(struct work_struct *work)
 	}
 #endif
 	port->link_ports = 0;
+
+	/* There is an extra network device for the main device. */
+	/* The switch is always linked; speed and duplex are also fixed. */
+	if (sw->dev_offset) {
+		port = sw->netport[0];
+		if (port && port->opened && netif_running(port->netdev)) {
+			info = get_port_info(sw, sw->HOST_PORT);
+			sw_report_link(sw, port, info);
+		}
+	}
 }  /* link_update_work */
 
 static void set_phy_support(struct ksz_port *port, struct phy_device *phydev)
@@ -9159,17 +9174,6 @@ static int kszphy_probe(struct phy_device *phydev)
 	return 0;
 }
 
-/* Just a placeholder to indicate PHY interrupt support. */
-static int kszphy_ack_interrupt(struct phy_device *phydev)
-{
-	return 0;
-}
-
-static int kszphy_config_intr(struct phy_device *phydev)
-{
-	return 0;
-}
-
 static int kszphy_get_features(struct phy_device *phydev)
 {
 	struct phy_priv *priv = phydev->priv;
@@ -9201,8 +9205,6 @@ static struct phy_driver kszsw_phy_driver = {
 	.name		= "Microchip KSZ8895 Switch",
 	.probe		= kszphy_probe,
 	.get_features	= kszphy_get_features,
-	.ack_interrupt	= kszphy_ack_interrupt,
-	.config_intr	= kszphy_config_intr,
 	.config_init	= kszphy_config_init,
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
@@ -9459,13 +9461,12 @@ static void determine_rate(struct ksz_sw *sw, struct ksz_port_mib *mib)
 			cnt = mib->counter[offset] + mib->counter[offset + 1];
 			last_cnt = cnt;
 			cnt -= mib->rate[j].last_cnt;
-			if (cnt > 1000000 && diff >= 100) {
-				u32 rem;
+			if (cnt > 1000000 && diff >= HZ) {
 				u64 rate = cnt;
 
 				rate *= 8;
-				diff *= 10 * 100;
-				rate = div_u64_rem(rate, diff, &rem);
+				diff *= 1000 * 100 / HZ;
+				rate = div_u64_u32(rate, diff);
 				mib->rate[j].last = jiffies;
 				mib->rate[j].last_cnt = last_cnt;
 				if (mib->rate[j].peak < (u32) rate)
@@ -9708,6 +9709,14 @@ static int ksz_probe(struct sw_priv *ks)
 
 	/* simple check for a valid chip being connected to the bus */
 	mutex_lock(&ks->lock);
+#ifdef CONFIG_SPI_ATMEL
+	/* Switch may not be accessible the very first time when SPI mode is
+	 * not 0 in newer kernels where Atmel SPI was changed to use standard
+	 * SPI transfer function.
+	 */
+	if (ks->spi_mode & 2)
+		sw->reg->w8(sw, REG_CHIP_ID0, 0);
+#endif
 	id = sw->reg->r16(sw, REG_CHIP_ID0);
 	mutex_unlock(&ks->lock);
 	id1 = id >> 8;
@@ -9906,10 +9915,11 @@ static int ksz_remove(struct sw_priv *ks)
 {
 	struct ksz_sw *sw = &ks->sw;
 
-	ksz_mii_exit(ks);
 	ksz_stop_timer(&ks->monitor_timer_info);
 	ksz_stop_timer(&ks->mib_timer_info);
 	flush_work(&ks->mib_read);
+	cancel_delayed_work_sync(&ks->link_read);
+	ksz_mii_exit(ks);
 
 #ifdef KSZSW_REGS_SIZE
 	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);
@@ -9919,13 +9929,12 @@ static int ksz_remove(struct sw_priv *ks)
 	exit_sw_sysfs(sw, &ks->sysfs, ks->dev);
 #endif
 	sw->ops->exit(sw);
-	cancel_delayed_work_sync(&ks->link_read);
-
-	delete_debugfs(ks);
 
 #ifdef CONFIG_KSZ_STP
 	ksz_stp_exit(&sw->info->rstp);
 #endif
+	delete_debugfs(ks);
+
 	kfree(sw->info);
 	kfree(ks->hw_dev);
 	kfree(ks);

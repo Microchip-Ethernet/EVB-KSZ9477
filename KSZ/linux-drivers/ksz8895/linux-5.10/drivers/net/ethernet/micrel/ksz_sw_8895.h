@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common header
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -665,6 +665,7 @@ struct ksz_port {
 	u8 speed;
 	u8 force_link;
 	u8 state;
+	uint opened:1;
 	uint ready:1;
 	uint report:1;
 	u16 link_ports;

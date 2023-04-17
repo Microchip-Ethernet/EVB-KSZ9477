@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 SMI driver
  *
- * Copyright (c) 2018-2021 Microchip Technology Inc.
+ * Copyright (c) 2018-2023 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -36,7 +36,7 @@
 #include "ksz_common.c"
 #include "ksz_req.c"
 
-#define SW_DRV_RELDATE			"Aug 24, 2021"
+#define SW_DRV_RELDATE			"Mar 25, 2023"
 #define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */

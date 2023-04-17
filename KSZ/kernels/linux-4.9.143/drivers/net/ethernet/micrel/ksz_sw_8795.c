@@ -26,10 +26,6 @@
 
 #define MAX_SYSFS_BUF_SIZE		(4080 - 80)
 
-#if 1
-#define USE_LOG_MASK
-#endif
-
 enum {
 	PROC_SW_INFO,
 	PROC_SW_VERSION,
@@ -744,9 +740,7 @@ static ssize_t sw_d_dyn_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 	do {
 		if (!sw_r_dyn_mac_table(sw, i, mac_addr, &fid, &port,
 				&timestamp, &entries)) {
-#ifdef USE_LOG_MASK
 			port = get_log_port_zero(sw, port);
-#endif
 			if (len >= MAX_SYSFS_BUF_SIZE && first_break) {
 				first_break = false;
 				len += sprintf(buf + len, "...\n");
@@ -867,9 +861,7 @@ static ssize_t sw_d_sta_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 	do {
 		if (!sw_r_sta_mac_table(sw, i, &mac)) {
 			ports = mac.ports;
-#ifdef USE_LOG_MASK
 			ports = get_log_mask_from_phy(sw, ports);
-#endif
 			len += sprintf(buf + len,
 				"%2x: %02X:%02X:%02X:%02X:%02X:%02X  "
 				"%02x  %u  %u:%02x\n",
@@ -895,9 +887,7 @@ static ssize_t sw_d_mac_table(struct ksz_sw *sw, char *buf, ssize_t len)
 		entry = &sw->info->mac_table[i];
 		if (entry->valid) {
 			ports = entry->ports;
-#ifdef USE_LOG_MASK
 			ports = get_log_mask_from_phy(sw, ports);
-#endif
 			len += sprintf(buf + len,
 				"%x: %02X:%02X:%02X:%02X:%02X:%02X  "
 				"%x  %u  %u:%x\n",
@@ -1044,9 +1034,7 @@ static ssize_t sw_d_vlan_table(struct ksz_sw *sw, char *buf, ssize_t len)
 				if (!valid[j])
 					continue;
 				ports = member[j];
-#ifdef USE_LOG_MASK
 				ports = get_log_mask_from_phy(sw, member[j]);
-#endif
 				if (len >= MAX_SYSFS_BUF_SIZE && first_break) {
 					first_break = false;
 					len += sprintf(buf + len, "...\n");
@@ -1358,7 +1346,7 @@ static inline void port_init_cnt(struct ksz_sw *sw, uint port)
  *
  * Return 0 if the bits are not set.
  */
-static int port_chk(struct ksz_sw *sw, uint port, int offset, SW_D bits)
+static int port_chk(struct ksz_sw *sw, uint port, uint offset, SW_D bits)
 {
 	u32 addr;
 	SW_D data;
@@ -1379,7 +1367,7 @@ static int port_chk(struct ksz_sw *sw, uint port, int offset, SW_D bits)
  *
  * This routine sets or resets the specified bits of the port register.
  */
-static void port_cfg(struct ksz_sw *sw, uint port, int offset, SW_D bits,
+static void port_cfg(struct ksz_sw *sw, uint port, uint offset, SW_D bits,
 	bool set)
 {
 	u32 addr;
@@ -1404,7 +1392,7 @@ static void port_cfg(struct ksz_sw *sw, uint port, int offset, SW_D bits,
  *
  * This routine reads a byte from the port register.
  */
-static void port_r8(struct ksz_sw *sw, uint port, int offset, u8 *data)
+static void port_r8(struct ksz_sw *sw, uint port, uint offset, u8 *data)
 {
 	u32 addr;
 
@@ -1422,7 +1410,7 @@ static void port_r8(struct ksz_sw *sw, uint port, int offset, u8 *data)
  *
  * This routine writes a byte to the port register.
  */
-static void port_w8(struct ksz_sw *sw, uint port, int offset, u8 data)
+static void port_w8(struct ksz_sw *sw, uint port, uint offset, u8 data)
 {
 	u32 addr;
 
@@ -1440,7 +1428,7 @@ static void port_w8(struct ksz_sw *sw, uint port, int offset, u8 data)
  *
  * This routine reads a word from the port register.
  */
-static void port_r16(struct ksz_sw *sw, uint port, int offset, u16 *data)
+static void port_r16(struct ksz_sw *sw, uint port, uint offset, u16 *data)
 {
 	u32 addr;
 
@@ -1458,7 +1446,7 @@ static void port_r16(struct ksz_sw *sw, uint port, int offset, u16 *data)
  *
  * This routine writes a word to the port register.
  */
-static void port_w16(struct ksz_sw *sw, uint port, int offset, u16 data)
+static void port_w16(struct ksz_sw *sw, uint port, uint offset, u16 data)
 {
 	u32 addr;
 
@@ -2752,9 +2740,9 @@ static int get_rate_to_val(uint rate)
 		i = (rate + 500) / 1000;
 		if (i > 100)
 			i = 100;
-	} else if (0 == rate)
+	} else if (0 == rate) {
 		i = 0;
-	else {
+	} else {
 		i = (rate + 32) / 64;
 		if (0 == i)
 			i = 1;
@@ -2788,11 +2776,11 @@ static int get_packet_to_val(uint rate)
 		i = (rate + 960) / 1920;
 		if (i > 100)
 			i = 100;
-	} else if (0 == rate)
+	} else if (0 == rate) {
 		i = 0;
-	else if (rate <= 64)
+	} else if (rate <= 64) {
 		i = 101;
-	else {
+	} else {
 		i = (rate + 64) / 128;
 		if (0 == i)
 			i = 1;
@@ -2815,7 +2803,7 @@ static int get_packet_to_val(uint rate)
  *
  * This helper routine configures the priority rate of the port.
  */
-static void port_cfg_rate(struct ksz_sw *sw, uint port, int prio, int offset,
+static void port_cfg_rate(struct ksz_sw *sw, uint port, uint prio, uint offset,
 	uint rate, bool packet)
 {
 	u8 factor;
@@ -2840,7 +2828,7 @@ static void port_cfg_rate(struct ksz_sw *sw, uint port, int prio, int offset,
  *
  * This helper routine retrieves the priority rate of the port.
  */
-static void port_get_rate(struct ksz_sw *sw, uint port, int prio, int offset,
+static void port_get_rate(struct ksz_sw *sw, uint port, uint prio, uint offset,
 	uint *rate, bool packet)
 {
 	u8 data;
@@ -4400,10 +4388,8 @@ static void sw_clr_sta_mac_table(struct ksz_sw *sw)
 	int i;
 
 	memset(&entry, 0, sizeof(struct ksz_mac_table));
-	sw->ops->release(sw);
 	for (i = 0; i < STATIC_MAC_TABLE_ENTRIES; i++)
 		sw_w_sta_mac_table(sw, i, &entry);
-	sw->ops->acquire(sw);
 }  /* sw_clr_sta_mac_table */
 
 /**
@@ -4426,9 +4412,7 @@ static void sw_setup_stp(struct ksz_sw *sw)
 	entry.use_fid = 0;
 	entry.override = 1;
 	entry.valid = 1;
-	sw->ops->release(sw);
 	sw_w_sta_mac_table(sw, STP_ENTRY, &entry);
-	sw->ops->acquire(sw);
 }  /* sw_setup_stp */
 
 #ifdef CONFIG_KSZ_STP
@@ -4935,6 +4919,7 @@ static void sw_enable(struct ksz_sw *sw)
 			port_set_stp_state(sw, port, STP_STATE_DISABLED);
 		}
 	}
+	if (fewer)
 dbg_msg(" fewer: %d %d\n", fewer, sw->eth_cnt);
 	if (fewer)
 		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
@@ -5067,7 +5052,9 @@ static void sw_setup(struct ksz_sw *sw)
 	sw->info->multi_sys = MULTI_MAC_TABLE_ENTRIES;
 	sw->info->multi_net = SWITCH_MAC_TABLE_ENTRIES;
 	if (sw->features & STP_SUPPORT) {
+		sw->ops->release(sw);
 		sw_setup_stp(sw);
+		sw->ops->acquire(sw);
 	}
 #ifdef CONFIG_KSZ_DLR
 	if (sw->features & DLR_HW)
@@ -6241,9 +6228,7 @@ static ssize_t sysfs_sw_read_hw(struct ksz_sw *sw, int proc_num, ssize_t len,
 	case PROC_SET_FORWARD_UNKNOWN_UNICAST_PORTS:
 		chk = sw_chk_unk_def_port(sw, REG_SW_UNK_UCAST_CTRL,
 			sw->port_cnt);
-#ifdef USE_LOG_MASK
 		chk = get_log_mask_from_phy(sw, chk);
-#endif
 		type = SHOW_HELP_HEX;
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_MULTICAST:
@@ -6252,9 +6237,7 @@ static ssize_t sysfs_sw_read_hw(struct ksz_sw *sw, int proc_num, ssize_t len,
 	case PROC_SET_FORWARD_UNKNOWN_MULTICAST_PORTS:
 		chk = sw_chk_unk_def_port(sw, REG_SW_UNK_MCAST_CTRL,
 			sw->port_cnt);
-#ifdef USE_LOG_MASK
 		chk = get_log_mask_from_phy(sw, chk);
-#endif
 		type = SHOW_HELP_HEX;
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_VID:
@@ -6263,9 +6246,7 @@ static ssize_t sysfs_sw_read_hw(struct ksz_sw *sw, int proc_num, ssize_t len,
 	case PROC_SET_FORWARD_UNKNOWN_VID_PORTS:
 		chk = sw_chk_unk_def_port(sw, REG_SW_UNK_VID_CTRL,
 			sw->port_cnt);
-#ifdef USE_LOG_MASK
 		chk = get_log_mask_from_phy(sw, chk);
-#endif
 		type = SHOW_HELP_HEX;
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_IP_MULTICAST:
@@ -6274,9 +6255,7 @@ static ssize_t sysfs_sw_read_hw(struct ksz_sw *sw, int proc_num, ssize_t len,
 	case PROC_SET_FORWARD_UNKNOWN_IP_MULTICAST_PORTS:
 		chk = sw_chk_unk_def_port(sw, REG_SW_UNK_IP_MCAST_CTRL,
 			sw->port_cnt);
-#ifdef USE_LOG_MASK
 		chk = get_log_mask_from_phy(sw, chk);
-#endif
 		type = SHOW_HELP_HEX;
 		break;
 	case PROC_SET_SELF_ADDR_FILTER:
@@ -6410,7 +6389,9 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 		sw_flush_dyn_mac_table(sw, TOTAL_PORT_NUM);
 		break;
 	case PROC_STATIC:
+		sw->ops->release(sw);
 		sw_clr_sta_mac_table(sw);
+		sw->ops->acquire(sw);
 		break;
 	case PROC_SET_AGING:
 		sw_cfg(sw, REG_SW_CTRL_1, SW_AGING_ENABLE, num);
@@ -6528,36 +6509,28 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 		sw_cfg_unk_dest(sw, REG_SW_UNK_UCAST_CTRL, num);
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_UNICAST_PORTS:
-#ifdef USE_LOG_MASK
 		num = get_phy_mask_from_log(sw, num);
-#endif
 		sw_cfg_unk_def_port(sw, REG_SW_UNK_UCAST_CTRL, num, 2);
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_MULTICAST:
 		sw_cfg_unk_dest(sw, REG_SW_UNK_MCAST_CTRL, num);
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_MULTICAST_PORTS:
-#ifdef USE_LOG_MASK
 		num = get_phy_mask_from_log(sw, num);
-#endif
 		sw_cfg_unk_def_port(sw, REG_SW_UNK_MCAST_CTRL, num, 2);
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_VID:
 		sw_cfg_unk_dest(sw, REG_SW_UNK_VID_CTRL, num);
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_VID_PORTS:
-#ifdef USE_LOG_MASK
 		num = get_phy_mask_from_log(sw, num);
-#endif
 		sw_cfg_unk_def_port(sw, REG_SW_UNK_VID_CTRL, num, 2);
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_IP_MULTICAST:
 		sw_cfg_unk_dest(sw, REG_SW_UNK_IP_MCAST_CTRL, num);
 		break;
 	case PROC_SET_FORWARD_UNKNOWN_IP_MULTICAST_PORTS:
-#ifdef USE_LOG_MASK
 		num = get_phy_mask_from_log(sw, num);
-#endif
 		sw_cfg_unk_def_port(sw, REG_SW_UNK_IP_MCAST_CTRL, num, 2);
 		break;
 	case PROC_SET_SELF_ADDR_FILTER:
@@ -6638,9 +6611,7 @@ static ssize_t sysfs_port_read(struct ksz_sw *sw, int proc_num, uint n,
 		break;
 	case PROC_SET_MEMBER:
 		chk = port_cfg->member;
-#ifdef USE_LOG_MASK
 		chk = get_log_mask_from_phy(sw, chk);
-#endif
 		type = SHOW_HELP_HEX_2;
 		break;
 	case PROC_SET_TX_Q0_CTRL:
@@ -6969,9 +6940,7 @@ static int sysfs_port_write(struct ksz_sw *sw, int proc_num, uint n,
 		sw_cfg_def_vid(sw, port, num);
 		break;
 	case PROC_SET_MEMBER:
-#ifdef USE_LOG_MASK
 		num = get_phy_mask_from_log(sw, num);
-#endif
 		sw_cfg_port_base_vlan(sw, port, (u8) num);
 		break;
 	case PROC_ENABLE_PRIO_QUEUE:
@@ -7178,9 +7147,7 @@ static ssize_t sysfs_mac_read(struct ksz_sw *sw, int proc_num, ssize_t len,
 		break;
 	case PROC_SET_STATIC_PORTS:
 		ports = entry->ports;
-#ifdef USE_LOG_MASK
 		ports = get_log_mask_from_phy(sw, entry->ports);
-#endif
 		len += sprintf(buf + len, "0x%02x\n", ports);
 		break;
 	case PROC_SET_STATIC_MAC_ADDR:
@@ -7199,9 +7166,7 @@ static ssize_t sysfs_mac_read(struct ksz_sw *sw, int proc_num, ssize_t len,
 			sw->mac_dirty = 0;
 		}
 		ports = entry->ports;
-#ifdef USE_LOG_MASK
 		ports = get_log_mask_from_phy(sw, ports);
-#endif
 		len += sprintf(buf + len,
 			"%2x: %02X:%02X:%02X:%02X:%02X:%02X "
 			"%02x o:%u %u:%02x [%u]\n",
@@ -7255,9 +7220,7 @@ static int sysfs_mac_write(struct ksz_sw *sw, int proc_num, int num,
 	case PROC_SET_STATIC_PORTS:
 		if (0 <= num && num <= sw->PORT_MASK) {
 			ports = num;
-#ifdef USE_LOG_MASK
 			ports = get_phy_mask_from_log(sw, ports);
-#endif
 			entry->ports = ports;
 			entry->dirty = 1;
 		}
@@ -7312,10 +7275,8 @@ static ssize_t sysfs_vlan_read(struct ksz_sw *sw, int proc_num,	ssize_t len,
 		if (sw->vlan_dirty) {
 			if (!entry->dirty) {
 				sw_r_vlan_table(sw, sw->vlan_index, entry);
-#ifdef USE_LOG_MASK
 				entry->member =
 					get_log_mask_from_phy(sw, entry->member);
-#endif
 			}
 			sw->vlan_dirty = 0;
 		}
@@ -7342,9 +7303,7 @@ static int sysfs_vlan_write(struct ksz_sw *sw, int proc_num, int num)
 		else
 			entry->valid = 0;
 		ports = entry->member;
-#ifdef USE_LOG_MASK
 		entry->member = get_phy_mask_from_log(sw, entry->member);
-#endif
 		sw_w_vlan_table(sw, sw->vlan_index, entry);
 		entry->member = ports;
 		sw->vlan_dirty = 0;
@@ -8145,7 +8104,7 @@ static struct net_device *sw_rx_dev(struct ksz_sw *sw, u8 *data, u32 *len,
 {
 	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *) data;
 	struct net_device *dev;
-	u16* proto_loc;
+	u16 *proto_loc;
 	u16 proto;
 	int index = -1;
 	int vid = 0;
@@ -8665,7 +8624,6 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 			/* Not really using VLAN. */
 			if (1 == sw->eth_maps[p].vlan)
 				continue;
-			sw->ops->release(sw);
 
 			map = &sw->eth_maps[p];
 
@@ -8676,6 +8634,7 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 			entry.fid = map->vlan & (FID_ENTRIES - 1);
 			entry.member = sw->HOST_MASK | map->mask;
 			entry.valid = 1;
+			sw->ops->release(sw);
 			sw_w_vlan_table(sw, map->vlan, &entry);
 			sw->ops->acquire(sw);
 			for (i = 0, q = map->first;
@@ -8759,11 +8718,11 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 		sw_reset(sw);
 	reset = true;
 	sw_init(sw);
+	sw->ops->release(sw);
 
 	/* Clean out static MAC table when the switch shutdown. */
 	if (complete)
 		sw_clr_sta_mac_table(sw);
-	sw->ops->release(sw);
 	return reset;
 }  /* sw_stop */
 
@@ -8997,7 +8956,7 @@ static u8 sw_set_mac_addr(struct ksz_sw *sw, struct net_device *dev,
 			struct ksz_port_info *info;
 			uint p;
 
-			/* All addresses the same. */
+			/* All addresses are the same. */
 			if (i == dev_count) {
 				sw->features &= ~DIFF_MAC_ADDR;
 				--promiscuous;
@@ -9907,7 +9866,6 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		}
 		info->log_p = l;
 		info->log_m = 0;
-		info->phy_id = p + 1;
 	}
 	n = (1 << cnt) - 1;
 	ports &= n;
@@ -9931,6 +9889,7 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info = &sw->port_info[p];
 		info->log_p = i;
 		info->log_m = BIT(l);
+		info->phy_id = p + 1;
 	}
 	info = &sw->port_info[sw->HOST_PORT];
 	info->log_m = BIT(i);
@@ -10426,7 +10385,7 @@ static void sw_netdev_oper(struct ksz_sw *sw, struct net_device *dev,
 	int (*netdev_chk)(struct net_device *dev),
 	void (*netdev_oper)(struct net_device *dev))
 {
-	int port;
+	uint port;
 	int dev_count = 1;
 
 	dev_count = sw->dev_count + sw->dev_offset;
@@ -11564,7 +11523,6 @@ dbg_msg("ports: %x\n", ports);
 	ksz_setup_logical_ports(sw, sku, ports);
 
 	sw->PORT_MASK |= sw->HOST_MASK;
-dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 
 	dbg_msg("%s\n", kszsw_phy_driver_names[ks->sw.chip_id]);
 
@@ -11715,10 +11673,6 @@ dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 	sw->ops->release(sw);
 	sw->ops->init(sw);
 
-#if 0
-	sw->overrides |= SYSFS_PHY_PORT;
-#endif
-
 #ifndef CONFIG_KSZ_SWITCH_EMBEDDED
 	init_sw_sysfs(sw, &ks->sysfs, ks->dev);
 #ifdef CONFIG_KSZ_DLR
@@ -11793,10 +11747,11 @@ static int ksz_remove(struct sw_priv *ks)
 {
 	struct ksz_sw *sw = &ks->sw;
 
-	ksz_mii_exit(ks);
 	ksz_stop_timer(&ks->monitor_timer_info);
 	ksz_stop_timer(&ks->mib_timer_info);
 	flush_work(&ks->mib_read);
+	cancel_delayed_work_sync(&ks->link_read);
+	ksz_mii_exit(ks);
 
 #ifdef KSZSW_REGS_SIZE
 	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);
@@ -11810,9 +11765,6 @@ static int ksz_remove(struct sw_priv *ks)
 	exit_sw_sysfs(sw, &ks->sysfs, ks->dev);
 #endif
 	sw->ops->exit(sw);
-	cancel_delayed_work_sync(&ks->link_read);
-
-	delete_debugfs(ks);
 
 #ifdef CONFIG_KSZ_STP
 	ksz_stp_exit(&sw->info->rstp);
@@ -11821,6 +11773,8 @@ static int ksz_remove(struct sw_priv *ks)
 	if (sw->features & DLR_HW)
 		ksz_dlr_exit(&sw->info->dlr);
 #endif
+	delete_debugfs(ks);
+
 	kfree(sw->info);
 	kfree(ks->hw_dev);
 	kfree(ks);

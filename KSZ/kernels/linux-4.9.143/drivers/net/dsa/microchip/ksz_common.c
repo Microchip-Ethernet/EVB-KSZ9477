@@ -2,7 +2,7 @@
 /*
  * Microchip switch driver main logic
  *
- * Copyright (C) 2017-2021 Microchip Technology Inc.
+ * Copyright (C) 2017-2023 Microchip Technology Inc.
  */
 
 #include <linux/kernel.h>
@@ -149,10 +149,6 @@ void ksz_adjust_link(struct dsa_switch *ds, int port,
 	/* SGMII port simulates a PHY. */
 	if (!p->sgmii)
 		p->phydev = *phydev;
-
-	/* Remember the actual phy device used by DSA. */
-	if (!p->actual_phydev)
-		p->actual_phydev = phydev;
 }
 EXPORT_SYMBOL_GPL(ksz_adjust_link);
 
@@ -351,9 +347,11 @@ EXPORT_SYMBOL_GPL(ksz_port_mdb_del);
 int ksz_enable_port(struct dsa_switch *ds, int port, struct phy_device *phy)
 {
 	struct ksz_device *dev = ds->priv;
+	struct ksz_port *p = &dev->ports[port];
 
 	/* setup slave port */
 	dev->dev_ops->port_setup(dev, port, false);
+	p->actual_phydev = phy;
 	dev->dev_ops->phy_setup(dev, port, phy);
 #if 1
 	dev->dev_ops->port_init_cnt(dev, port);
@@ -370,7 +368,10 @@ EXPORT_SYMBOL_GPL(ksz_enable_port);
 void ksz_disable_port(struct dsa_switch *ds, int port, struct phy_device *phy)
 {
 	struct ksz_device *dev = ds->priv;
+	struct ksz_port *p = &dev->ports[port];
 
+	/* Port is off so no need to report link. */
+	p->actual_phydev = NULL;
 	dev->on_ports &= ~(1 << port);
 	dev->live_ports &= ~(1 << port);
 

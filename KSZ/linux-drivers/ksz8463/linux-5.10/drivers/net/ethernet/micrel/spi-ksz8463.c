@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8463 SPI driver
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -64,7 +64,7 @@
 #define KS8463MLI_DEV0			"ksz8463"
 #define KS8463MLI_DEV2			"ksz8463_2"
 
-#define SW_DRV_RELDATE			"Aug 24, 2021"
+#define SW_DRV_RELDATE			"Mar 25, 2023"
 #define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */
@@ -412,6 +412,7 @@ static int ksz8463_probe(struct spi_device *spi)
 	spi_message_add_tail(&hw_priv->spi_xfer2[1], &hw_priv->spi_msg2);
 
 	priv->irq = spi->irq;
+	priv->spi_mode = (spi->mode & 3) | 4;
 
 	return ksz_probe(priv);
 }
@@ -465,7 +466,11 @@ static int __init ksz8463_init(void)
 #endif
 }
 
-static void __exit ksz8463_exit(void)
+static void
+#ifndef CONFIG_KSZ8463_EMBEDDED
+__exit
+#endif
+ksz8463_exit(void)
 {
 	spi_unregister_driver(&ksz8463_driver);
 #ifdef DEBUG_MSG

@@ -1,7 +1,7 @@
 /**
  * Microchip SPI switch common header
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2012-2015 Micrel, Inc.
@@ -105,6 +105,7 @@ struct sw_priv {
 	struct device *of_dev;
 	int intr_mode;
 	int irq;
+	int spi_mode;
 
 	struct ksz_sw_sysfs sysfs;
 #ifdef CONFIG_1588_PTP

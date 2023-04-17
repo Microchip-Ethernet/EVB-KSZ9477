@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8863 I2C driver
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -61,7 +61,7 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Aug 24, 2021"
+#define SW_DRV_RELDATE			"Mar 25, 2023"
 #define SW_DRV_VERSION			"1.2.3"
 
 /* -------------------------------------------------------------------------- */
@@ -442,7 +442,11 @@ static int __init ksz8863_init(void)
 	return ret;
 }
 
-static void __exit ksz8863_exit(void)
+static void
+#ifndef CONFIG_KSZ_SWITCH_EMBEDDED
+__exit
+#endif
+ksz8863_exit(void)
 {
 	i2c_del_driver(&ksz8863_driver);
 }

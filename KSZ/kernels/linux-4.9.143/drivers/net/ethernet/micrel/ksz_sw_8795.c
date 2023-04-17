@@ -2209,6 +2209,38 @@ static int acl_info(struct ksz_acl_table *acl, u16 index, char *buf, int len)
 	return len;
 }  /* acl_info */
 
+/*
+ * THa  2023/03/27
+ * Hardware has a bug in which the ACL index cannot be changed when the port
+ * has link.  Turning ACL on decreases the time needed for link off and
+ * improves reliablity.
+ */
+static void sw_access_acl(struct ksz_sw *sw, uint port, u8 *link, u8 *phy)
+{
+	if (port != sw->HOST_PORT) {
+		sw->ops->acquire(sw);
+		if (!port_chk_acl(sw, port))
+			port_cfg_acl(sw, port, true);
+		port_r8(sw, port, REG_PORT_STATUS_2, link);
+		if (*link & PORT_STAT_LINK_GOOD) {
+			int timeout = 50;
+
+			port_r8(sw, port, REG_PORT_CTRL_10, phy);
+			port_w8(sw, port, REG_PORT_CTRL_10,
+				*phy | PORT_TX_DISABLE);
+			do {
+				delay_milli(1);
+				port_r8(sw, port, REG_PORT_STATUS_2, link);
+				--timeout;
+			} while ((*link & PORT_STAT_LINK_GOOD) && timeout);
+			*link = PORT_STAT_LINK_GOOD;
+		} else {
+			*link = 0;
+		}
+		sw->ops->release(sw);
+	}
+}  /* sw_access_acl */
+
 /**
  * sw_d_acl_table - dump ACL table
  * @sw:		The switch instance.
@@ -2221,21 +2253,25 @@ static ssize_t sw_d_acl_table(struct ksz_sw *sw, uint port, char *buf,
 {
 	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
 	struct ksz_acl_table *acl;
-	int i;
-	int acl_on;
+	u8 phy, link = 0;
 	int min = 0;
+	int i;
 
-	sw->ops->acquire(sw);
-	acl_on = port_chk_acl(sw, port);
-	if (!acl_on) {
-		printk(KERN_INFO "ACL not on for port %d\n", port);
-		port_cfg_acl(sw, port, true);
-	}
-	sw->ops->release(sw);
+	sw_access_acl(sw, port, &link, &phy);
 	for (i = 0; i < ACL_TABLE_ENTRIES; i++) {
 		acl = &cfg->acl_info[i];
 		acl->action_selected = false;
 		sw_r_acl_table(sw, port, i, acl);
+	}
+	if (link) {
+		sw->ops->acquire(sw);
+		port_w8(sw, port, REG_PORT_CTRL_10, phy);
+
+		/* Port 2 has difficulty getting link again if not reset. */
+		if (port == 1)
+			port_w8(sw, port, REG_PORT_STATUS_3,
+				PORT_PHY_SOFT_RESET);
+		sw->ops->release(sw);
 	}
 	for (i = 0; i < ACL_TABLE_ENTRIES; i++) {
 		acl = &cfg->acl_info[i];
@@ -2277,11 +2313,6 @@ static ssize_t sw_d_acl_table(struct ksz_sw *sw, uint port, char *buf,
 		len = acl_action_info(acl, i, buf, len);
 		min = 1;
 	}
-	if (!acl_on) {
-		sw->ops->acquire(sw);
-		port_cfg_acl(sw, port, false);
-		sw->ops->release(sw);
-	}
 	return len;
 }  /* sw_d_acl_table */
 
@@ -2305,16 +2336,12 @@ static void sw_reset_acl_hw(struct ksz_sw *sw)
 	struct ksz_port_cfg *cfg;
 	struct ksz_acl_table *acl;
 	int i;
-	int acl_on;
 	uint n;
 	uint port;
 
 	sw_reset_acl(sw);
 	for (n = 0; n <= sw->mib_port_cnt; n++) {
 		port = get_phy_port(sw, n);
-		acl_on = port_chk_acl(sw, port);
-		if (!acl_on)
-			port_cfg_acl(sw, port, true);
 		sw->ops->release(sw);
 		cfg = get_port_cfg(sw, port);
 		for (i = 0; i < ACL_TABLE_ENTRIES; i++) {
@@ -2324,8 +2351,6 @@ static void sw_reset_acl_hw(struct ksz_sw *sw)
 			sw_w_acl_table(sw, port, i, acl);
 		}
 		sw->ops->acquire(sw);
-		if (!acl_on)
-			port_cfg_acl(sw, port, false);
 	}
 }  /* sw_reset_acl_hw */
 
@@ -2339,7 +2364,6 @@ static void sw_init_acl(struct ksz_sw *sw)
 
 	for (n = 0; n <= sw->mib_port_cnt; n++) {
 		port = get_phy_port(sw, n);
-		port_cfg_acl(sw, port, 1);
 		cfg = get_port_cfg(sw, port);
 		sw->ops->release(sw);
 		for (i = 0; i < ACL_TABLE_ENTRIES; i++) {
@@ -4207,6 +4231,22 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 	info->duplex = phydev->duplex + 1;
 	SW_W(sw, REG_PORT_5_CTRL_6, data);
 
+/*
+ * THa  2023/03/27
+ * Occassionally the ACL table of the host port gets garbage data again.
+ */
+#if 1
+	do {
+		u8 data[20];
+		uint n;
+
+		memset(data, 0, 20);
+		for (n = 0; n < ACL_TABLE_ENTRIES; n++)
+			sw_w_acl_hw(sw, sw->HOST_PORT, n, data,
+				    ACL_BYTE_ENABLE);
+	} while (0);
+#endif
+
 	/* Enable switch MII flow control. */
 	data = SW_R(sw, S_REPLACE_VID_CTRL);
 	data |= SW_FLOW_CTRL;
@@ -5053,9 +5093,15 @@ static void sw_reset_acl_all(struct ksz_sw *sw)
 
 static inline void sw_reset(struct ksz_sw *sw)
 {
+	uint i;
+
 	sw->reg->w8(sw, REG_POWER_MANAGEMENT_1,
 		SW_SOFTWARE_POWER_DOWN << SW_POWER_MANAGEMENT_MODE_S);
 	sw->reg->w8(sw, REG_POWER_MANAGEMENT_1, 0);
+
+	/* Need to enable ACL for better reliability. */
+	for (i = 0; i < sw->port_cnt; i++)
+		port_w8(sw, i, REG_PORT_CTRL_5, PORT_ACL_ENABLE);
 
 	sw_reset_acl_all(sw);
 }  /* sw_reset */
@@ -7564,9 +7610,9 @@ static int sysfs_acl_write(struct ksz_sw *sw, int proc_num, uint n, int num,
 	struct ksz_acl_table *acl;
 	struct ksz_acl_table *action;
 	struct ksz_acl_table *ruleset;
-	uint port;
-	int acl_on = 0;
 	int processed = true;
+	u8 phy, link = 0;
+	uint port;
 
 	port = get_sysfs_port(sw, n);
 	cfg = get_port_cfg(sw, port);
@@ -7578,11 +7624,7 @@ static int sysfs_acl_write(struct ksz_sw *sw, int proc_num, uint n, int num,
 	case PROC_SET_ACL_MODE:
 	case PROC_SET_ACL_ACTION:
 	case PROC_SET_ACL_INFO:
-		sw->ops->acquire(sw);
-		acl_on = port_chk_acl(sw, port);
-		if (!acl_on)
-			port_cfg_acl(sw, port, true);
-		sw->ops->release(sw);
+		sw_access_acl(sw, port, &link, &phy);
 		break;
 	}
 	switch (proc_num) {
@@ -7796,9 +7838,16 @@ static int sysfs_acl_write(struct ksz_sw *sw, int proc_num, uint n, int num,
 	case PROC_SET_ACL_MODE:
 	case PROC_SET_ACL_ACTION:
 	case PROC_SET_ACL_INFO:
-		if (!acl_on) {
+		if (link) {
 			sw->ops->acquire(sw);
-			port_cfg_acl(sw, port, false);
+			port_w8(sw, port, REG_PORT_CTRL_10, phy);
+
+			/* Port 2 has difficulty getting link again if not
+			 * reset.
+			 */
+			if (port == 1)
+				port_w8(sw, port, REG_PORT_STATUS_3,
+					PORT_PHY_SOFT_RESET);
 			sw->ops->release(sw);
 		}
 		break;

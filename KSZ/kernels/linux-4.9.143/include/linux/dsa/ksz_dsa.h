@@ -2,11 +2,16 @@
  *
  * Microchip KSZ series switch common definitions
  *
- * Copyright (C) 2017-2021 Microchip Technology Inc.
+ * Copyright (C) 2017-2023 Microchip Technology Inc.
  */
 
 #include <linux/phy.h>
 #include <linux/regmap.h>
+
+#if 0
+/* Use at91-sama5d3_xplained_ung8071_cascade.dts to simulate cascade switch. */
+#define SIMULATE_CASCADE_SWITCH
+#endif
 
 struct ksz_device;
 
@@ -49,6 +54,9 @@ struct ksz_port {
 struct ksz_device {
 	struct dsa_switch *ds;
 	struct ksz_platform_data *pdata;
+#ifdef SIMULATE_CASCADE_SWITCH
+	struct ksz_device *first;
+#endif
 	const char *name;
 	struct regmap *regmap[3];
 

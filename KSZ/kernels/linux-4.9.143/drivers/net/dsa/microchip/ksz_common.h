@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0
  * Microchip switch driver common header
  *
- * Copyright (C) 2017-2019 Microchip Technology Inc.
+ * Copyright (C) 2017-2023 Microchip Technology Inc.
  */
 
 #ifndef __KSZ_COMMON_H
@@ -63,6 +63,10 @@ static inline int ksz_read8(struct ksz_device *dev, u32 reg, u8 *val)
 {
 	int ret;
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	KSZ_BYTE_REG(reg);
 	ret = regmap_raw_read(dev->regmap[0], reg, val, 1);
 
@@ -73,6 +77,10 @@ static inline int ksz_read16(struct ksz_device *dev, u32 reg, u16 *val)
 {
 	int ret;
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	KSZ_WORD_REG(reg);
 	ret = regmap_raw_read(dev->regmap[0], reg, val, 2);
 	if (!ret)
@@ -85,6 +93,10 @@ static inline int ksz_read24(struct ksz_device *dev, u32 reg, u32 *val)
 {
 	int ret;
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	ret = regmap_raw_read(dev->regmap[0], reg, val, 3);
 	if (!ret) {
 		*val = be32_to_cpu(*val);
@@ -99,6 +111,10 @@ static inline int ksz_read32(struct ksz_device *dev, u32 reg, u32 *val)
 {
 	int ret;
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	KSZ_DWORD_REG(reg);
 	ret = regmap_raw_read(dev->regmap[0], reg, val, 4);
 	if (!ret)
@@ -109,12 +125,20 @@ static inline int ksz_read32(struct ksz_device *dev, u32 reg, u32 *val)
 
 static inline int ksz_write8(struct ksz_device *dev, u32 reg, u8 value)
 {
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	KSZ_BYTE_REG(reg);
 	return regmap_raw_write(dev->regmap[0], reg, &value, 1);
 }
 
 static inline int ksz_write16(struct ksz_device *dev, u32 reg, u16 value)
 {
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	KSZ_WORD_REG(reg);
 	value = cpu_to_be16(value);
 	return regmap_raw_write(dev->regmap[0], reg, &value, 2);
@@ -130,6 +154,10 @@ static inline int ksz_write24(struct ksz_device *dev, u32 reg, u32 value)
 
 static inline int ksz_write32(struct ksz_device *dev, u32 reg, u32 value)
 {
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	KSZ_DWORD_REG(reg);
 	value = cpu_to_be32(value);
 	return regmap_raw_write(dev->regmap[0], reg, &value, 4);
@@ -138,12 +166,20 @@ static inline int ksz_write32(struct ksz_device *dev, u32 reg, u32 value)
 static inline int ksz_get(struct ksz_device *dev, u32 reg, void *data,
 			  size_t len)
 {
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	return regmap_raw_read(dev->regmap[0], reg, data, len);
 }
 
 static inline int ksz_set(struct ksz_device *dev, u32 reg, void *data,
 			  size_t len)
 {
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	return regmap_raw_write(dev->regmap[0], reg, data, len);
 }
 
@@ -185,12 +221,20 @@ static inline void ksz_pwrite32(struct ksz_device *dev, int port, int offset,
 
 static inline void ksz_cfg(struct ksz_device *dev, u32 addr, u8 bits, bool set)
 {
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	regmap_update_bits(dev->regmap[0], addr, bits, set ? bits : 0);
 }
 
 static inline void ksz_port_cfg(struct ksz_device *dev, int port, int offset,
 				u8 bits, bool set)
 {
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first)
+		dev = dev->first;
+#endif
 	regmap_update_bits(dev->regmap[0], PORT_CTRL_ADDR(port, offset), bits,
 			   set ? bits : 0);
 }

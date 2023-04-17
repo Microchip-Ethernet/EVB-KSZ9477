@@ -2,7 +2,7 @@
 /*
  * Microchip KSZ9477 switch driver main logic
  *
- * Copyright (C) 2017-2021 Microchip Technology Inc.
+ * Copyright (C) 2017-2023 Microchip Technology Inc.
  */
 
 #include <linux/kernel.h>
@@ -68,6 +68,24 @@ static const struct {
 	{ 0x82, "rx_discards" },
 	{ 0x83, "tx_discards" },
 };
+
+#ifdef SIMULATE_CASCADE_SWITCH
+static bool ksz9477_skip_hw(struct ksz_device *dev, int port)
+{
+	if (dev->first) {
+		struct dsa_switch *ds = dev->ds;
+		struct dsa_switch_tree *dst = ds->dst;
+
+		if (ds->index > 0) {
+			ds = dst->ds[ds->index - 1];
+			if (port == ds->rtable[ds->index + 1]) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+#endif
 
 static void ksz9477_cfg32(struct ksz_device *dev, u32 addr, u32 bits, bool set)
 {
@@ -821,6 +839,11 @@ static int ksz9477_phy_write16(struct dsa_switch *ds, int addr, int reg,
 	if (addr >= dev->phy_port_cnt)
 		return 0;
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (ksz9477_skip_hw(dev, addr))
+		return 0;
+#endif
+
 	/* No gigabit support.  Do not write to this register. */
 	if (!(dev->features & GBIT_SUPPORT) && reg == MII_CTRL1000)
 		return 0;
@@ -854,6 +877,11 @@ static void ksz9477_port_stp_state_set(struct dsa_switch *ds, int port,
 	u8 data;
 	int member = -1;
 	int forward = dev->member;
+
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (ksz9477_skip_hw(dev, port))
+		return;
+#endif
 
 	ksz_pread8(dev, port, P_STP_CTRL, &data);
 	data &= ~(PORT_TX_ENABLE | PORT_RX_ENABLE | PORT_LEARN_DISABLE);
@@ -1732,6 +1760,11 @@ static void ksz9477_port_setup(struct ksz_device *dev, int port, bool cpu_port)
 	u16 data16;
 	struct ksz_port *p = &dev->ports[port];
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (ksz9477_skip_hw(dev, port))
+		return;
+#endif
+
 	/* enable tag tail for host port */
 	if (cpu_port)
 		ksz_port_cfg(dev, port, REG_PORT_CTRL_0, PORT_TAIL_TAG_ENABLE,
@@ -1878,14 +1911,16 @@ static void ksz9477_config_cpu_port(struct dsa_switch *ds)
 	struct ksz_port *p;
 	int i;
 
-	for (i = 0; i < dev->port_cnt; i++) {
-		if (dsa_is_cpu_port(ds, i) && (dev->cpu_ports & (1 << i))) {
-			phy_interface_t interface;
+	/* Setup the upstream port first. */
+	i = dsa_upstream_port(ds);
+	if (i >= 0 && (dev->cpu_ports & (1 << i))) {
+		phy_interface_t interface;
 
-			dev->cpu_port = i;
-			dev->host_mask = (1 << dev->cpu_port);
-			dev->port_mask |= dev->host_mask;
+		dev->cpu_port = i;
+		dev->host_mask = (1 << i);
+		dev->port_mask |= dev->host_mask;
 
+		if (i >= dev->phy_port_cnt) {
 			interface = ksz9477_get_interface(dev, i);
 			if (!dev->interface && interface)
 				dev->interface = interface;
@@ -1894,19 +1929,19 @@ static void ksz9477_config_cpu_port(struct dsa_switch *ds)
 					 "use %s instead of %s\n",
 					  phy_modes(dev->interface),
 					  phy_modes(interface));
-
-			/* enable cpu port */
-			ksz9477_port_setup(dev, i, true);
-			p = &dev->ports[dev->cpu_port];
-			p->vid_member = dev->port_mask;
-			p->on = 1;
 		}
+
+		/* enable upstream port */
+		ksz9477_port_setup(dev, i, true);
+		p = &dev->ports[i];
+		p->vid_member = dev->port_mask;
+		p->on = 1;
 	}
 
 	dev->member = dev->host_mask;
 
 	for (i = 0; i < dev->mib_port_cnt; i++) {
-		if (i == dev->cpu_port)
+		if (i == dsa_upstream_port(ds))
 			continue;
 		p = &dev->ports[i];
 
@@ -1915,8 +1950,23 @@ static void ksz9477_config_cpu_port(struct dsa_switch *ds)
 		 */
 		p->vid_member = (1 << i);
 		p->member = dev->port_mask;
-		ksz9477_port_stp_state_set(ds, i, BR_STATE_DISABLED);
 		p->on = 1;
+
+#ifdef SIMULATE_CASCADE_SWITCH
+		if (dev->first) {
+			struct dsa_switch *mds = dev->first->ds;
+
+			if (dev->first->host_mask & (1 << i))
+				continue;
+			if (dsa_is_dsa_port(mds, i))
+				continue;
+		}
+#endif
+		if (dsa_is_dsa_port(ds, i)) {
+			ksz9477_port_setup(dev, i, false);
+		} else {
+			ksz9477_port_stp_state_set(ds, i, BR_STATE_DISABLED);
+		}
 		if (i < dev->phy_port_cnt)
 			p->phy = 1;
 		if (dev->chip_id == 0x00947700 && i == 6) {
@@ -1945,6 +1995,12 @@ static int ksz9477_setup(struct dsa_switch *ds)
 	if (!dev->vlan_cache)
 		return -ENOMEM;
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (dev->first) {
+		ksz9477_config_cpu_port(ds);
+		return 0;
+	}
+#endif
 	ret = ksz9477_reset_switch(dev);
 	if (ret) {
 		dev_err(ds->dev, "failed to reset switch\n");
@@ -2381,6 +2437,9 @@ static int ksz9477_switch_init(struct ksz_device *dev)
 		}
 	}
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (!dev->first)
+#endif
 	i = phy_drivers_register(ksz9477_phy_driver,
 				 ARRAY_SIZE(ksz9477_phy_driver), THIS_MODULE);
 	if (i < 0)
@@ -2400,6 +2459,9 @@ static void ksz9477_switch_exit(struct ksz_device *dev)
 		flush_work(&dev->sgmii_check);
 	}
 	sysfs_remove_bin_file(&dev->dev->kobj, &ksz9477_registers_attr);
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (!dev->first)
+#endif
 	phy_drivers_unregister(ksz9477_phy_driver,
 			       ARRAY_SIZE(ksz9477_phy_driver));
 	if (dev->irq > 0)

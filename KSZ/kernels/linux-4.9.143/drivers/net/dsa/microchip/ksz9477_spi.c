@@ -2,7 +2,7 @@
 /*
  * Microchip KSZ9477 series register access through SPI
  *
- * Copyright (C) 2017-2021 Microchip Technology Inc.
+ * Copyright (C) 2017-2023 Microchip Technology Inc.
  */
 
 #include <linux/kernel.h>
@@ -10,6 +10,10 @@
 #include <linux/spi/spi.h>
 
 #include "ksz_priv.h"
+
+#ifdef SIMULATE_CASCADE_SWITCH
+static struct ksz_device *first_dev;
+#endif
 
 /* SPI frame opcodes */
 #define KS_SPIOP_RD			3
@@ -61,6 +65,12 @@ static int ksz9477_spi_probe(struct spi_device *spi)
 	if (!dev)
 		return -ENOMEM;
 
+#ifdef SIMULATE_CASCADE_SWITCH
+	if (!first_dev)
+		first_dev = dev;
+	else
+		dev->first = first_dev;
+#endif
 	for (i = 0; i < ARRAY_SIZE(ksz9477_regmap_cfg); i++) {
 		dev->regmap[i] = devm_regmap_init_spi(spi,
 						      &ksz9477_regmap_cfg[i]);

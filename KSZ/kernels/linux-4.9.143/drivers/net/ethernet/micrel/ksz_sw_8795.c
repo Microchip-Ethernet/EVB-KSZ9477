@@ -11196,13 +11196,12 @@ static void determine_rate(struct ksz_sw *sw, struct ksz_port_mib *mib)
 			u64 cnt = mib->counter[MIB_RX_TOTAL + j] -
 				mib->rate[j].last_cnt;
 
-			if (cnt > 1000000 && diff >= 100) {
-				u32 rem;
+			if (cnt > 1000000 && diff >= HZ) {
 				u64 rate = cnt;
 
 				rate *= 8;
-				diff *= 10 * 100;
-				rate = div_u64_rem(rate, diff, &rem);
+				diff *= 1000 * 100 / HZ;
+				rate = div_u64_u32(rate, diff);
 				mib->rate[j].last = jiffies;
 				mib->rate[j].last_cnt =
 					mib->counter[MIB_RX_TOTAL + j];

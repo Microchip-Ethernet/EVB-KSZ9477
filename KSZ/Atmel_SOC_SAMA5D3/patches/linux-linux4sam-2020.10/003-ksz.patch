@@ -21367,12 +21367,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_iba.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_iba.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_iba.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_iba.c	2022-07-25 17:52:20.007574412 -0700
-@@ -0,0 +1,3134 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_iba.c	2023-03-24 14:48:06.180009343 -0700
+@@ -0,0 +1,3129 @@
 +/**
 + * Microchip IBA code
 + *
-+ * Copyright (c) 2015-2022 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2013-2015 Micrel, Inc.
@@ -24446,13 +24446,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_ib
 +	data = 800;
 +	iba->delay_ticks = msecs_to_jiffies(data);
 +
-+	if (!iba->use_iba) {
-+		sw->ops->acquire(sw);
-+		data = sw->old->r32(sw, REG_SW_IBA__4);
-+		tag_type = (data & SW_IBA_FRAME_TPID_M);
-+		sw->ops->release(sw);
-+	} else
-+		tag_type = ETH_P_IBA;
++	/* Cannot really read hardware for current tag type. */
++	tag_type = ETH_P_IBA;
 +
 +	iba->sw_dev = sw;
 +	iba->packet = kzalloc(IBA_LEN_MAX, GFP_KERNEL);
@@ -63409,12 +63404,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_st
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8795.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8795.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.c	2021-11-01 11:14:51.738974770 -0700
-@@ -0,0 +1,12122 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.c	2023-04-17 12:31:36.000000000 -0700
+@@ -0,0 +1,12157 @@
 +/**
 + * Microchip KSZ8795 switch common code
 + *
-+ * Copyright (c) 2015-2021 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2010-2015 Micrel, Inc.
@@ -65608,6 +65603,38 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	return len;
 +}  /* acl_info */
 +
++/*
++ * THa  2023/03/27
++ * Hardware has a bug in which the ACL index cannot be changed when the port
++ * has link.  Turning ACL on decreases the time needed for link off and
++ * improves reliablity.
++ */
++static void sw_access_acl(struct ksz_sw *sw, uint port, u8 *link, u8 *phy)
++{
++	if (port != sw->HOST_PORT) {
++		sw->ops->acquire(sw);
++		if (!port_chk_acl(sw, port))
++			port_cfg_acl(sw, port, true);
++		port_r8(sw, port, REG_PORT_STATUS_2, link);
++		if (*link & PORT_STAT_LINK_GOOD) {
++			int timeout = 50;
++
++			port_r8(sw, port, REG_PORT_CTRL_10, phy);
++			port_w8(sw, port, REG_PORT_CTRL_10,
++				*phy | PORT_TX_DISABLE);
++			do {
++				delay_milli(1);
++				port_r8(sw, port, REG_PORT_STATUS_2, link);
++				--timeout;
++			} while ((*link & PORT_STAT_LINK_GOOD) && timeout);
++			*link = PORT_STAT_LINK_GOOD;
++		} else {
++			*link = 0;
++		}
++		sw->ops->release(sw);
++	}
++}  /* sw_access_acl */
++
 +/**
 + * sw_d_acl_table - dump ACL table
 + * @sw:		The switch instance.
@@ -65620,21 +65647,25 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
 +	struct ksz_acl_table *acl;
-+	int i;
-+	int acl_on;
++	u8 phy, link = 0;
 +	int min = 0;
++	int i;
 +
-+	sw->ops->acquire(sw);
-+	acl_on = port_chk_acl(sw, port);
-+	if (!acl_on) {
-+		printk(KERN_INFO "ACL not on for port %d\n", port);
-+		port_cfg_acl(sw, port, true);
-+	}
-+	sw->ops->release(sw);
++	sw_access_acl(sw, port, &link, &phy);
 +	for (i = 0; i < ACL_TABLE_ENTRIES; i++) {
 +		acl = &cfg->acl_info[i];
 +		acl->action_selected = false;
 +		sw_r_acl_table(sw, port, i, acl);
++	}
++	if (link) {
++		sw->ops->acquire(sw);
++		port_w8(sw, port, REG_PORT_CTRL_10, phy);
++
++		/* Port 2 has difficulty getting link again if not reset. */
++		if (port == 1)
++			port_w8(sw, port, REG_PORT_STATUS_3,
++				PORT_PHY_SOFT_RESET);
++		sw->ops->release(sw);
 +	}
 +	for (i = 0; i < ACL_TABLE_ENTRIES; i++) {
 +		acl = &cfg->acl_info[i];
@@ -65676,11 +65707,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +		len = acl_action_info(acl, i, buf, len);
 +		min = 1;
 +	}
-+	if (!acl_on) {
-+		sw->ops->acquire(sw);
-+		port_cfg_acl(sw, port, false);
-+		sw->ops->release(sw);
-+	}
 +	return len;
 +}  /* sw_d_acl_table */
 +
@@ -65704,16 +65730,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct ksz_port_cfg *cfg;
 +	struct ksz_acl_table *acl;
 +	int i;
-+	int acl_on;
 +	uint n;
 +	uint port;
 +
 +	sw_reset_acl(sw);
 +	for (n = 0; n <= sw->mib_port_cnt; n++) {
 +		port = get_phy_port(sw, n);
-+		acl_on = port_chk_acl(sw, port);
-+		if (!acl_on)
-+			port_cfg_acl(sw, port, true);
 +		sw->ops->release(sw);
 +		cfg = get_port_cfg(sw, port);
 +		for (i = 0; i < ACL_TABLE_ENTRIES; i++) {
@@ -65723,8 +65745,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			sw_w_acl_table(sw, port, i, acl);
 +		}
 +		sw->ops->acquire(sw);
-+		if (!acl_on)
-+			port_cfg_acl(sw, port, false);
 +	}
 +}  /* sw_reset_acl_hw */
 +
@@ -65738,7 +65758,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	for (n = 0; n <= sw->mib_port_cnt; n++) {
 +		port = get_phy_port(sw, n);
-+		port_cfg_acl(sw, port, 1);
 +		cfg = get_port_cfg(sw, port);
 +		sw->ops->release(sw);
 +		for (i = 0; i < ACL_TABLE_ENTRIES; i++) {
@@ -65811,8 +65830,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +/* Driver set switch broadcast storm protection at 10% rate. */
 +#define BROADCAST_STORM_PROTECTION_RATE	10
 +
-+/* 148,800 frames * 67 ms / 100 */
-+#define BROADCAST_STORM_VALUE		9969
++/* 148,800 frames * 50 ms / 100 */
++#define BROADCAST_STORM_VALUE		7440
 +
 +/**
 + * sw_cfg_broad_storm - configure broadcast storm threshold
@@ -67609,6 +67628,22 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	info->duplex = phydev->duplex + 1;
 +	SW_W(sw, REG_PORT_5_CTRL_6, data);
 +
++/*
++ * THa  2023/03/27
++ * Occassionally the ACL table of the host port gets garbage data again.
++ */
++#if 1
++	do {
++		u8 data[20];
++		uint n;
++
++		memset(data, 0, 20);
++		for (n = 0; n < ACL_TABLE_ENTRIES; n++)
++			sw_w_acl_hw(sw, sw->HOST_PORT, n, data,
++				    ACL_BYTE_ENABLE);
++	} while (0);
++#endif
++
 +	/* Enable switch MII flow control. */
 +	data = SW_R(sw, S_REPLACE_VID_CTRL);
 +	data |= SW_FLOW_CTRL;
@@ -68693,9 +68728,15 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +static inline void sw_reset(struct ksz_sw *sw)
 +{
++	uint i;
++
 +	sw->reg->w8(sw, REG_POWER_MANAGEMENT_1,
 +		SW_SOFTWARE_POWER_DOWN << SW_POWER_MANAGEMENT_MODE_S);
 +	sw->reg->w8(sw, REG_POWER_MANAGEMENT_1, 0);
++
++	/* Need to enable ACL for better reliability. */
++	for (i = 0; i < sw->port_cnt; i++)
++		port_w8(sw, i, REG_PORT_CTRL_5, PORT_ACL_ENABLE);
 +
 +	sw_reset_acl_all(sw);
 +}  /* sw_reset */
@@ -71180,9 +71221,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct ksz_acl_table *acl;
 +	struct ksz_acl_table *action;
 +	struct ksz_acl_table *ruleset;
-+	uint port;
-+	int acl_on = 0;
 +	int processed = true;
++	u8 phy, link = 0;
++	uint port;
 +
 +	port = get_sysfs_port(sw, n);
 +	cfg = get_port_cfg(sw, port);
@@ -71194,11 +71235,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	case PROC_SET_ACL_MODE:
 +	case PROC_SET_ACL_ACTION:
 +	case PROC_SET_ACL_INFO:
-+		sw->ops->acquire(sw);
-+		acl_on = port_chk_acl(sw, port);
-+		if (!acl_on)
-+			port_cfg_acl(sw, port, true);
-+		sw->ops->release(sw);
++		sw_access_acl(sw, port, &link, &phy);
 +		break;
 +	}
 +	switch (proc_num) {
@@ -71412,9 +71449,16 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	case PROC_SET_ACL_MODE:
 +	case PROC_SET_ACL_ACTION:
 +	case PROC_SET_ACL_INFO:
-+		if (!acl_on) {
++		if (link) {
 +			sw->ops->acquire(sw);
-+			port_cfg_acl(sw, port, false);
++			port_w8(sw, port, REG_PORT_CTRL_10, phy);
++
++			/* Port 2 has difficulty getting link again if not
++			 * reset.
++			 */
++			if (port == 1)
++				port_w8(sw, port, REG_PORT_STATUS_3,
++					PORT_PHY_SOFT_RESET);
 +			sw->ops->release(sw);
 +		}
 +		break;
@@ -71780,20 +71824,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	}
 +	return dev;
 +}  /* sw_rx_dev */
-+
-+#if 0
-+static struct ksz_port *sw_get_priv(struct ksz_sw *sw, struct net_device *dev)
-+{
-+        int dev_count = sw->dev_count + sw->dev_offset;
-+        int i;
-+
-+        for (i = 0; i < dev_count; i++) {
-+                if (sw->netdev[i] == dev)
-+                        return sw->netport[i];
-+        }
-+        return NULL;
-+}
-+#endif
 +
 +static int pkt_matched(struct sk_buff *skb, struct net_device *dev, void *ptr,
 +	int (*match_multi)(void *ptr, u8 *addr), u8 h_promiscuous)
@@ -72418,7 +72448,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}  /* sw_set_phylink_support */
 +
 +static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
-+	struct phylink_link_state *s)
++					    struct phylink_link_state *s)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -72435,8 +72465,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}  /* sw_port_phylink_get_fixed_state */
 +
 +static void sw_port_phylink_validate(struct phylink_config *config,
-+				      unsigned long *supported,
-+				      struct phylink_link_state *state)
++				     unsigned long *supported,
++				     struct phylink_link_state *state)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -72459,8 +72489,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}
 +
 +static void sw_port_phylink_mac_link_down(struct phylink_config *config,
-+					   unsigned int mode,
-+					   phy_interface_t interface)
++					  unsigned int mode,
++					  phy_interface_t interface)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -72472,9 +72502,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}
 +
 +static void sw_port_phylink_mac_link_up(struct phylink_config *config,
-+					 unsigned int mode,
-+					 phy_interface_t interface,
-+					 struct phy_device *phydev)
++					unsigned int mode,
++					phy_interface_t interface,
++					struct phy_device *phydev)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -72578,6 +72608,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +				ethernet = of_parse_phandle(port, "ethernet", 0);
 +				if (ethernet)
 +dbg_msg(" found eth\n");
++				if (ethernet) {
++					name = of_get_property(port,
++							       "phy-mode",
++							       NULL);
++					if (name && !strcmp(name, "rmii"))
++						sw->interface =
++							PHY_INTERFACE_MODE_RMII;
++				}
 +				name = of_get_property(port, "label", NULL);
 +				if (name)
 +dbg_msg(" name: %s\n", name);
@@ -72643,6 +72681,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			}
 +		}
 +	}
++	port->opened = true;
 +	port->report = true;
 +
 +	sw->ops->acquire(sw);
@@ -72706,6 +72745,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifdef CONFIG_KSZ_MRP
 +	struct mrp_info *mrp = &sw->mrp;
 +#endif
++
++	port->opened = false;
 +
 +	/* Need to shut the port manually in multiple device interfaces mode. */
 +	if (sw->dev_count > 1 && (!sw->dev_offset || dev != sw->netdev[0])) {
@@ -73523,6 +73564,10 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct ksz_sw *sw = port->sw;
 +	struct ksz_port_info *info;
 +
++	/* Netdevice associated with port was closed. */
++	if (!port->opened)
++		return;
++
 +#ifdef CONFIG_KSZ_DLR
 +	if (sw->features & DLR_HW) {
 +		struct ksz_dlr_info *dlr = &sw->info->dlr;
@@ -73538,16 +73583,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 +		sw_report_link(sw, port, port->linked);
 +
-+	/* There is an extra network device for the main device. */
-+	/* The switch is always linked; speed and duplex are also fixed. */
-+	if (sw->dev_offset) {
-+		port = sw->netport[0];
-+		if (port && netif_running(port->netdev)) {
-+			info = get_port_info(sw, sw->HOST_PORT);
-+			sw_report_link(sw, port, info);
-+		}
-+	}
-+
 +#ifdef CONFIG_KSZ_STP
 +	if (sw->features & STP_SUPPORT) {
 +		struct ksz_stp_info *stp = &sw->info->rstp;
@@ -73556,6 +73591,16 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	}
 +#endif
 +	port->link_ports = 0;
++
++	/* There is an extra network device for the main device. */
++	/* The switch is always linked; speed and duplex are also fixed. */
++	if (sw->dev_offset) {
++		port = sw->netport[0];
++		if (port && port->opened && netif_running(port->netdev)) {
++			info = get_port_info(sw, sw->HOST_PORT);
++			sw_report_link(sw, port, info);
++		}
++	}
 +}  /* link_update_work */
 +
 +static void set_phy_support(struct ksz_port *port, struct phy_device *phydev)
@@ -74609,17 +74654,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	return 0;
 +}
 +
-+/* Just a placeholder to indicate PHY interrupt support. */
-+static int kszphy_ack_interrupt(struct phy_device *phydev)
-+{
-+	return 0;
-+}
-+
-+static int kszphy_config_intr(struct phy_device *phydev)
-+{
-+	return 0;
-+}
-+
 +static int kszphy_get_features(struct phy_device *phydev)
 +{
 +	struct phy_priv *priv = phydev->priv;
@@ -74658,8 +74692,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	.name		= "Microchip KSZ8795 Switch",
 +	.probe		= kszphy_probe,
 +	.get_features	= kszphy_get_features,
-+	.ack_interrupt	= kszphy_ack_interrupt,
-+	.config_intr	= kszphy_config_intr,
 +	.config_init	= kszphy_config_init,
 +	.config_aneg	= genphy_config_aneg,
 +	.read_status	= genphy_read_status,
@@ -74907,13 +74939,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			u64 cnt = mib->counter[MIB_RX_TOTAL + j] -
 +				mib->rate[j].last_cnt;
 +
-+			if (cnt > 1000000 && diff >= 100) {
-+				u32 rem;
++			if (cnt > 1000000 && diff >= HZ) {
 +				u64 rate = cnt;
 +
 +				rate *= 8;
-+				diff *= 10 * 100;
-+				rate = div_u64_rem(rate, diff, &rem);
++				diff *= 1000 * 100 / HZ;
++				rate = div_u64_u32(rate, diff);
 +				mib->rate[j].last = jiffies;
 +				mib->rate[j].last_cnt =
 +					mib->counter[MIB_RX_TOTAL + j];
@@ -75228,7 +75259,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	ksz_setup_logical_ports(sw, sku, ports);
 +
 +	sw->PORT_MASK |= sw->HOST_MASK;
-+dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 +
 +	dbg_msg("%s\n", kszsw_phy_driver_names[ks->sw.chip_id]);
 +
@@ -75456,10 +75486,11 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	struct ksz_sw *sw = &ks->sw;
 +
-+	ksz_mii_exit(ks);
 +	ksz_stop_timer(&ks->monitor_timer_info);
 +	ksz_stop_timer(&ks->mib_timer_info);
 +	flush_work(&ks->mib_read);
++	cancel_delayed_work_sync(&ks->link_read);
++	ksz_mii_exit(ks);
 +
 +#ifdef KSZSW_REGS_SIZE
 +	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);
@@ -75473,9 +75504,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	exit_sw_sysfs(sw, &ks->sysfs, ks->dev);
 +#endif
 +	sw->ops->exit(sw);
-+	cancel_delayed_work_sync(&ks->link_read);
-+
-+	delete_debugfs(ks);
 +
 +#ifdef CONFIG_KSZ_STP
 +	ksz_stp_exit(&sw->info->rstp);
@@ -75484,6 +75512,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (sw->features & DLR_HW)
 +		ksz_dlr_exit(&sw->info->dlr);
 +#endif
++	delete_debugfs(ks);
++
 +	kfree(sw->info);
 +	kfree(ks->hw_dev);
 +	kfree(ks);
@@ -75535,12 +75565,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8795.h linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.h
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8795.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.h	2021-10-05 13:53:36.170414687 -0700
-@@ -0,0 +1,989 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8795.h	2023-03-15 17:20:44.124146319 -0700
+@@ -0,0 +1,990 @@
 +/**
 + * Microchip KSZ8795 switch common header
 + *
-+ * Copyright (c) 2015-2021 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2010-2015 Micrel, Inc.
@@ -76279,6 +76309,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 speed;
 +	u8 force_link;
 +	u8 state;
++	uint opened:1;
 +	uint ready:1;
 +	uint report:1;
 +	u16 link_ports;
@@ -76528,12 +76559,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8895.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8895.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.c	2021-11-01 11:15:30.683514746 -0700
-@@ -0,0 +1,9954 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.c	2023-04-17 12:32:00.000000000 -0700
+@@ -0,0 +1,9955 @@
 +/**
 + * Microchip KSZ8895 switch common code
 + *
-+ * Copyright (c) 2015-2021 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * This program is free software; you can redistribute it and/or modify
@@ -77866,8 +77897,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +/* Driver set switch broadcast storm protection at 10% rate. */
 +#define BROADCAST_STORM_PROTECTION_RATE	10
 +
-+/* 148,800 frames * 67 ms / 100 */
-+#define BROADCAST_STORM_VALUE		9969
++/* 148,800 frames * 50 ms / 100 */
++#define BROADCAST_STORM_VALUE		7440
 +
 +/**
 + * sw_cfg_broad_storm - configure broadcast storm threshold
@@ -83614,7 +83645,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}  /* sw_set_phylink_support */
 +
 +static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
-+	struct phylink_link_state *s)
++					    struct phylink_link_state *s)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -83630,8 +83661,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}  /* sw_port_phylink_get_fixed_state */
 +
 +static void sw_port_phylink_validate(struct phylink_config *config,
-+				      unsigned long *supported,
-+				      struct phylink_link_state *state)
++				     unsigned long *supported,
++				     struct phylink_link_state *state)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -83654,8 +83685,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}
 +
 +static void sw_port_phylink_mac_link_down(struct phylink_config *config,
-+					   unsigned int mode,
-+					   phy_interface_t interface)
++					  unsigned int mode,
++					  phy_interface_t interface)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -83667,9 +83698,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}
 +
 +static void sw_port_phylink_mac_link_up(struct phylink_config *config,
-+					 unsigned int mode,
-+					 phy_interface_t interface,
-+					 struct phy_device *phydev)
++					unsigned int mode,
++					phy_interface_t interface,
++					struct phy_device *phydev)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -83773,6 +83804,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +				ethernet = of_parse_phandle(port, "ethernet", 0);
 +				if (ethernet)
 +dbg_msg(" found eth\n");
++				if (ethernet) {
++					name = of_get_property(port,
++							       "phy-mode",
++							       NULL);
++					if (name && !strcmp(name, "rmii"))
++						sw->interface =
++							PHY_INTERFACE_MODE_RMII;
++				}
 +				name = of_get_property(port, "label", NULL);
 +				if (name)
 +dbg_msg(" name: %s\n", name);
@@ -83838,6 +83877,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			}
 +		}
 +	}
++	port->opened = true;
 +	port->report = true;
 +
 +	sw->ops->acquire(sw);
@@ -83887,6 +83927,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifdef CONFIG_KSZ_MRP
 +	struct mrp_info *mrp = &sw->mrp;
 +#endif
++
++	port->opened = false;
 +
 +	/* Need to shut the port manually in multiple device interfaces mode. */
 +	if (sw->dev_count > 1 && (!sw->dev_offset || dev != sw->netdev[0])) {
@@ -84685,20 +84727,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct ksz_sw *sw = port->sw;
 +	struct ksz_port_info *info;
 +
++	/* Netdevice associated with port was closed. */
++	if (!port->opened)
++		return;
++
 +	sw_notify_link_change(sw, port->link_ports);
 +
 +	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
 +		sw_report_link(sw, port, port->linked);
-+
-+	/* There is an extra network device for the main device. */
-+	/* The switch is always linked; speed and duplex are also fixed. */
-+	if (sw->dev_offset) {
-+		port = sw->netport[0];
-+		if (port && netif_running(port->netdev)) {
-+			info = get_port_info(sw, sw->HOST_PORT);
-+			sw_report_link(sw, port, info);
-+		}
-+	}
 +
 +#ifdef CONFIG_KSZ_STP
 +	if (sw->features & STP_SUPPORT) {
@@ -84708,6 +84744,16 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	}
 +#endif
 +	port->link_ports = 0;
++
++	/* There is an extra network device for the main device. */
++	/* The switch is always linked; speed and duplex are also fixed. */
++	if (sw->dev_offset) {
++		port = sw->netport[0];
++		if (port && port->opened && netif_running(port->netdev)) {
++			info = get_port_info(sw, sw->HOST_PORT);
++			sw_report_link(sw, port, info);
++		}
++	}
 +}  /* link_update_work */
 +
 +static void set_phy_support(struct ksz_port *port, struct phy_device *phydev)
@@ -85668,17 +85714,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	return 0;
 +}
 +
-+/* Just a placeholder to indicate PHY interrupt support. */
-+static int kszphy_ack_interrupt(struct phy_device *phydev)
-+{
-+	return 0;
-+}
-+
-+static int kszphy_config_intr(struct phy_device *phydev)
-+{
-+	return 0;
-+}
-+
 +static int kszphy_get_features(struct phy_device *phydev)
 +{
 +	struct phy_priv *priv = phydev->priv;
@@ -85710,8 +85745,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	.name		= "Microchip KSZ8895 Switch",
 +	.probe		= kszphy_probe,
 +	.get_features	= kszphy_get_features,
-+	.ack_interrupt	= kszphy_ack_interrupt,
-+	.config_intr	= kszphy_config_intr,
 +	.config_init	= kszphy_config_init,
 +	.config_aneg	= genphy_config_aneg,
 +	.read_status	= genphy_read_status,
@@ -85968,13 +86001,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			cnt = mib->counter[offset] + mib->counter[offset + 1];
 +			last_cnt = cnt;
 +			cnt -= mib->rate[j].last_cnt;
-+			if (cnt > 1000000 && diff >= 100) {
-+				u32 rem;
++			if (cnt > 1000000 && diff >= HZ) {
 +				u64 rate = cnt;
 +
 +				rate *= 8;
-+				diff *= 10 * 100;
-+				rate = div_u64_rem(rate, diff, &rem);
++				diff *= 1000 * 100 / HZ;
++				rate = div_u64_u32(rate, diff);
 +				mib->rate[j].last = jiffies;
 +				mib->rate[j].last_cnt = last_cnt;
 +				if (mib->rate[j].peak < (u32) rate)
@@ -86415,10 +86447,11 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	struct ksz_sw *sw = &ks->sw;
 +
-+	ksz_mii_exit(ks);
 +	ksz_stop_timer(&ks->monitor_timer_info);
 +	ksz_stop_timer(&ks->mib_timer_info);
 +	flush_work(&ks->mib_read);
++	cancel_delayed_work_sync(&ks->link_read);
++	ksz_mii_exit(ks);
 +
 +#ifdef KSZSW_REGS_SIZE
 +	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);
@@ -86428,13 +86461,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	exit_sw_sysfs(sw, &ks->sysfs, ks->dev);
 +#endif
 +	sw->ops->exit(sw);
-+	cancel_delayed_work_sync(&ks->link_read);
-+
-+	delete_debugfs(ks);
 +
 +#ifdef CONFIG_KSZ_STP
 +	ksz_stp_exit(&sw->info->rstp);
 +#endif
++	delete_debugfs(ks);
++
 +	kfree(sw->info);
 +	kfree(ks->hw_dev);
 +	kfree(ks);
@@ -86486,12 +86518,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8895.h linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.h
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_8895.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.h	2021-10-05 13:53:24.058358082 -0700
-@@ -0,0 +1,870 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_8895.h	2023-03-15 17:21:00.224146993 -0700
+@@ -0,0 +1,871 @@
 +/**
 + * Microchip KSZ8895 switch common header
 + *
-+ * Copyright (c) 2015-2021 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2010-2015 Micrel, Inc.
@@ -87155,6 +87187,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 speed;
 +	u8 force_link;
 +	u8 state;
++	uint opened:1;
 +	uint ready:1;
 +	uint report:1;
 +	u16 link_ports;
@@ -87360,8 +87393,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2023-03-03 12:31:14.208975998 -0800
-@@ -0,0 +1,19189 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.c	2023-04-17 12:30:49.000000000 -0700
+@@ -0,0 +1,19203 @@
 +/**
 + * Microchip gigabit switch common code
 + *
@@ -91121,8 +91154,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +/* Driver set switch broadcast storm protection at 10% rate. */
 +#define BROADCAST_STORM_PROTECTION_RATE	10
 +
-+/* 148,800 frames * 67 ms / 100 */
-+#define BROADCAST_STORM_VALUE		9969
++/* 148,800 frames * 50 ms / 100 */
++#define BROADCAST_STORM_VALUE		7440
 +
 +/**
 + * sw_cfg_broad_storm - configure broadcast storm threshold
@@ -95528,7 +95561,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +		if (!info->phy) {
 +
 +			/* By itself. */
-+			if (1 == port->port_cnt &&
++			if (1 == port->port_cnt && port->report &&
 +			    (sw->phy_intr & (1 << p)))
 +				change |= 1 << p;
 +			continue;
@@ -96308,7 +96341,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	delay_micro(1);
 +
 +	/* Turn off SPI auto edge detection. */
-+	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0);
++	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0x40);
 +}  /* sw_reset_hw */
 +
 +static void sw_reset(struct ksz_sw *sw)
@@ -102082,7 +102115,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}  /* sw_set_phylink_support */
 +
 +static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
-+	struct phylink_link_state *s)
++					    struct phylink_link_state *s)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -102099,8 +102132,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}  /* sw_port_phylink_get_fixed_state */
 +
 +static void sw_port_phylink_validate(struct phylink_config *config,
-+				      unsigned long *supported,
-+				      struct phylink_link_state *state)
++				     unsigned long *supported,
++				     struct phylink_link_state *state)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -102123,8 +102156,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}
 +
 +static void sw_port_phylink_mac_link_down(struct phylink_config *config,
-+					   unsigned int mode,
-+					   phy_interface_t interface)
++					  unsigned int mode,
++					  phy_interface_t interface)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -102140,9 +102173,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}
 +
 +static void sw_port_phylink_mac_link_up(struct phylink_config *config,
-+					 unsigned int mode,
-+					 phy_interface_t interface,
-+					 struct phy_device *phydev)
++					unsigned int mode,
++					phy_interface_t interface,
++					struct phy_device *phydev)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -102238,9 +102271,10 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct device_node *np;
 +	struct device_node *ports, *port;
 +	struct device_node *ethernet;
++	struct ksz_port_info *info;
 +	const char *name;
++	u32 mode, reg;
 +	int err;
-+	u32 reg;
 +
 +	if (!ks->of_dev)
 +		return;
@@ -102256,11 +102290,29 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +				ethernet = of_parse_phandle(port, "ethernet", 0);
 +				if (ethernet)
 +dbg_msg(" found eth\n");
++				if (ethernet) {
++					name = of_get_property(port,
++							       "phy-mode",
++							       NULL);
++					if (name && !strcmp(name, "rmii"))
++						sw->interface =
++							PHY_INTERFACE_MODE_RMII;
++				}
 +				name = of_get_property(port, "label", NULL);
 +				if (name)
 +dbg_msg(" name: %s\n", name);
 +				/* Save the device node. */
 +				sw->devnode[reg] = port;
++
++				err = of_property_read_u32(port, "mode", &mode);
++				if (err)
++					continue;
++dbg_msg(" mode: %d\n", mode);
++				info = get_port_info(sw, reg);
++
++				/* Expect only one port is SGMII. */
++				if (info->intf == INTF_SGMII)
++					sw->sgmii_mode = (u8) mode;
 +			}
 +		}
 +	}
@@ -102338,6 +102390,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			}
 +		}
 +	}
++	port->opened = true;
 +	port->report = true;
 +
 +	sw->ops->acquire(sw);
@@ -102420,6 +102473,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifdef CONFIG_KSZ_MRP
 +	struct mrp_info *mrp = &sw->mrp;
 +#endif
++
++	port->opened = false;
 +
 +#ifdef CONFIG_KSZ_IBA
 +	if (2 <= sw->info->iba.use_iba && dev == sw->main_dev)
@@ -103399,6 +103454,10 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	bool duplex;
 +#endif
 +
++	/* Netdevice associated with port was closed. */
++	if (!port->opened)
++		return;
++
 +#ifdef CONFIG_KSZ_DLR
 +	if (sw->features & DLR_HW) {
 +		struct ksz_dlr_info *dlr = &sw->info->dlr;
@@ -103442,6 +103501,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +		p = get_phy_port(sw, i);
 +		if (!(port->link_ports & (1 << p)))
 +			continue;
++
 +#ifdef CONFIG_KSZ_AVB
 +		info = get_port_info(sw, p);
 +		speed = (media_connected == info->state) ?
@@ -103472,7 +103532,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	/* The switch is always linked; speed and duplex are also fixed. */
 +	if (sw->dev_offset) {
 +		port = sw->netport[0];
-+		if (port && netif_running(port->netdev)) {
++		if (port && port->opened && netif_running(port->netdev)) {
 +			info = get_port_info(sw, sw->HOST_PORT);
 +			sw_report_link(sw, port, info);
 +		}
@@ -104829,17 +104889,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	return 0;
 +}
 +
-+/* Just a placeholder to indicate PHY interrupt support. */
-+static int kszphy_ack_interrupt(struct phy_device *phydev)
-+{
-+	return 0;
-+}
-+
-+static int kszphy_config_intr(struct phy_device *phydev)
-+{
-+	return 0;
-+}
-+
 +static int kszphy_get_features(struct phy_device *phydev)
 +{
 +	struct phy_priv *priv = phydev->priv;
@@ -104898,8 +104947,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	.name		= "Microchip KSZ989X Switch",
 +	.probe		= kszphy_probe,
 +	.get_features	= kszphy_get_features,
-+	.ack_interrupt	= kszphy_ack_interrupt,
-+	.config_intr	= kszphy_config_intr,
 +	.config_init	= kszphy_config_init,
 +	.config_aneg	= genphy_config_aneg,
 +	.read_status	= genphy_read_status,
@@ -105742,7 +105789,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +#ifndef CONFIG_KSZ_IBA_ONLY
 +	/* Turn off SPI auto edge detection. */
-+	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0);
++	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0x40);
 +#endif
 +
 +	/* simple check for a valid chip being connected to the bus */
@@ -105893,13 +105940,13 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			}
 +		}
 +	}
-+	if (ks->dev->of_node) {
++	if (ks->of_dev && ks->of_dev->of_node) {
 +		int score;
 +		char name[80];
 +
-+		if (!of_modalias_node(ks->dev->of_node, name, sizeof(name)))
++		if (!of_modalias_node(ks->of_dev->of_node, name, sizeof(name)))
 +			dbg_msg(" compatible: %s"NL, name);
-+		score = of_device_is_compatible(ks->dev->of_node,
++		score = of_device_is_compatible(ks->of_dev->of_node,
 +						"microchip,ksz8565");
 +		if (score > 0 && sw->chip_id == KSZ8567_SW_CHIP) {
 +			sku = KSZ8565_SKU;
@@ -106420,10 +106467,11 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +		sw_stop_interrupt(ks);
 +	}
 +
-+	ksz_mii_exit(ks);
 +	ksz_stop_timer(&ks->monitor_timer_info);
 +	ksz_stop_timer(&ks->mib_timer_info);
 +	flush_work(&ks->mib_read);
++	cancel_delayed_work_sync(&ks->link_read);
++	ksz_mii_exit(ks);
 +
 +#ifdef KSZSW_REGS_SIZE
 +	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);
@@ -106437,11 +106485,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	exit_sw_sysfs(sw, &ks->sysfs, ks->dev);
 +#endif
 +	sw->ops->exit(sw);
-+	cancel_delayed_work_sync(&ks->link_read);
-+
-+#ifndef CONFIG_KSZ_IBA_ONLY
-+	delete_debugfs(ks);
-+#endif
 +
 +#ifdef CONFIG_KSZ_STP
 +	ksz_stp_exit(&sw->info->rstp);
@@ -106457,6 +106500,10 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifdef CONFIG_KSZ_IBA
 +	ksz_iba_exit(&sw->info->iba);
 +#endif
++#ifndef CONFIG_KSZ_IBA_ONLY
++	delete_debugfs(ks);
++#endif
++
 +	kfree(sw->info);
 +#ifndef CONFIG_KSZ_IBA_ONLY
 +	kfree(ks->hw_dev);
@@ -106553,12 +106600,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.h linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.h
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw_9897.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.h	2022-07-25 20:27:07.000000000 -0700
-@@ -0,0 +1,1416 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw_9897.h	2023-03-15 16:42:34.904050484 -0700
+@@ -0,0 +1,1417 @@
 +/**
 + * Microchip KSZ9897 switch common header
 + *
-+ * Copyright (c) 2015-2021 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2013-2015 Micrel, Inc.
@@ -107553,6 +107600,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 state;
 +	uint iba_ready:1;
 +	uint need_mac:1;
++	uint opened:1;
 +	uint ready:1;
 +	uint report:1;
 +	u16 link_ports;
@@ -108051,12 +108099,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c	2021-11-01 11:16:05.735804715 -0700
-@@ -0,0 +1,10212 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.c	2023-04-17 12:32:23.000000000 -0700
+@@ -0,0 +1,10213 @@
 +/**
 + * Microchip switch common code
 + *
-+ * Copyright (c) 2015-2021 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2010-2015 Micrel, Inc.
@@ -115674,7 +115722,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}  /* sw_set_phylink_support */
 +
 +static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
-+	struct phylink_link_state *s)
++					    struct phylink_link_state *s)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -115690,8 +115738,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}  /* sw_port_phylink_get_fixed_state */
 +
 +static void sw_port_phylink_validate(struct phylink_config *config,
-+				      unsigned long *supported,
-+				      struct phylink_link_state *state)
++				     unsigned long *supported,
++				     struct phylink_link_state *state)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -115714,8 +115762,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}
 +
 +static void sw_port_phylink_mac_link_down(struct phylink_config *config,
-+					   unsigned int mode,
-+					   phy_interface_t interface)
++					  unsigned int mode,
++					  phy_interface_t interface)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -115727,9 +115775,9 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +}
 +
 +static void sw_port_phylink_mac_link_up(struct phylink_config *config,
-+					 unsigned int mode,
-+					 phy_interface_t interface,
-+					 struct phy_device *phydev)
++					unsigned int mode,
++					phy_interface_t interface,
++					struct phy_device *phydev)
 +{
 +	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 +	struct ksz_sw *sw = p->sw;
@@ -115833,6 +115881,14 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +				ethernet = of_parse_phandle(port, "ethernet", 0);
 +				if (ethernet)
 +dbg_msg(" found eth\n");
++				if (ethernet) {
++					name = of_get_property(port,
++							       "phy-mode",
++							       NULL);
++					if (name && !strcmp(name, "rmii"))
++						sw->interface =
++							PHY_INTERFACE_MODE_RMII;
++				}
 +				name = of_get_property(port, "label", NULL);
 +				if (name)
 +dbg_msg(" name: %s\n", name);
@@ -115898,6 +115954,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			}
 +		}
 +	}
++	port->opened = true;
 +	port->report = true;
 +
 +	sw->ops->acquire(sw);
@@ -115967,6 +116024,8 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +{
 +	int i;
 +	uint p;
++
++	port->opened = false;
 +
 +	/* Need to shut the port manually in multiple device interfaces mode. */
 +	if (sw->dev_count > 1 && (!sw->dev_offset || dev != sw->netdev[0])) {
@@ -116752,6 +116811,10 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct ksz_sw *sw = port->sw;
 +	struct ksz_port_info *info;
 +
++	/* Netdevice associated with port was closed. */
++	if (!port->opened)
++		return;
++
 +	sw_notify_link_change(sw, port->link_ports);
 +
 +	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
@@ -116770,7 +116833,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	/* The switch is always linked; speed and duplex are also fixed. */
 +	if (sw->dev_offset) {
 +		port = sw->netport[0];
-+		if (port && netif_running(port->netdev)) {
++		if (port && port->opened && netif_running(port->netdev)) {
 +			info = get_port_info(sw, sw->HOST_PORT);
 +			sw_report_link(sw, port, info);
 +		}
@@ -117474,17 +117537,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	return 0;
 +}
 +
-+/* Just a placeholder to indicate PHY interrupt support. */
-+static int kszphy_ack_interrupt(struct phy_device *phydev)
-+{
-+	return 0;
-+}
-+
-+static int kszphy_config_intr(struct phy_device *phydev)
-+{
-+	return 0;
-+}
-+
 +static int kszphy_get_features(struct phy_device *phydev)
 +{
 +	struct phy_priv *priv = phydev->priv;
@@ -117516,8 +117568,6 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	.name		= "Microchip KSZ8463 Switch",
 +	.probe		= kszphy_probe,
 +	.get_features	= kszphy_get_features,
-+	.ack_interrupt	= kszphy_ack_interrupt,
-+	.config_intr	= kszphy_config_intr,
 +	.config_init	= kszphy_config_init,
 +	.config_aneg	= genphy_config_aneg,
 +	.read_status	= genphy_read_status,
@@ -117731,13 +117781,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +			cnt = mib->counter[offset] + mib->counter[offset + 1];
 +			last_cnt = cnt;
 +			cnt -= mib->rate[j].last_cnt;
-+			if (cnt > 1000000 && diff >= 100) {
-+				u32 rem;
++			if (cnt > 1000000 && diff >= HZ) {
 +				u64 rate = cnt;
 +
 +				rate *= 8;
-+				diff *= 10 * 100;
-+				rate = div_u64_rem(rate, diff, &rem);
++				diff *= 1000 * 100 / HZ;
++				rate = div_u64_u32(rate, diff);
 +				mib->rate[j].last = jiffies;
 +				mib->rate[j].last_cnt = last_cnt;
 +				if (mib->rate[j].peak < (u32) rate)
@@ -118207,13 +118256,13 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +		ptp->ops->exit(ptp);
 +	}
 +#endif
-+#ifndef NO_PHYDEV
-+	ksz_mii_exit(ks);
-+#endif
 +	ksz_stop_timer(&ks->monitor_timer_info);
 +	ksz_stop_timer(&ks->mib_timer_info);
 +	flush_work(&ks->mib_read);
 +	cancel_delayed_work_sync(&ks->link_read);
++#ifndef NO_PHYDEV
++	ksz_mii_exit(ks);
++#endif
 +
 +#ifdef KSZSW_REGS_SIZE
 +	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);
@@ -118267,12 +118316,12 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw.h linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.h
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.h	2021-10-05 13:53:05.098265200 -0700
-@@ -0,0 +1,858 @@
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/micrel/ksz_sw.h	2023-03-15 17:20:25.700145548 -0700
+@@ -0,0 +1,859 @@
 +/**
 + * Microchip switch common header
 + *
-+ * Copyright (c) 2015-2021 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2010-2015 Micrel, Inc.
@@ -118947,6 +118996,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/micrel/ksz_sw
 +	u8 speed;
 +	u8 force_link;
 +	u8 state;
++	uint opened:1;
 +	uint ready:1;
 +	uint report:1;
 +	u16 link_ports;

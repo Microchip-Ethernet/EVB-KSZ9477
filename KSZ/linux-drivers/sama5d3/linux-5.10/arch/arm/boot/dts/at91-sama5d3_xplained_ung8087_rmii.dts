@@ -17,7 +17,7 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	memory {
+	memory@20000000 {
 		reg = <0x20000000 0x10000000>;
 	};
 
@@ -60,35 +60,51 @@
 				cs-gpios = <&pioD 13 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioD 16 GPIO_ACTIVE_LOW>;
 				status = "okay";
 				id = <0>;
-			};
 
-			can0: can@f000c000 {
-				status = "okay";
-			};
-
-			tcb0: timer@f0010000 {
-				timer0: timer@0 {
-					compatible = "atmel,tcb-timer";
+				ksz9563: ksz9563@0 {
+					compatible = "microchip,ksz9563";
 					reg = <0>;
-				};
 
-				timer1: timer@1 {
-					compatible = "atmel,tcb-timer";
-					reg = <1>;
-				};
-			};
-
-			i2c0: i2c@f0014000 {
-				pinctrl-0 = <&pinctrl_i2c0_pu>;
-				status = "okay";
-
-				i2c_ksz9477: ksz9477@5f {
-					compatible = "microchip,ksz9477";
-					reg = <0x5f>;
-
+					spi-max-frequency = <44000000>;
+					spi-cpha;
+					spi-cpol;
 					interrupt-parent = <&pioB>;
 					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
-					status = "okay";
+					status = "disabled";
+					ports {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						port@0 {
+							reg = <0>;
+							label = "lan1";
+						};
+						port@1 {
+							reg = <1>;
+							label = "lan2";
+						};
+						port@2 {
+							reg = <2>;
+							label = "cpu";
+							ethernet = <&macb0>;
+							phy-mode = "rgmii-id";
+							fixed-link {
+								speed = <1000>;
+								full-duplex;
+								pause;
+							};
+						};
+					};
+				};
+				ksz9896_rmii: ksz9896@0 {
+					compatible = "microchip,ksz9896";
+					reg = <0>;
+
+					spi-max-frequency = <33000000>;
+					spi-cpha;
+					spi-cpol;
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
+					status = "disabled";
 					ports {
 						#address-cells = <1>;
 						#size-cells = <0>;
@@ -115,20 +131,183 @@
 						port@5 {
 							reg = <5>;
 							label = "cpu";
-							ethernet = <&macb0>;
-							phy-mode = "rgmii-txid";
+							ethernet = <&macb1>;
+							phy-mode = "rmii";
 							fixed-link {
-								speed = <1000>;
+								speed = <100>;
 								full-duplex;
 								pause;
 							};
 						};
-						port@6 {
+					};
+				};
+				ksz8565_rmii: ksz8565@0 {
+					compatible = "microchip,ksz8565";
+					reg = <0>;
+
+					spi-max-frequency = <33000000>;
+					spi-cpha;
+					spi-cpol;
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
+					status = "disabled";
+					ports {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						port@0 {
+							reg = <0>;
+							label = "lan1";
+						};
+						port@1 {
+							reg = <1>;
+							label = "lan2";
+						};
+						port@2 {
+							reg = <2>;
+							label = "lan3";
+						};
+						port@3 {
+							reg = <3>;
+							label = "lan4";
+						};
+						port@4 {
 							reg = <6>;
-							label = "lan6";
+							label = "cpu";
+							ethernet = <&macb1>;
+							phy-mode = "rmii";
+							fixed-link {
+								speed = <100>;
+								full-duplex;
+								pause;
+							};
 						};
 					};
 				};
+				ksz8794_rmii: ksz8794@0 {
+					compatible = "microchip,ksz8794";
+					reg = <0>;
+
+					spi-max-frequency = <33000000>;
+					spi-cpha;
+					spi-cpol;
+					status = "okay";
+					ports {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						port@0 {
+							reg = <0>;
+							label = "lan1";
+						};
+						port@1 {
+							reg = <1>;
+							label = "lan2";
+						};
+						port@2 {
+							reg = <2>;
+							label = "lan3";
+						};
+						port@3 {
+							reg = <4>;
+							label = "cpu";
+							ethernet = <&macb1>;
+							phy-mode = "rmii";
+							fixed-link {
+								speed = <100>;
+								full-duplex;
+								pause;
+							};
+						};
+					};
+				};
+				ksz8864_rmii: ksz8864@0 {
+					compatible = "microchip,ksz8864";
+					reg = <0>;
+
+					spi-max-frequency = <12000000>;
+					spi-cpha;
+					spi-cpol;
+					status = "disabled";
+					ports {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						port@0 {
+							reg = <1>;
+							label = "lan1";
+						};
+						port@1 {
+							reg = <2>;
+							label = "lan2";
+						};
+						port@2 {
+							reg = <3>;
+							label = "lan3";
+						};
+						port@3 {
+							reg = <4>;
+							label = "cpu";
+							ethernet = <&macb1>;
+							phy-mode = "rmii";
+							fixed-link {
+								speed = <100>;
+								full-duplex;
+								pause;
+							};
+						};
+					};
+				};
+				ksz8863_rmii: ksz8863@0 {
+					compatible = "microchip,ksz8863";
+					reg = <0>;
+
+					spi-max-frequency = <12000000>;
+					spi-cpha;
+					spi-cpol;
+					status = "disabled";
+					ports {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						port@0 {
+							reg = <0>;
+							label = "lan1";
+						};
+						port@1 {
+							reg = <1>;
+							label = "lan2";
+						};
+						port@2 {
+							reg = <2>;
+							label = "cpu";
+							ethernet = <&macb1>;
+							phy-mode = "rmii";
+							fixed-link {
+								speed = <100>;
+								full-duplex;
+								pause;
+							};
+						};
+					};
+				};
+			};
+
+			can0: can@f000c000 {
+				status = "okay";
+			};
+
+			tcb0: timer@f0010000 {
+				timer0: timer@0 {
+					compatible = "atmel,tcb-timer";
+					reg = <0>;
+				};
+
+				timer1: timer@1 {
+					compatible = "atmel,tcb-timer";
+					reg = <1>;
+				};
+			};
+
+			i2c0: i2c@f0014000 {
+				pinctrl-0 = <&pinctrl_i2c0_pu>;
+				status = "okay";
 			};
 
 			i2c1: i2c@f0018000 {
@@ -178,10 +357,10 @@
 			};
 
 			macb0: ethernet@f0028000 {
-				phy-mode = "rgmii-txid";
+				phy-mode = "rgmii-id";
 				#address-cells = <1>;
 				#size-cells = <0>;
-				status = "okay";
+				status = "disabled";
 
 				fixed-link {
 					speed = <1000>;
@@ -224,17 +403,14 @@
 				status = "okay";
 				id = <1>;
 
-				ksz9477: ksz9477@0 {
-					compatible = "microchip,ksz9477";
-					reg = <0>;
+				ksz8863: ksz8863@3 {
+					compatible = "microchip,ksz8863";
+					reg = <3>;
 
-					/* Bus clock is 132 MHz. */
-					spi-max-frequency = <44000000>;
+					spi-max-frequency = <12000000>;
 					spi-cpha;
 					spi-cpol;
-					interrupt-parent = <&pioB>;
-					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
-					status = "okay";
+					status = "disabled";
 					ports {
 						#address-cells = <1>;
 						#size-cells = <0>;
@@ -248,30 +424,14 @@
 						};
 						port@2 {
 							reg = <2>;
-							label = "lan3";
-						};
-						port@3 {
-							reg = <3>;
-							label = "lan4";
-						};
-						port@4 {
-							reg = <4>;
-							label = "lan5";
-						};
-						port@5 {
-							reg = <5>;
 							label = "cpu";
-							ethernet = <&macb0>;
-							phy-mode = "rgmii-txid";
+							ethernet = <&macb1>;
+							phy-mode = "rmii";
 							fixed-link {
-								speed = <1000>;
+								speed = <100>;
 								full-duplex;
 								pause;
 							};
-						};
-						port@6 {
-							reg = <6>;
-							label = "lan6";
 						};
 					};
 				};
@@ -297,13 +457,45 @@
 				dmas = <0>, <0>;	/* Do not use DMA for i2c2 */
 				pinctrl-0 = <&pinctrl_i2c2_pu>;
 				status = "okay";
+
+				i2c_ksz9563: ksz9563@5f {
+					compatible = "microchip,ksz9563";
+					reg = <0x5f>;
+
+					interrupt-parent = <&pioB>;
+					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
+					status = "okay";
+					ports {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						port@0 {
+							reg = <0>;
+							label = "lan1";
+						};
+						port@1 {
+							reg = <1>;
+							label = "lan2";
+						};
+						port@2 {
+							reg = <2>;
+							label = "cpu";
+							ethernet = <&macb0>;
+							phy-mode = "rgmii-id";
+							fixed-link {
+								speed = <1000>;
+								full-duplex;
+								pause;
+							};
+						};
+					};
+				};
 			};
 
 			macb1: ethernet@f802c000 {
 				phy-mode = "rmii";
 				#address-cells = <1>;
 				#size-cells = <0>;
-				status = "disabled";
+				status = "okay";
 
 				fixed-link {
 					speed = <100>;
@@ -349,6 +541,31 @@
 						atmel,pins =
 							<AT91_PIOE 9 AT91_PERIPH_GPIO AT91_PINCTRL_DEGLITCH>;	/* PE9, conflicts with A9 */
 					};
+					pinctrl_usb_default: usb_default {
+						atmel,pins =
+							<AT91_PIOE 3 AT91_PERIPH_GPIO AT91_PINCTRL_NONE
+							 AT91_PIOE 4 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					};
+
+					pinctrl_gpio_leds: gpio_leds_default {
+						atmel,pins =
+							<AT91_PIOE 23 AT91_PERIPH_GPIO AT91_PINCTRL_NONE
+							 AT91_PIOE 24 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					};
+
+					pinctrl_spi0_cs: spi0_cs_default {
+						atmel,pins =
+							<AT91_PIOD 13 AT91_PERIPH_GPIO AT91_PINCTRL_NONE
+							 AT91_PIOD 16 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					};
+
+					pinctrl_spi1_cs: spi1_cs_default {
+						atmel,pins = <AT91_PIOC 25 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					};
+
+					pinctrl_vcc_mmc0_reg_gpio: vcc_mmc0_reg_gpio_default {
+						atmel,pins = <AT91_PIOE 2 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					};
 
 					pinctrl_ksz_irq: ksz_irq {
 						atmel,pins =
@@ -371,6 +588,8 @@
 					   &pioE 3 GPIO_ACTIVE_LOW
 					   &pioE 4 GPIO_ACTIVE_LOW
 					  >;
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_usb_default>;
 			status = "okay";
 		};
 
@@ -443,6 +662,8 @@
 
 	vcc_mmc0_reg: fixedregulator_mmc0 {
 		compatible = "regulator-fixed";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_vcc_mmc0_reg_gpio>;
 		gpio = <&pioE 2 GPIO_ACTIVE_LOW>;
 		regulator-name = "mmc0-card-supply";
 		regulator-min-microvolt = <3300000>;
@@ -466,6 +687,9 @@
 
 	leds {
 		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_gpio_leds>;
+		status = "okay";
 
 		d2 {
 			label = "d2";

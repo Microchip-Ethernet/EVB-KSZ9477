@@ -57,10 +57,9 @@
 			};
 
 			spi0: spi@f0004000 {
-				pinctrl-names = "default";
-				pinctrl-0 = <&pinctrl_spi0_cs>;
-				cs-gpios = <&pioD 13 0>, <0>, <0>, <&pioD 16 0>;
+				cs-gpios = <&pioD 13 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioD 16 GPIO_ACTIVE_LOW>;
 				status = "okay";
+				id = <0>;
 			};
 
 			can0: can@f000c000 {
@@ -221,11 +220,9 @@
 			};
 
 			spi1: spi@f8008000 {
-				pinctrl-names = "default";
-				pinctrl-0 = <&pinctrl_spi1_cs>;
-				cs-gpios = <&pioC 25 0>, <0>, <0>, <&pioC 28 0>;
+				cs-gpios = <&pioC 25 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioC 28 GPIO_ACTIVE_LOW>;
 				status = "okay";
-				id = <0>;
+				id = <1>;
 
 				ksz9477: ksz9477@0 {
 					compatible = "microchip,ksz9477";

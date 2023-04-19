@@ -10505,6 +10505,13 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 				SW_R(sw, num));
 		else if (2 == count)
 			SW_W(sw, num, val);
+		if (2 == count) {
+			u32 addr = num;
+			u8 buf[4];
+
+			buf[0] = (u8)val;
+			sw_chk_regs(sw, addr, buf, 1);
+		}
 		break;
 	case PROC_SET_SW_VID:
 		sw->vid = num;

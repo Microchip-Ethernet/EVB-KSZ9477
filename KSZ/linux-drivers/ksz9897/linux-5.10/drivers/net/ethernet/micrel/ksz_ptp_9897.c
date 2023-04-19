@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2022 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -5890,17 +5890,34 @@ skip:
 				reg &= 0xffff;
 				width = 2;
 			}
+			if (width > 1) {
+				int align = reg & (width - 1);
+
+				if (align) {
+					if (align & 1) {
+						width = 1;
+						val &= 0xff;
+					} else {
+						width = 2;
+						val &= 0xffff;
+					}
+				}
+			}
 			ptp->ops->acquire(ptp);
 			switch (width) {
 			case 4:
 				sw->reg->w32(sw, reg, val);
+				val = htonl(val);
 				break;
 			case 1:
 				sw->reg->w8(sw, reg, val);
 				break;
 			default:
 				sw->reg->w16(sw, reg, val);
+				val = htons(val);
+				break;
 			}
+			sw->ops->chk_regs(sw, reg, (u8 *)&val, width);
 			ptp->ops->release(ptp);
 			break;
 		case DEV_PTP_PEER_DELAY:

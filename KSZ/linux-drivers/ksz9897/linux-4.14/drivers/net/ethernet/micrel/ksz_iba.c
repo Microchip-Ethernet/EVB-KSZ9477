@@ -1,7 +1,7 @@
 /**
  * Microchip IBA code
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -1510,8 +1510,32 @@ static int iba_get(struct ksz_sw *sw, u32 reg, size_t count, void *buf)
 
 static int iba_set(struct ksz_sw *sw, u32 reg, size_t count, void *buf)
 {
-	return iba_burst(&sw->info->iba, reg, count, buf, 1,
+	int rc;
+
+	rc = iba_burst(&sw->info->iba, reg, count, buf, 1,
 		iba_set_pre, iba_set_post);
+	if (!rc) {
+		u32 *ptr = buf;
+		u32 val;
+
+		switch (count) {
+		case 4:
+			val = htonl(*ptr);
+			break;
+		case 2:
+			val = htons(*ptr);
+			break;
+		case 1:
+			val = *ptr;
+			break;
+		default:
+			ptr = NULL;
+			break;
+		}
+		if (ptr)
+			sw->ops->chk_regs(sw, reg, (u8 *)&val, count);
+	}
+	return rc;
 }  /* iba_set */
 
 /**

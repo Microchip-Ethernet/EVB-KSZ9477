@@ -1,7 +1,7 @@
 /**
  * Microchip HSR driver header
  *
- * Copyright (c) 2016-2019 Microchip Technology Inc.
+ * Copyright (c) 2016-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -93,7 +93,9 @@ struct ksz_hsr_info {
 	u16 p2_down:1;
 	u16 p1_lost:1;
 	u16 p2_lost:1;
+	u16 redbox_fwd:1;
 	u16 redbox_up:1;
+	u16 hsr_up:1;
 
 	uint notifications;
 

@@ -6545,6 +6545,7 @@ dbg_msg(" cached: %02x"NL, sw->cached.xmii[sw->HOST_PORT - sw->phy_port_cnt]);
  */
 static void port_set_stp_state(struct ksz_sw *sw, uint port, int state)
 {
+	u8 old_data;
 	SW_D data;
 	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
 	uint m = BIT(port);
@@ -6554,6 +6555,7 @@ static void port_set_stp_state(struct ksz_sw *sw, uint port, int state)
 dbg_msg("%s %d %d"NL, __func__, port, state);
 #endif
 	port_r(sw, port, P_STP_CTRL, &data);
+	old_data = data;
 	switch (state) {
 	case STP_STATE_DISABLED:
 		data &= ~(PORT_TX_ENABLE | PORT_RX_ENABLE);
@@ -6626,6 +6628,26 @@ dbg_msg("%s %d %d"NL, __func__, port, state);
 		sw->tx_ports[cfg->mstp] |= m;
 	else
 		sw->tx_ports[cfg->mstp] &= ~m;
+	if ((sw->overrides & DELAY_UPDATE_LINK) &&
+	    !(old_data & PORT_TX_ENABLE) &&
+	    (data & PORT_TX_ENABLE)) {
+		struct ksz_port *netport;
+		int i;
+
+		for (i = sw->dev_offset; i < sw->dev_offset + sw->dev_count;
+		     i++) {
+			netport = sw->netport[i];
+			if (netport && netport->first_port == port + 1) {
+				schedule_work(&netport->link_update);
+				break;
+			}
+		}
+		if (!sw->dev_offset) {
+			netport = sw->netport[0];
+			if (netport)
+				schedule_work(&netport->link_update);
+		}
+	}
 
 	/* Port membership may share register with STP state. */
 	if (member >= 0)
@@ -15749,6 +15771,8 @@ static void link_update_work(struct work_struct *work)
 	struct net_device *dev;
 	struct phy_device *phydev;
 	struct ksz_port_info *info;
+	bool port_not_ready = false;
+	struct ksz_port_cfg *cfg;
 	uint i;
 	uint p;
 	int link;
@@ -15790,6 +15814,14 @@ static void link_update_work(struct work_struct *work)
 	dev = port->netdev;
 	if (dev) {
 		link = netif_carrier_ok(dev);
+		if (sw->overrides & DELAY_UPDATE_LINK) {
+			p = get_phy_port(sw, info->phy_id);
+			cfg = get_port_cfg(sw, p);
+			port_not_ready =
+				cfg->stp_state[0] != STP_STATE_FORWARDING;
+		}
+		if (phydev->link && port_not_ready)
+			link = phydev->link;
 		if (link != phydev->link) {
 			if (phydev->link)
 				netif_carrier_on(dev);
@@ -15888,6 +15920,14 @@ static void link_update_work(struct work_struct *work)
 		if (phydev->link)
 			phy_link = (port->linked->state == media_connected);
 		link = netif_carrier_ok(dev);
+		if (sw->overrides & DELAY_UPDATE_LINK) {
+			p = get_phy_port(sw, port->linked->phy_id);
+			cfg = get_port_cfg(sw, p);
+			port_not_ready =
+				cfg->stp_state[0] != STP_STATE_FORWARDING;
+		}
+		if (phy_link && port_not_ready)
+			link = phy_link;
 		if (link != phy_link) {
 			if (netif_msg_link(sw))
 				pr_info("%s link %s"NL,
@@ -15904,6 +15944,8 @@ static void link_update_work(struct work_struct *work)
 
 		/* Carrier may be turned on in the adjust_link function. */
 		link = netif_carrier_ok(dev);
+		if (phy_link && port_not_ready)
+			link = phy_link;
 		if (link != phy_link) {
 			if (phy_link)
 				netif_carrier_on(dev);
@@ -16362,6 +16404,11 @@ setup_next:
 #ifdef CONFIG_KSZ_STP
 	if (stp > 0) {
 		sw->features |= STP_SUPPORT;
+
+		/* Delay link notification to avoid having receive drops in
+		 * the host port because the outgoing port is not sending.
+		 */
+		sw->overrides |= DELAY_UPDATE_LINK;
 	}
 #endif
 #ifdef CONFIG_1588_PTP
@@ -17743,6 +17790,15 @@ static void link_read_work(struct work_struct *work)
 		}
 		if (media_connected == port->linked->state &&
 		    port->linked->phy) {
+			if (sw->overrides & DELAY_UPDATE_LINK) {
+				struct ksz_port_cfg *cfg;
+				uint p;
+
+				p = get_phy_port(sw, port->linked->phy_id);
+				cfg = get_port_cfg(sw, p);
+				if (cfg->stp_state[0] != STP_STATE_FORWARDING)
+					continue;
+			}
 			sw_port->linked = port->linked;
 			break;
 		}

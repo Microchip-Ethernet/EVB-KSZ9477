@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 I2C driver
  *
- * Copyright (c) 2015-2022 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -104,8 +104,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Jul 25, 2022"
-#define SW_DRV_VERSION			"1.2.6"
+#define SW_DRV_RELDATE			"Apr 23, 2023"
+#define SW_DRV_VERSION			"1.2.7"
 
 /* -------------------------------------------------------------------------- */
 

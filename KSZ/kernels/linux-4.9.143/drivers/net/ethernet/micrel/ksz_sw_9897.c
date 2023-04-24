@@ -15954,6 +15954,7 @@ static void link_update_work(struct work_struct *work)
 		}
 	}
 
+#ifdef CONFIG_KSZ_HSR
 	/* Main device is used for communication so simulate link on when
 	 * Redbox is connected.
 	 */
@@ -15968,6 +15969,7 @@ static void link_update_work(struct work_struct *work)
 				netif_carrier_off(hsr->dev);
 		}
 	}
+#endif
 }  /* link_update_work */
 
 
@@ -17718,8 +17720,9 @@ static void link_read_work(struct work_struct *work)
 	struct sw_priv *hw_priv =
 		container_of(dwork, struct sw_priv, link_read);
 	struct ksz_sw *sw = &hw_priv->sw;
-	struct ksz_port *port = NULL;
+	struct ksz_port_info *linked = NULL;
 	struct ksz_port *sw_port = NULL;
+	struct ksz_port *port = NULL;
 	int i;
 	int changes = 0;
 	int s = 1;
@@ -17785,6 +17788,10 @@ static void link_read_work(struct work_struct *work)
 		}
 		if (media_connected == port->linked->state &&
 		    port->linked->phy) {
+
+			/* Indicate a linked port is found .*/
+			if (!linked)
+				linked = port->linked;
 			if (sw->overrides & DELAY_UPDATE_LINK) {
 				struct ksz_port_cfg *cfg;
 				uint p;
@@ -17795,9 +17802,14 @@ static void link_read_work(struct work_struct *work)
 					continue;
 			}
 			sw_port->linked = port->linked;
+			linked = NULL;
 			break;
 		}
 	}
+
+	/* Linked port not set before because it is not ready. */
+	if (linked)
+		sw_port->linked = linked;
 }  /* link_read_work */
 
 /*

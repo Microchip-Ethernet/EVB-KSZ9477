@@ -16404,11 +16404,6 @@ setup_next:
 #ifdef CONFIG_KSZ_STP
 	if (stp > 0) {
 		sw->features |= STP_SUPPORT;
-
-		/* Delay link notification to avoid having receive drops in
-		 * the host port because the outgoing port is not sending.
-		 */
-		sw->overrides |= DELAY_UPDATE_LINK;
 	}
 #endif
 #ifdef CONFIG_1588_PTP
@@ -18606,8 +18601,14 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	sw->stp |= stp;
 	sw->fast_aging |= fast_aging;
 #ifdef CONFIG_KSZ_STP
-	if (sw->stp)
+	if (sw->stp) {
 		sw->features |= STP_SUPPORT;
+
+		/* Delay link notification to avoid having receive drops in
+		 * the host port because the outgoing port is not sending.
+		 */
+		sw->overrides |= DELAY_UPDATE_LINK;
+	}
 #endif
 	if (sw->fast_aging)
 		sw->overrides |= FAST_AGING;

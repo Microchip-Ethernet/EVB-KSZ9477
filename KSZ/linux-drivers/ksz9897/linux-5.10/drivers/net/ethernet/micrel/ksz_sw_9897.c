@@ -16119,7 +16119,7 @@ dbg_msg(" %*pb\n", __ETHTOOL_LINK_MODE_MASK_NBITS, phydev->lp_advertising);
 			phy_link ? "on" : "off");
 	if (phydev->phy_link_change) {
 		phydev->phy_link_change(phydev, phy_link);
-	} else if (phy_link != link && do_update) {
+	} else if (phy_link != link) {
 		if (phy_link)
 			netif_carrier_on(dev);
 		else

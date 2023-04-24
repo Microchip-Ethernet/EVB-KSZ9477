@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8462 HLI Ethernet driver
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2021 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -61,6 +61,17 @@
 #define CONFIG_1588_PTP
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+/* MRP code not implemented yet. */
+#undef CONFIG_KSZ_MRP
+#undef CONFIG_KSZ_MMRP
+#undef CONFIG_KSZ_MVRP
+#undef CONFIG_KSZ_MSRP
+#endif
+/* Can be defined if KSZ9897 driver is included also. */
+#undef CONFIG_KSZ_DLR
+#undef CONFIG_KSZ_HSR
+
 #include "ksz_common.h"
 #include "ksz_req.h"
 #include "ksz_sw.h"
@@ -113,8 +124,8 @@
 
 #define DRV_NAME			"ksz8462_hli"
 #define DRV_VERSION			"1.1.0"
-#define SW_DRV_VERSION			"1.2.2"
-#define SW_DRV_RELDATE			"Jan 30, 2020"
+#define SW_DRV_VERSION			"1.2.3"
+#define SW_DRV_RELDATE			"Aug 24, 2021"
 
 #define MAX_RECV_FRAMES			180 /* 32 */
 #define MAX_BUF_SIZE			2048
@@ -271,8 +282,6 @@ struct ksz_hw {
 #include "ksz_req.c"
 
 /* -------------------------------------------------------------------------- */
-
-#include "ksz_sw.h"
 
 /**
  * struct dev_priv - Network device private data structure
@@ -704,7 +713,12 @@ static void get_private_data_(struct device *d, struct semaphore **proc_sem,
 #define get_private_data		get_private_data_
 
 #define USE_DIFF_PORT_PRIORITY
+
+/* Do not emulate PHY device in ksz_sw.c code. */
 #define NO_PHYDEV
+
+/* KSZ8463 and KSZ8863 use same ksz_sw.c code. */
+#undef CONFIG_HAVE_KSZ8863
 #include "ksz_sw.c"
 
 static struct ksz_sw_reg_ops sw_reg_ops = {

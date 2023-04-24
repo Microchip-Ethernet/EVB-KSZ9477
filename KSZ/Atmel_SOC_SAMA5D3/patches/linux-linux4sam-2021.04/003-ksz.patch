@@ -1,7 +1,7 @@
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/hsr_main.h linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/hsr_main.h
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/hsr_main.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/hsr_main.h	2021-08-28 13:20:46.870811554 -0700
-@@ -0,0 +1,223 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/hsr_main.h	2023-03-08 14:40:10.621433764 -0800
+@@ -0,0 +1,225 @@
 +/* Copyright 2011-2014 Autronica Fire and Security AS
 + *
 + * This program is free software; you can redistribute it and/or modify it
@@ -197,7 +197,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/hsr_ma
 +#ifdef CONFIG_HSRv1
 +	u16 sup_sequence_nr;
 +	u8 net_id;
++#ifdef CONFIG_KSZ_SWITCH
 +	u8 redbox_id;
++#endif
 +	u16 vid;
 +#endif
 +	spinlock_t seqnr_lock;			/* locking for sequence_nr */
@@ -696,7 +698,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ks
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ksz9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/i2c-ksz9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ksz9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/i2c-ksz9897.c	2023-03-17 11:39:53.312833900 -0700
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/i2c-ksz9897.c	2023-04-23 22:11:48.000000000 -0700
 @@ -0,0 +1,655 @@
 +/**
 + * Microchip KSZ9897 I2C driver
@@ -807,8 +809,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ks
 +#endif
 +
 +
-+#define SW_DRV_RELDATE			"Jul 25, 2022"
-+#define SW_DRV_VERSION			"1.2.6"
++#define SW_DRV_RELDATE			"Apr 23, 2023"
++#define SW_DRV_VERSION			"1.2.7"
 +
 +/* -------------------------------------------------------------------------- */
 +
@@ -1355,12 +1357,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/i2c-ks
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/iba-ksz9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/iba-ksz9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/iba-ksz9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/iba-ksz9897.c	2022-07-25 20:12:41.354482469 -0700
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/iba-ksz9897.c	2023-04-23 22:12:11.000000000 -0700
 @@ -0,0 +1,109 @@
 +/**
 + * Microchip KSZ9897 IBA driver
 + *
-+ * Copyright (c) 2015-2022 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + * Copyright (c) 2013-2015 Micrel, Inc.
 + *
 + * Copyright 2009 Simtec Electronics
@@ -1447,8 +1449,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/iba-ks
 +
 +#define KS9897MLI_DEV0			"ksz9897"
 +
-+#define SW_DRV_RELDATE			"Jul 25, 2022"
-+#define SW_DRV_VERSION			"1.2.6"
++#define SW_DRV_RELDATE			"Apr 23, 2023"
++#define SW_DRV_VERSION			"1.2.7"
 +
 +/* -------------------------------------------------------------------------- */
 +
@@ -18914,8 +18916,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hsr.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_hsr.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hsr.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_hsr.c	2023-03-03 12:07:05.866241233 -0800
-@@ -0,0 +1,2348 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_hsr.c	2023-04-23 22:15:22.000000000 -0700
+@@ -0,0 +1,2456 @@
 +/**
 + * Microchip HSR code
 + *
@@ -18993,23 +18995,30 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +}  /* proc_hsr_cfg */
 +
 +#if 0
++#ifndef CONFIG_KSZ_SWITCH
 +static bool is_admin_up(struct net_device *dev)
 +{
 +	return dev && (dev->flags & IFF_UP);
 +}
 +#endif
++#endif
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +struct hsr_port *hsr_port_get_hsr(struct hsr_priv *hsr, enum hsr_port_type pt)
 +{
 +	struct ksz_hsr_info *info = container_of(hsr,
 +		struct ksz_hsr_info, hsr);
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	if (pt < HSR_PT_PORTS)
 +		return &info->hsr_ports[pt];
++#endif
 +	return NULL;
 +}
 +
++/* hsr_framereg */
 +struct hsr_node {
 +	struct list_head	mac_list;
 +	unsigned char		MacAddressA[ETH_ALEN];
@@ -19021,7 +19030,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	u16			seq_out[HSR_PT_PORTS];
 +	unsigned long		time_out[HSR_PT_PORTS];
 +	struct rcu_head		rcu_head;
++#ifdef CONFIG_KSZ_SWITCH
 +	int			slave;
++#endif
 +};
 +
 +
@@ -19046,7 +19057,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +#define seq_nr_before_or_eq(a, b)	(!seq_nr_after((a), (b)))
 +
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +bool hsr_addr_is_self(struct hsr_priv *hsr, unsigned char *addr)
 +{
 +	struct hsr_node *node;
@@ -19085,7 +19098,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +/* Helper for device init; the self_node_db is used in hsr_rcv() to recognize
 + * frames from self that's been looped over the HSR ring.
 + */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +int hsr_create_self_node(struct list_head *self_node_db,
 +			 unsigned char addr_a[ETH_ALEN],
 +			 unsigned char addr_b[ETH_ALEN])
@@ -19120,7 +19135,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 + * seq_out is used to initialize filtering of outgoing duplicate frames
 + * originating from the newly added node.
 + */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +struct hsr_node *hsr_add_node_(struct list_head *node_db, unsigned char addr[],
 +			       u16 seq_out)
 +{
@@ -19128,14 +19145,14 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	unsigned long now;
 +	int i;
 +
-+#if 1
-+dbg_msg("%s %02x:%02x:%02x:%02x:%02x:%02x %04x\n", __func__,
-+addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], seq_out);
-+#endif
 +	node = kzalloc(sizeof(*node), GFP_ATOMIC);
 +	if (!node)
 +		return NULL;
 +
++#if 1
++dbg_msg("%s %x %02x:%02x:%02x:%02x:%02x:%02x %04x\n", __func__, (int)node,
++addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], seq_out);
++#endif
 +	ether_addr_copy(node->MacAddressA, addr);
 +
 +	/* We are only interested in time diffs here, so use current jiffies
@@ -19154,6 +19171,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	return node;
 +}
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
 +struct hsr_node *hsr_add_node(struct list_head *node_db, unsigned char addr[],
 +			      u16 seq_out)
@@ -19179,7 +19197,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +	return node;
 +}
++#endif
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
 +struct hsr_node *hsr_add_slave(struct list_head *node_db,
 +	unsigned char addr[], u16 seq_out)
@@ -19194,10 +19214,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +	return node;
 +}
++#endif
 +
 +/* Get the hsr_node from which 'skb' was sent.
 + */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +struct hsr_node *hsr_get_node(struct list_head *node_db, struct sk_buff *skb,
 +			      bool is_sup)
 +{
@@ -19260,12 +19283,14 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 + * nodes that has previously had their MacAddressB registered as a separate
 + * node.
 + */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +void hsr_handle_sup_frame(struct sk_buff *skb, struct hsr_node *node_curr,
 +			  struct hsr_port *port_rcv)
 +{
 +	struct hsr_node *node_real;
-+#if 1
++#ifdef CONFIG_KSZ_SWITCH
 +	struct hsr_node *node_redbox = NULL;
 +#endif
 +	struct hsr_sup_payload *hsr_sp;
@@ -19281,6 +19306,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +		/* Not sent from MacAddressB of a PICS_SUBS capable node */
 +		goto done;
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	/* Check frame sent by RedBox. */
 +	hsr_stype = (struct hsr_sup_type *)(hsr_sp + 1);
 +	if (HSR_TLV_REDBOX == hsr_stype->HSR_TLV_Type) {
@@ -19295,6 +19321,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +			goto done;
 +#endif
 +	}
++#endif
 +
 +	/* Merge node_curr (registered on MacAddressB) into node_real */
 +	node_db = &port_rcv->hsr->node_db;
@@ -19369,7 +19396,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 + * address with that node's "official" address (MacAddressA) so that upper
 + * layers recognize where it came from.
 + */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +void hsr_addr_subst_source(struct hsr_node *node, struct sk_buff *skb)
 +{
 +#ifdef DEBUG
@@ -19392,7 +19421,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 + * This is needed to keep the packets flowing through switches that learn on
 + * which "side" the different interfaces are.
 + */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +void hsr_addr_subst_dest(struct hsr_node *node_src, struct sk_buff *skb,
 +			 struct hsr_port *port)
 +{
@@ -19426,7 +19457,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 +
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +void hsr_register_frame_in(struct hsr_node *node, struct hsr_port *port,
 +			   u16 sequence_nr)
 +{
@@ -19449,12 +19482,16 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	node->time_in_stale[port->type] = false;
 +}
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +void hsr_update_frame_out(struct hsr_port *port, struct hsr_node *node,
 +	u16 sequence_nr)
 +{
 +	node->seq_out[port->type] = sequence_nr;
 +}
++
++static int dbg_frame_out;
 +
 +/* 'skb' is a HSR Ethernet frame (with a HSR tag inserted), with a valid
 + * ethhdr->h_source address and skb->mac_header set.
@@ -19464,7 +19501,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 + *	 0 otherwise, or
 + *	 negative error code on error
 + */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +int hsr_register_frame_out(struct hsr_port *port, struct hsr_node *node,
 +			   u16 sequence_nr)
 +{
@@ -19476,7 +19515,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +if (port->type != HSR_PT_MASTER)
 +#endif
 +if (dbg_hsr < 10)
-+dbg_msg("%s %d %04x %04x %lu\n", __func__, port->type, sequence_nr,
++dbg_msg("%s %x %d; %d %04x %04x %lu\n", __func__, (int)node, dbg_frame_out,
++port->type, sequence_nr,
 +node->seq_out[port->type], diff);
 +#endif
 +		if (diff <= msecs_to_jiffies(HSR_ENTRY_FORGET_TIME))
@@ -19512,6 +19552,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 +
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static void hsr_notify_link_lost(struct ksz_hsr_info *info)
 +{
 +	static u8 lost_buf[sizeof(struct ksz_resp_msg) +
@@ -19628,12 +19669,16 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	info->check = 0;
 +}  /* hsr_chk_ring */
 +#endif
++#endif
 +
 +
++/* hsr_framereg */
 +/* Remove stale sequence_nr records. Called by timer every
 + * HSR_LIFE_CHECK_INTERVAL (two seconds or so).
 + */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +void hsr_prune_nodes(struct timer_list *t)
 +{
 +	struct hsr_priv *hsr = from_timer(hsr, t, prune_timer);
@@ -19678,6 +19723,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +		}
 +#endif
 +
++#ifdef CONFIG_KSZ_SWITCH
 +		if (1 == node->slave && time_is_before_jiffies(timestamp +
 +			msecs_to_jiffies(HSR_NODE_FORGET_TIME / 4))) {
 +#if 1
@@ -19692,10 +19738,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 +			node->slave = 2;
 +		}
++#endif
 +
 +		/* Prune old entries */
 +		if (time_is_before_jiffies(timestamp +
 +					msecs_to_jiffies(HSR_NODE_FORGET_TIME))) {
++#ifdef CONFIG_KSZ_SWITCH
 +			struct ksz_hsr_info *info = container_of(hsr,
 +				struct ksz_hsr_info, hsr);
 +			if (!node->slave) {
@@ -19718,6 +19766,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +				info->seq_num = 0;
 +				info->ring = 0;
 +			}
++#endif
 +#if 0
 +			hsr_nl_nodedown(hsr, node->MacAddressA);
 +#endif
@@ -19728,10 +19777,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	}
 +	rcu_read_unlock();
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	hsr->prune_timer.expires = jiffies + msecs_to_jiffies(PRUNE_PERIOD);
 +	add_timer(&hsr->prune_timer);
++#endif
 +}
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
 +void hsr_rmv_slaves(struct ksz_hsr_info *info)
 +{
@@ -19750,10 +19802,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	}
 +	rcu_read_unlock();
 +}
++#endif
 +
 +
 +#if 0
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +void *hsr_get_next_node(struct hsr_priv *hsr, void *_pos,
 +			unsigned char addr[ETH_ALEN])
 +{
@@ -19777,7 +19832,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +}
 +
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +int hsr_get_node_data(struct hsr_priv *hsr,
 +		      const unsigned char *addr,
 +		      unsigned char addr_b[ETH_ALEN],
@@ -19837,6 +19894,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	return 0;
 +}
 +#endif
++/* hsr_framereg */
 +
 +static int hsr_dev_xmit(struct ksz_hsr_info *info, struct net_device *dev,
 +	struct sk_buff *skb)
@@ -19881,6 +19939,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	return hsr_dev_xmit(info, info->dev, skb);
 +}  /* hsr_xmit */
 +
++/* hsr_device */
 +static void prep_hsr_supervision_frame(struct ksz_hsr_info *info)
 +{
 +	int len;
@@ -20042,6 +20101,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +	master = hsr_port_get_hsr(hsr, HSR_PT_MASTER);
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	info->tx_frame = info->master_sup_frame;
 +	info->len = info->master_len;
 +	info->hsr_stag = info->master_hsr_stag;
@@ -20056,6 +20116,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +		struct hsr_sup_tag *hsr_stag = info->slave_hsr_stag;
 +		struct vlan_ethhdr *vlan = (struct vlan_ethhdr *)
 +			info->slave_sup_frame;
++		struct hsr_port *port;
 +
 +		if (1 != node->slave)
 +			continue;
@@ -20066,18 +20127,25 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +		hsr_sp = (struct hsr_sup_payload *)(hsr_stype + 1);
 +		ether_addr_copy(hsr_sp->MacAddressA, node->MacAddressA);
 +#ifndef REDBOX_NOT_SEND_SUPERVISION
++		/* Update so that sequence number may not be too far apart. */
++		port = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_A);
++		hsr_update_frame_out(port, node, hsr->sequence_nr - 1);
 +		send_hsr_supervision_frame(master);
 +#endif
 +	}
++#endif
 +
 +	hsr->announce_timer.expires = jiffies +
 +		msecs_to_jiffies(HSR_LIFE_CHECK_INTERVAL);
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	if (netif_running(master->dev) && netif_carrier_ok(master->dev))
++#endif
 +		add_timer(&hsr->announce_timer);
 +}
 +
 +
++/* hsr_forward */
 +/* The uses I can see for these HSR supervision frames are:
 + * 1) Use the frames that are sent after node initialization ("HSR_TLV.Type =
 + *    22") to reset any sequence_nr counters belonging to that node. Useful if
@@ -20126,6 +20194,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	int copylen;
 +	unsigned char *dst, *src;
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	copylen = 2 * ETH_ALEN;
 +	if (frame->is_vlan)
 +		copylen += VLAN_HLEN;
@@ -20133,11 +20202,14 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	src = skb->data;
 +	dst = skb_pull(skb, HSR_HLEN);
 +	memmove(dst, src, copylen);
++#endif
 +	skb_reset_mac_header(skb);
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	/* Move HSR frame to non-HSR frame. */
 +	frame->skb_std = skb;
 +	frame->skb_hsr = NULL;
++#endif
 +
 +	return skb;
 +}
@@ -20156,11 +20228,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	int lane_id;
 +	int lsdu_size;
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	if (hsr_addr_is_self(port->hsr, &skb->data[6]))
 +		lane_id = port->hsr->net_id;
 +	else
 +		lane_id = port->hsr->redbox_id;
 +	lane_id <<= 1;
++#endif
 +
 +	lsdu_size = skb->len - 14;
 +
@@ -20182,7 +20256,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	int movelen;
 +	unsigned char *dst, *src;
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	movelen = 2 * ETH_ALEN;
++#endif
 +	if (frame->is_vlan)
 +		movelen += VLAN_HLEN;
 +
@@ -20193,9 +20269,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +	hsr_fill_tag(skb, frame, port);
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	/* Move non-HSR frame to HSR frame. */
 +	frame->skb_hsr = skb;
 +	frame->skb_std = NULL;
++#endif
 +
 +	return skb;
 +}
@@ -20248,6 +20326,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +			goto tx_drop;
 +}
 +#endif
++		dbg_frame_out = frame->is_supervision;
 +
 +		/* Don't send frame over port where it has been sent before */
 +		if (hsr_register_frame_out(port, frame->node_src,
@@ -20309,6 +20388,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +dbg_msg("not local: %d\n", port->type);
 +			goto rx_drop;
 +}
++		dbg_frame_out = 4;
 +
 +		/* Don't send frame over port where it has been sent before */
 +		if (hsr_register_frame_out(port, frame->node_src,
@@ -20355,7 +20435,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +		skb = frame_get_stripped_skb(frame, port);
 +		hsr_addr_subst_source(frame->node_src, skb);
 +
-+		if (!info->redbox_dev)
++		/* No Redbox or Redbox is not up or no internal forwarding. */
++		if (!info->redbox_dev || !info->redbox_up || !info->redbox_fwd)
 +			return;
 +		do {
 +			struct ksz_sw *sw = info->sw_dev;
@@ -20367,7 +20448,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +			else
 +				forward = 0;
 +		} while (0);
-+#if 1
 +#if 0
 +		if (forward && (path_id >> 1) == info->hsr.redbox_id)
 +			forward = 0;
@@ -20394,7 +20474,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +			if (new_skb)
 +				hsr_dev_xmit(info, info->redbox, new_skb);
 +		}
-+#endif
 +		return;
 +
 +	}
@@ -20460,14 +20539,18 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +	frame->port_rcv = port;
 +#if 1
++#ifdef CONFIG_KSZ_SWITCH
 +	if (port->type != HSR_PT_MASTER)
++#endif
 +		check_local_dest(port->hsr, skb, frame);
 +#endif
 +
 +	return 0;
 +}
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +int hsr_forward_skb(struct sk_buff *skb, struct hsr_port *port)
 +{
 +	struct hsr_frame_info _frame;
@@ -20537,7 +20620,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	kfree_skb(skb);
 +	return 0;
 +}
++/* hsr_forward */
 +
++#ifdef CONFIG_KSZ_SWITCH
 +static void *check_hsr_frame(u8 *data, struct hsr_frame_info *frame)
 +{
 +	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *) data;
@@ -20564,15 +20649,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 +{
-+#if 1
-+	struct sk_buff *new_skb;
-+#endif
-+	struct hsr_node *node;
-+	struct list_head *node_db;
-+	int forward;
 +	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *) skb->data;
-+	int ret = 2;
 +	struct ksz_sw *sw = info->sw_dev;
++	struct list_head *node_db;
++	struct sk_buff *new_skb;
++	struct hsr_node *node;
++	int forward;
++	int ret = 2;
 +
 +	if (!info->redbox_dev)
 +		return ret;
@@ -20586,6 +20669,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	else if (sw->info->forward & FWD_MCAST)
 +		forward = 2;
 +	else
++		forward = 0;
++
++	/* HSR device is not up. */
++	if (!info->hsr_up)
 +		forward = 0;
 +
 +	node_db = &info->hsr.node_db;
@@ -20617,6 +20704,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +		send_hsr_supervision_frame(master);
 +#endif
 +	} else {
++		struct hsr_port *port;
 +
 +		/* Remove the fixed entries in MAC table. */
 +		if (!node->slave)
@@ -20624,10 +20712,18 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +		node->slave = 1;
 +		node->time_in[HSR_PT_SLAVE_A] = jiffies;
 +		node->time_in_stale[HSR_PT_SLAVE_A] = false;
++
++		/* Update so that sequence number may not be too far apart. */
++		port = hsr_port_get_hsr(&info->hsr, HSR_PT_SLAVE_A);
++		hsr_update_frame_out(port, node, info->hsr.sequence_nr - 1);
 +	}
++
++	/* Do not forward internally. Need software bridge. */
++	if (!info->redbox_fwd)
++		return ret;
 +	if (!forward)
 +		return ret;
-+#if 1
++
 +	if (1 == forward) {
 +		new_skb = skb;
 +		ret = 0;
@@ -20644,7 +20740,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 +	/* Send frame to HSR device. */
 +	hsr_dev_xmit(info, info->dev, new_skb);
-+#endif
 +	return ret;
 +}  /* hsr_chk */
 +
@@ -20708,11 +20803,14 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +		forward = 1;
 +
 +fwd_next:
++	/* Multicast frame so need extra to send to eth1. */
 +	if ((forward & 2) && forward != 2) {
 +		new_skb = skb_copy(skb, GFP_ATOMIC);
 +		if (new_skb)
 +			proc_hsr_tx(info, new_skb);
 +	}
++
++	/* Unicast frame to send to eth1. */
 +	if (forward == 2) {
 +		struct net_device **netdev = (struct net_device **)skb->cb;
 +
@@ -20743,8 +20841,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	}
 +	return 2;
 +}  /* hsr_rcv */
++#endif
 +
++/* hsr_slave */
++#ifdef CONFIG_KSZ_SWITCH
 +static
++#endif
 +void hsr_add_port(struct hsr_priv *hsr, struct net_device *dev,
 +	enum hsr_port_type type)
 +{
@@ -20857,6 +20959,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	dev_mc_add(dev, addr);
 +}  /* prep_hsr_mcast */
 +
++/* hsr_device */
 +static void hsr_check_announce(struct ksz_hsr_info *info)
 +{
 +	int state;
@@ -20891,14 +20994,18 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	timer_setup(&hsr->prune_timer, hsr_prune_nodes, 0);
 +
 +	ether_addr_copy(hsr->sup_multicast_addr, def_multicast_addr);
++#ifdef CONFIG_KSZ_SWITCH
 +	hsr->sup_multicast_addr[ETH_ALEN - 1] = 0;
++#endif
 +
 +	hsr_add_port(hsr, info->dev, HSR_PT_MASTER);
 +
 +	hsr_add_port(hsr, info->dev, HSR_PT_SLAVE_A);
 +	hsr_add_port(hsr, info->dev, HSR_PT_SLAVE_B);
 +
++#ifdef CONFIG_KSZ_SWITCH
 +	info->state = -1;
++#endif
 +}
 +
 +static int hsr_dev_finalize(struct ksz_hsr_info *info)
@@ -20920,9 +21027,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +#if 1
 +	msleep(HSR_NODE_REBOOT_INTERVAL);
 +#endif
++#ifdef CONFIG_KSZ_SWITCH
 +	/* Ready for announcement. */
 +	info->state = 0;
 +	hsr_check_announce(info);
++#endif
 +
 +	hsr->prune_timer.expires = jiffies + msecs_to_jiffies(PRUNE_PERIOD);
 +	add_timer(&hsr->prune_timer);
@@ -20969,10 +21078,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +}  /* setup_hsr */
 +
 +static void setup_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev,
-+			     int i)
++			     int i, bool fwd)
 +{
 +	info->redbox = dev;
 +	info->redbox_index = i;
++	info->redbox_fwd = fwd;
 +
 +	/* Main HSR device is setup. */
 +	if (info->dev)
@@ -21266,12 +21376,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hsr.h linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_hsr.h
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hsr.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_hsr.h	2021-08-28 13:20:47.154794798 -0700
-@@ -0,0 +1,105 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_hsr.h	2023-04-23 22:13:02.000000000 -0700
+@@ -0,0 +1,107 @@
 +/**
 + * Microchip HSR driver header
 + *
-+ * Copyright (c) 2016-2019 Microchip Technology Inc.
++ * Copyright (c) 2016-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * This program is free software; you can redistribute it and/or modify
@@ -21363,7 +21473,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +	u16 p2_down:1;
 +	u16 p1_lost:1;
 +	u16 p2_lost:1;
++	u16 redbox_fwd:1;
 +	u16 redbox_up:1;
++	u16 hsr_up:1;
 +
 +	uint notifications;
 +
@@ -21375,8 +21487,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_hs
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_iba.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_iba.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_iba.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_iba.c	2023-03-24 14:48:06.180009343 -0700
-@@ -0,0 +1,3129 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_iba.c	2023-04-19 12:06:24.000000000 -0700
+@@ -0,0 +1,3153 @@
 +/**
 + * Microchip IBA code
 + *
@@ -22892,8 +23004,32 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ib
 +
 +static int iba_set(struct ksz_sw *sw, u32 reg, size_t count, void *buf)
 +{
-+	return iba_burst(&sw->info->iba, reg, count, buf, 1,
++	int rc;
++
++	rc = iba_burst(&sw->info->iba, reg, count, buf, 1,
 +		iba_set_pre, iba_set_post);
++	if (!rc) {
++		u32 *ptr = buf;
++		u32 val;
++
++		switch (count) {
++		case 4:
++			val = htonl(*ptr);
++			break;
++		case 2:
++			val = htons(*ptr);
++			break;
++		case 1:
++			val = *ptr;
++			break;
++		default:
++			ptr = NULL;
++			break;
++		}
++		if (ptr)
++			sw->ops->chk_regs(sw, reg, (u8 *)&val, count);
++	}
++	return rc;
 +}  /* iba_set */
 +
 +/**
@@ -40925,12 +41061,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ms
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_ptp_9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_ptp_9897.c	2022-08-08 21:20:43.549849026 -0700
-@@ -0,0 +1,8012 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_ptp_9897.c	2023-04-19 12:05:47.000000000 -0700
+@@ -0,0 +1,8029 @@
 +/**
 + * Microchip PTP common code
 + *
-+ * Copyright (c) 2015-2022 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2009-2015 Micrel, Inc.
@@ -46819,17 +46955,34 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_pt
 +				reg &= 0xffff;
 +				width = 2;
 +			}
++			if (width > 1) {
++				int align = reg & (width - 1);
++
++				if (align) {
++					if (align & 1) {
++						width = 1;
++						val &= 0xff;
++					} else {
++						width = 2;
++						val &= 0xffff;
++					}
++				}
++			}
 +			ptp->ops->acquire(ptp);
 +			switch (width) {
 +			case 4:
 +				sw->reg->w32(sw, reg, val);
++				val = htonl(val);
 +				break;
 +			case 1:
 +				sw->reg->w8(sw, reg, val);
 +				break;
 +			default:
 +				sw->reg->w16(sw, reg, val);
++				val = htons(val);
++				break;
 +			}
++			sw->ops->chk_regs(sw, reg, (u8 *)&val, width);
 +			ptp->ops->release(ptp);
 +			break;
 +		case DEV_PTP_PEER_DELAY:
@@ -87464,8 +87617,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c	2023-04-17 12:36:25.000000000 -0700
-@@ -0,0 +1,19237 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.c	2023-04-24 01:16:42.000000000 -0700
+@@ -0,0 +1,19359 @@
 +/**
 + * Microchip gigabit switch common code
 + *
@@ -94020,6 +94173,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 + */
 +static void port_set_stp_state(struct ksz_sw *sw, uint port, int state)
 +{
++	u8 old_data;
 +	SW_D data;
 +	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
 +	uint m = BIT(port);
@@ -94029,6 +94183,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +dbg_msg("%s %d %d"NL, __func__, port, state);
 +#endif
 +	port_r(sw, port, P_STP_CTRL, &data);
++	old_data = data;
 +	switch (state) {
 +	case STP_STATE_DISABLED:
 +		data &= ~(PORT_TX_ENABLE | PORT_RX_ENABLE);
@@ -94101,6 +94256,26 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		sw->tx_ports[cfg->mstp] |= m;
 +	else
 +		sw->tx_ports[cfg->mstp] &= ~m;
++	if ((sw->overrides & DELAY_UPDATE_LINK) &&
++	    !(old_data & PORT_TX_ENABLE) &&
++	    (data & PORT_TX_ENABLE)) {
++		struct ksz_port *netport;
++		int i;
++
++		for (i = sw->dev_offset; i < sw->dev_offset + sw->dev_count;
++		     i++) {
++			netport = sw->netport[i];
++			if (netport && netport->first_port == port + 1) {
++				schedule_work(&netport->link_update);
++				break;
++			}
++		}
++		if (!sw->dev_offset) {
++			netport = sw->netport[0];
++			if (netport)
++				schedule_work(&netport->link_update);
++		}
++	}
 +
 +	/* Port membership may share register with STP state. */
 +	if (member >= 0)
@@ -97615,7 +97790,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		if (2 == sw->dev_count && (sw->features & SW_VLAN_DEV))
 +			i = 1;
 +#ifdef CONFIG_KSZ_HSR
-+		if (sw->features & HSR_REDBOX)
++		if ((sw->features & HSR_REDBOX) &&
++		    (sw->overrides & HSR_FORWARD))
 +			i = 2;
 +#endif
 +		len += sprintf(buf + len, "%d"NL, i);
@@ -97669,8 +97845,16 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			FAST_AGING);
 +		len += sprintf(buf + len, "\t%08lx = have >2 ports"NL,
 +			HAVE_MORE_THAN_2_PORTS);
++#ifdef CONFIG_KSZ_HSR
++		len += sprintf(buf + len, "\t%08lx = HSR forward"NL,
++			HSR_FORWARD);
++#endif
 +		len += sprintf(buf + len, "\t%08lx = unknown mcast blocked"NL,
 +			UNK_MCAST_BLOCK);
++		len += sprintf(buf + len, "\t%08lx = update csum"NL,
++			UPDATE_CSUM);
++		len += sprintf(buf + len, "\t%08lx = delay update link"NL,
++			DELAY_UPDATE_LINK);
 +#ifdef CONFIG_KSZ_IBA
 +		len += sprintf(buf + len, "\t%08lx = IBA test"NL,
 +			IBA_TEST);
@@ -97973,6 +98157,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +				SW_R(sw, num));
 +		else if (2 == count)
 +			SW_W(sw, num, val);
++		if (2 == count) {
++			u32 addr = num;
++			u8 buf[4];
++
++			buf[0] = (u8)val;
++			sw_chk_regs(sw, addr, buf, 1);
++		}
 +		break;
 +	case PROC_SET_SW_VID:
 +		sw->vid = num;
@@ -100943,8 +101134,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		index = sw->info->port_cfg[tail].index;
 +
 +#ifdef CONFIG_KSZ_HSR
-+		/* Always use HSR device for communication. */
-+		if (sw->features & HSR_REDBOX) {
++		/* Always use HSR device for communication when forwarding
++		 * internally.
++		 */
++		if ((sw->features & HSR_REDBOX) &&
++		    (sw->overrides & HSR_FORWARD)) {
 +			struct ksz_hsr_info *info = &sw->info->hsr;
 +
 +			index = info->hsr_index;
@@ -101478,10 +101672,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		 * Bridge uses clones of socket buffer to send to both
 +		 * devices!
 +		 */
-+#ifdef CONFIG_KSZ_HSR
-+		if (sw->features & HSR_REDBOX)
++		if (!skb_cloned(skb) && skb_headroom(skb) > VLAN_HLEN)
 +			nskb = skb;
-+#endif
 +		if (!nskb) {
 +			nskb = skb_copy(skb, GFP_ATOMIC);
 +			if (!nskb)
@@ -101510,19 +101702,29 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 +	p = sw->priv_port;
 +	i = sw->info->port_cfg[p].index;
-+	if (info->redbox_up) {
++
++	/* Internal forwarding when Redbox is up. */
++	if (info->redbox_up && info->redbox_fwd) {
 +		struct net_device **dev = (struct net_device **)skb->cb;
 +
 +		/* Destination is Redbox. */
-+		if (info->redbox && *dev == info->redbox)
++		if (info->redbox && *dev == info->redbox) {
++			/* Do not show transmit count in eth1. */
++			skb->dev = info->dev;
 +			return skb;
++		}
++
++		/* Using eth1 directly is not allowed. */
 +		if (skb->dev == info->redbox) {
 +			dev_kfree_skb_irq(skb);
 +			return NULL;
 +		}
++
++		/* Using eth0 to send and not forwarding from eth0. */
 +		if (*dev != info->dev) {
 +			int forward = hsr_fwd(info, skb);
 +
++			/* Unicast frame to eth1 so get VLAN for eth1. */
 +			if (forward == 2) {
 +				struct ksz_port *sw_port =
 +					sw->netport[info->redbox_index];
@@ -101709,11 +101911,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		skb_copy_header(skb, org_skb);
 +		consume_skb(org_skb);
 +	}
++
++	/* skb_put requires tail pointer set first. */
++	skb_set_tail_pointer(skb, skb->len);
 +	if (padlen) {
 +		if (__skb_put_padto(skb, skb->len + padlen, false))
 +			return NULL;
 +	}
-+	skb_set_tail_pointer(skb, skb->len);
 +	len = skb->len;
 +
 +	/* Remember original tag information as PTP may change the tag. */
@@ -101724,14 +101928,17 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		ptp_set_tx_info(ptp, skb->data, &tx_tag);
 +#endif
 +	if (!port) {
++		/* Used to get VLAN for which device to send. */
 +		sw->priv_port = get_phy_port(sw, priv->first_port);
 +		chk_tag_ports(sw, &tx_tag);
 +
 +#ifdef CONFIG_KSZ_HSR
-+		skb = sw_ins_hsr(sw, priv->first_port, skb, &tx_tag);
-+		if (!skb)
-+			return NULL;
-+		len = skb->len;
++		if (sw->features & HSR_HW) {
++			skb = sw_ins_hsr(sw, priv->first_port, skb, &tx_tag);
++			if (!skb)
++				return NULL;
++			len = skb->len;
++		}
 +#endif
 +	}
 +	if (chk_tag_lookup(sw, &tx_tag)) {
@@ -103481,6 +103688,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	int phy_link = 0;
 +	int link;
 +
++	if (port == sw->netport[0]) {
++		struct ksz_port_info *host = get_port_info(sw, sw->HOST_PORT);
++
++		if (info != host)
++			info = host;
++	}
 +	phydev->link = (info->state == media_connected);
 +	phydev->speed = info->tx_rate / TX_RATE_UNIT;
 +	if (!phydev->speed)
@@ -103499,6 +103712,14 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	if (port->report) {
 +		port->report = false;
 +		link = !phy_link;
++	}
++	if (sw->overrides & DELAY_UPDATE_LINK) {
++		uint p = get_phy_port(sw, port->linked->phy_id);
++		struct ksz_port_cfg *cfg;
++
++		cfg = get_port_cfg(sw, p);
++		if (phy_link && cfg->stp_state[0] != STP_STATE_FORWARDING)
++			link = phy_link;
 +	}
 +	if (phy_link == link)
 +		return;
@@ -103575,22 +103796,6 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	}
 +#endif
 +
-+#ifdef CONFIG_KSZ_HSR
-+	if (sw->features & HSR_HW) {
-+		struct ksz_hsr_info *hsr = &sw->info->hsr;
-+		struct net_device *dev;
-+
-+		dev = port->netdev;
-+		if (dev && dev == hsr->redbox_dev) {
-+			int up = hsr->redbox_up;
-+
-+			hsr->redbox_up = netif_carrier_ok(dev);
-+			if (up != hsr->redbox_up && up)
-+				hsr_rmv_slaves(hsr);
-+		}
-+	}
-+#endif
-+
 +	for (i = 1; i <= sw->mib_port_cnt; i++) {
 +		p = get_phy_port(sw, i);
 +		if (!(port->link_ports & (1 << p)))
@@ -103635,15 +103840,40 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#ifdef CONFIG_KSZ_HSR
 +	if (sw->features & HSR_HW) {
 +		struct ksz_hsr_info *hsr = &sw->info->hsr;
++		struct net_device *dev;
++
++		dev = port->netdev;
++		if (dev && dev == hsr->redbox_dev) {
++			int up = hsr->redbox_up;
++
++			hsr->redbox_up = netif_carrier_ok(dev);
++			if (up != hsr->redbox_up && up)
++				hsr_rmv_slaves(hsr);
++		}
 +
 +		p = get_phy_port(sw, port->first_port);
-+		if (hsr->ports[0] == p) {
++		if (hsr->dev && hsr->ports[0] == p) {
++			hsr->hsr_up = netif_carrier_ok(hsr->dev);
 +			hsr->ops->link_change(hsr,
 +				sw->port_info[hsr->ports[0]].state ==
 +				media_connected,
 +				sw->port_info[hsr->ports[1]].state ==
 +				media_connected);
 +			hsr->ops->check_announce(hsr);
++		}
++
++		/* Main device is used for communication so simulate link on
++		 * when Redbox is connected.
++		 */
++		if (sw->overrides & HSR_FORWARD) {
++			if (hsr->dev && !hsr->hsr_up) {
++				if (hsr->redbox_up &&
++				    !netif_carrier_ok(hsr->dev))
++					netif_carrier_on(hsr->dev);
++				else if (!hsr->redbox_up &&
++					 netif_carrier_ok(hsr->dev))
++					netif_carrier_off(hsr->dev);
++			}
 +		}
 +	}
 +#endif
@@ -103883,6 +104113,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			features = HSR_REDBOX;
 +			if (!w)
 +				w = 1;
++			sw->overrides |= HSR_FORWARD;
++		} else if (!strcmp(*s, "redbox_")) {
++			features = HSR_REDBOX;
++			if (!w)
++				w = 1;
 +		}
 +#endif
 +#ifdef CONFIG_KSZ_STP
@@ -104037,6 +104272,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		if ((used & HSR_HW) && !(used & HSR_REDBOX)) {
 +			s = eth_proto[1];
 +			if (!strcmp(*s, "redbox")) {
++				features = HSR_REDBOX;
++				used |= HSR_REDBOX;
++				sw->overrides |= HSR_FORWARD;
++			} else if (!strcmp(*s, "redbox_")) {
 +				features = HSR_REDBOX;
 +				used |= HSR_REDBOX;
 +			}
@@ -104297,7 +104536,11 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +			header = HSR_HLEN;
 +	}
 +	if (sw->eth_cnt && (map->proto & HSR_REDBOX)) {
-+		setup_hsr_redbox(&sw->info->hsr, dev, i);
++		bool fwd = false;
++
++		if (sw->overrides & HSR_FORWARD)
++			fwd = true;
++		setup_hsr_redbox(&sw->info->hsr, dev, i, fwd);
 +	}
 +#endif
 +#if defined(CONFIG_KSZ_AVB) || defined(CONFIG_KSZ_MRP)
@@ -105461,8 +105704,9 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	struct sw_priv *hw_priv =
 +		container_of(dwork, struct sw_priv, link_read);
 +	struct ksz_sw *sw = &hw_priv->sw;
-+	struct ksz_port *port = NULL;
++	struct ksz_port_info *linked = NULL;
 +	struct ksz_port *sw_port = NULL;
++	struct ksz_port *port = NULL;
 +	int i;
 +	int changes = 0;
 +	int s = 1;
@@ -105528,10 +105772,28 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +		}
 +		if (media_connected == port->linked->state &&
 +		    port->linked->phy) {
++
++			/* Indicate a linked port is found .*/
++			if (!linked)
++				linked = port->linked;
++			if (sw->overrides & DELAY_UPDATE_LINK) {
++				struct ksz_port_cfg *cfg;
++				uint p;
++
++				p = get_phy_port(sw, port->linked->phy_id);
++				cfg = get_port_cfg(sw, p);
++				if (cfg->stp_state[0] != STP_STATE_FORWARDING)
++					continue;
++			}
 +			sw_port->linked = port->linked;
++			linked = NULL;
 +			break;
 +		}
 +	}
++
++	/* Linked port not set before because it is not ready. */
++	if (linked)
++		sw_port->linked = linked;
 +}  /* link_read_work */
 +
 +/*
@@ -106332,8 +106594,14 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	sw->stp |= stp;
 +	sw->fast_aging |= fast_aging;
 +#ifdef CONFIG_KSZ_STP
-+	if (sw->stp)
++	if (sw->stp) {
 +		sw->features |= STP_SUPPORT;
++
++		/* Delay link notification to avoid having receive drops in
++		 * the host port because the outgoing port is not sending.
++		 */
++		sw->overrides |= DELAY_UPDATE_LINK;
++	}
 +#endif
 +	if (sw->fast_aging)
 +		sw->overrides |= FAST_AGING;
@@ -106495,6 +106763,13 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +	for (p = 0; p < sw->port_cnt; p++) {
 +		port_w(sw, p, REG_PORT_INT_MASK, 0xff);
 +		port_w16(sw, p, REG_PTP_PORT_TX_INT_STATUS__2, 0xffff);
++
++		/* PHY interrupt may trigger before driver is ready. */
++		if (p < sw->phy_port_cnt) {
++			u8 val;
++
++			port_r8(sw, p, REG_PORT_PHY_INT_STATUS, &val);
++		}
 +	}
 +	sw->ops->release(sw);
 +	ret = sw_start_interrupt(ks, dev_name(ks->dev));
@@ -106705,8 +106980,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.h linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.h
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.h	2023-03-15 16:42:34.904050484 -0700
-@@ -0,0 +1,1417 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/ksz_sw_9897.h	2023-04-23 22:12:39.000000000 -0700
+@@ -0,0 +1,1418 @@
 +/**
 + * Microchip KSZ9897 switch common header
 + *
@@ -107470,9 +107745,10 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/ksz_sw
 +#define FAST_AGING			BIT(1)
 +#define MCAST_FILTER			BIT(2)
 +#define HAVE_MORE_THAN_2_PORTS		BIT(3)
-+#define DLR_FORWARD			BIT(4)
++#define HSR_FORWARD			BIT(4)
 +#define UNK_MCAST_BLOCK			BIT(5)
 +#define UPDATE_CSUM			BIT(6)
++#define DELAY_UPDATE_LINK		BIT(7)
 +
 +#define IBA_TEST			BIT(16)
 +#define ACL_INTR_MONITOR		BIT(17)
@@ -129777,12 +130053,12 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ks
 +#endif
 diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ksz9897.c linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/spi-ksz9897.c
 --- linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ksz9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/spi-ksz9897.c	2022-07-26 02:15:52.513859202 -0700
-@@ -0,0 +1,681 @@
++++ linux-at91-linux4sam-2021.04/drivers/net/ethernet/micrel/spi-ksz9897.c	2023-04-23 22:11:24.000000000 -0700
+@@ -0,0 +1,682 @@
 +/**
 + * Microchip KSZ9897 SPI driver
 + *
-+ * Copyright (c) 2015-2022 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + * Copyright (c) 2013-2015 Micrel, Inc.
 + *
 + * Copyright 2009 Simtec Electronics
@@ -129894,8 +130170,8 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ks
 +
 +#define KS9897MLI_DEV0			"ksz9897"
 +
-+#define SW_DRV_RELDATE			"Jul 25, 2022"
-+#define SW_DRV_VERSION			"1.2.6"
++#define SW_DRV_RELDATE			"Apr 23, 2023"
++#define SW_DRV_VERSION			"1.2.7"
 +
 +/* -------------------------------------------------------------------------- */
 +
@@ -130385,6 +130661,7 @@ diff -Napur linux-at91-linux4sam-2021.04-orig/drivers/net/ethernet/micrel/spi-ks
 +	spi_message_add_tail(&hw_priv->spi_xfer2[1], &hw_priv->spi_msg2);
 +
 +	priv->irq = spi->irq;
++	priv->spi_mode = (spi->mode & 3) | 4;
 +
 +	return ksz_probe(priv);
 +}

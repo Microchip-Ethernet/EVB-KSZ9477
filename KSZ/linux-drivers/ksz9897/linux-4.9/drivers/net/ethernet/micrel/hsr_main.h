@@ -193,7 +193,9 @@ struct hsr_priv {
 #ifdef CONFIG_HSRv1
 	u16 sup_sequence_nr;
 	u8 net_id;
+#ifdef CONFIG_KSZ_SWITCH
 	u8 redbox_id;
+#endif
 	u16 vid;
 #endif
 	spinlock_t seqnr_lock;			/* locking for sequence_nr */

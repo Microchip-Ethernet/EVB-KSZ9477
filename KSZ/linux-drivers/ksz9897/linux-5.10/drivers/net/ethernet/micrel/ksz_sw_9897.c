@@ -6552,6 +6552,7 @@ dbg_msg(" cached: %02x"NL, sw->cached.xmii[sw->HOST_PORT - sw->phy_port_cnt]);
  */
 static void port_set_stp_state(struct ksz_sw *sw, uint port, int state)
 {
+	u8 old_data;
 	SW_D data;
 	struct ksz_port_cfg *cfg = get_port_cfg(sw, port);
 	uint m = BIT(port);
@@ -6561,6 +6562,7 @@ static void port_set_stp_state(struct ksz_sw *sw, uint port, int state)
 dbg_msg("%s %d %d"NL, __func__, port, state);
 #endif
 	port_r(sw, port, P_STP_CTRL, &data);
+	old_data = data;
 	switch (state) {
 	case STP_STATE_DISABLED:
 		data &= ~(PORT_TX_ENABLE | PORT_RX_ENABLE);
@@ -6633,6 +6635,26 @@ dbg_msg("%s %d %d"NL, __func__, port, state);
 		sw->tx_ports[cfg->mstp] |= m;
 	else
 		sw->tx_ports[cfg->mstp] &= ~m;
+	if ((sw->overrides & DELAY_UPDATE_LINK) &&
+	    !(old_data & PORT_TX_ENABLE) &&
+	    (data & PORT_TX_ENABLE)) {
+		struct ksz_port *netport;
+		int i;
+
+		for (i = sw->dev_offset; i < sw->dev_offset + sw->dev_count;
+		     i++) {
+			netport = sw->netport[i];
+			if (netport && netport->first_port == port + 1) {
+				schedule_work(&netport->link_update);
+				break;
+			}
+		}
+		if (!sw->dev_offset) {
+			netport = sw->netport[0];
+			if (netport)
+				schedule_work(&netport->link_update);
+		}
+	}
 
 	/* Port membership may share register with STP state. */
 	if (member >= 0)
@@ -10147,7 +10169,8 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 		if (2 == sw->dev_count && (sw->features & SW_VLAN_DEV))
 			i = 1;
 #ifdef CONFIG_KSZ_HSR
-		if (sw->features & HSR_REDBOX)
+		if ((sw->features & HSR_REDBOX) &&
+		    (sw->overrides & HSR_FORWARD))
 			i = 2;
 #endif
 		len += sprintf(buf + len, "%d"NL, i);
@@ -10201,8 +10224,16 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 			FAST_AGING);
 		len += sprintf(buf + len, "\t%08lx = have >2 ports"NL,
 			HAVE_MORE_THAN_2_PORTS);
+#ifdef CONFIG_KSZ_HSR
+		len += sprintf(buf + len, "\t%08lx = HSR forward"NL,
+			HSR_FORWARD);
+#endif
 		len += sprintf(buf + len, "\t%08lx = unknown mcast blocked"NL,
 			UNK_MCAST_BLOCK);
+		len += sprintf(buf + len, "\t%08lx = update csum"NL,
+			UPDATE_CSUM);
+		len += sprintf(buf + len, "\t%08lx = delay update link"NL,
+			DELAY_UPDATE_LINK);
 #ifdef CONFIG_KSZ_IBA
 		len += sprintf(buf + len, "\t%08lx = IBA test"NL,
 			IBA_TEST);
@@ -13482,8 +13513,11 @@ dbg_msg(" 2 vid: %x"NL, vlan_tci);
 		index = sw->info->port_cfg[tail].index;
 
 #ifdef CONFIG_KSZ_HSR
-		/* Always use HSR device for communication. */
-		if (sw->features & HSR_REDBOX) {
+		/* Always use HSR device for communication when forwarding
+		 * internally.
+		 */
+		if ((sw->features & HSR_REDBOX) &&
+		    (sw->overrides & HSR_FORWARD)) {
 			struct ksz_hsr_info *info = &sw->info->hsr;
 
 			index = info->hsr_index;
@@ -14017,10 +14051,8 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 		 * Bridge uses clones of socket buffer to send to both
 		 * devices!
 		 */
-#ifdef CONFIG_KSZ_HSR
-		if (sw->features & HSR_REDBOX)
+		if (!skb_cloned(skb) && skb_headroom(skb) > VLAN_HLEN)
 			nskb = skb;
-#endif
 		if (!nskb) {
 			nskb = skb_copy(skb, GFP_ATOMIC);
 			if (!nskb)
@@ -14049,19 +14081,29 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 
 	p = sw->priv_port;
 	i = sw->info->port_cfg[p].index;
-	if (info->redbox_up) {
+
+	/* Internal forwarding when Redbox is up. */
+	if (info->redbox_up && info->redbox_fwd) {
 		struct net_device **dev = (struct net_device **)skb->cb;
 
 		/* Destination is Redbox. */
-		if (info->redbox && *dev == info->redbox)
+		if (info->redbox && *dev == info->redbox) {
+			/* Do not show transmit count in eth1. */
+			skb->dev = info->dev;
 			return skb;
+		}
+
+		/* Using eth1 directly is not allowed. */
 		if (skb->dev == info->redbox) {
 			dev_kfree_skb_irq(skb);
 			return NULL;
 		}
+
+		/* Using eth0 to send and not forwarding from eth0. */
 		if (*dev != info->dev) {
 			int forward = hsr_fwd(info, skb);
 
+			/* Unicast frame to eth1 so get VLAN for eth1. */
 			if (forward == 2) {
 				struct ksz_port *sw_port =
 					sw->netport[info->redbox_index];
@@ -14248,11 +14290,13 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		skb_copy_header(skb, org_skb);
 		consume_skb(org_skb);
 	}
+
+	/* skb_put requires tail pointer set first. */
+	skb_set_tail_pointer(skb, skb->len);
 	if (padlen) {
 		if (__skb_put_padto(skb, skb->len + padlen, false))
 			return NULL;
 	}
-	skb_set_tail_pointer(skb, skb->len);
 	len = skb->len;
 
 	/* Remember original tag information as PTP may change the tag. */
@@ -14263,14 +14307,17 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		ptp_set_tx_info(ptp, skb->data, &tx_tag);
 #endif
 	if (!port) {
+		/* Used to get VLAN for which device to send. */
 		sw->priv_port = get_phy_port(sw, priv->first_port);
 		chk_tag_ports(sw, &tx_tag);
 
 #ifdef CONFIG_KSZ_HSR
-		skb = sw_ins_hsr(sw, priv->first_port, skb, &tx_tag);
-		if (!skb)
-			return NULL;
-		len = skb->len;
+		if (sw->features & HSR_HW) {
+			skb = sw_ins_hsr(sw, priv->first_port, skb, &tx_tag);
+			if (!skb)
+				return NULL;
+			len = skb->len;
+		}
 #endif
 	}
 	if (chk_tag_lookup(sw, &tx_tag)) {
@@ -16020,6 +16067,12 @@ static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
 	int phy_link = 0;
 	int link;
 
+	if (port == sw->netport[0]) {
+		struct ksz_port_info *host = get_port_info(sw, sw->HOST_PORT);
+
+		if (info != host)
+			info = host;
+	}
 	phydev->link = (info->state == media_connected);
 	phydev->speed = info->tx_rate / TX_RATE_UNIT;
 	if (!phydev->speed)
@@ -16038,6 +16091,14 @@ static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
 	if (port->report) {
 		port->report = false;
 		link = !phy_link;
+	}
+	if (sw->overrides & DELAY_UPDATE_LINK) {
+		uint p = get_phy_port(sw, port->linked->phy_id);
+		struct ksz_port_cfg *cfg;
+
+		cfg = get_port_cfg(sw, p);
+		if (phy_link && cfg->stp_state[0] != STP_STATE_FORWARDING)
+			link = phy_link;
 	}
 	if (phy_link == link)
 		return;
@@ -16058,7 +16119,7 @@ dbg_msg(" %*pb\n", __ETHTOOL_LINK_MODE_MASK_NBITS, phydev->lp_advertising);
 			phy_link ? "on" : "off");
 	if (phydev->phy_link_change) {
 		phydev->phy_link_change(phydev, phy_link);
-	} else if (phy_link != link) {
+	} else if (phy_link != link && do_update) {
 		if (phy_link)
 			netif_carrier_on(dev);
 		else
@@ -16114,22 +16175,6 @@ static void link_update_work(struct work_struct *work)
 	}
 #endif
 
-#ifdef CONFIG_KSZ_HSR
-	if (sw->features & HSR_HW) {
-		struct ksz_hsr_info *hsr = &sw->info->hsr;
-		struct net_device *dev;
-
-		dev = port->netdev;
-		if (dev && dev == hsr->redbox_dev) {
-			int up = hsr->redbox_up;
-
-			hsr->redbox_up = netif_carrier_ok(dev);
-			if (up != hsr->redbox_up && up)
-				hsr_rmv_slaves(hsr);
-		}
-	}
-#endif
-
 	for (i = 1; i <= sw->mib_port_cnt; i++) {
 		p = get_phy_port(sw, i);
 		if (!(port->link_ports & (1 << p)))
@@ -16174,15 +16219,40 @@ static void link_update_work(struct work_struct *work)
 #ifdef CONFIG_KSZ_HSR
 	if (sw->features & HSR_HW) {
 		struct ksz_hsr_info *hsr = &sw->info->hsr;
+		struct net_device *dev;
+
+		dev = port->netdev;
+		if (dev && dev == hsr->redbox_dev) {
+			int up = hsr->redbox_up;
+
+			hsr->redbox_up = netif_carrier_ok(dev);
+			if (up != hsr->redbox_up && up)
+				hsr_rmv_slaves(hsr);
+		}
 
 		p = get_phy_port(sw, port->first_port);
-		if (hsr->ports[0] == p) {
+		if (hsr->dev && hsr->ports[0] == p) {
+			hsr->hsr_up = netif_carrier_ok(hsr->dev);
 			hsr->ops->link_change(hsr,
 				sw->port_info[hsr->ports[0]].state ==
 				media_connected,
 				sw->port_info[hsr->ports[1]].state ==
 				media_connected);
 			hsr->ops->check_announce(hsr);
+		}
+
+		/* Main device is used for communication so simulate link on
+		 * when Redbox is connected.
+		 */
+		if (sw->overrides & HSR_FORWARD) {
+			if (hsr->dev && !hsr->hsr_up) {
+				if (hsr->redbox_up &&
+				    !netif_carrier_ok(hsr->dev))
+					netif_carrier_on(hsr->dev);
+				else if (!hsr->redbox_up &&
+					 netif_carrier_ok(hsr->dev))
+					netif_carrier_off(hsr->dev);
+			}
 		}
 	}
 #endif
@@ -16422,6 +16492,11 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 			features = HSR_REDBOX;
 			if (!w)
 				w = 1;
+			sw->overrides |= HSR_FORWARD;
+		} else if (!strcmp(*s, "redbox_")) {
+			features = HSR_REDBOX;
+			if (!w)
+				w = 1;
 		}
 #endif
 #ifdef CONFIG_KSZ_STP
@@ -16576,6 +16651,10 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 		if ((used & HSR_HW) && !(used & HSR_REDBOX)) {
 			s = eth_proto[1];
 			if (!strcmp(*s, "redbox")) {
+				features = HSR_REDBOX;
+				used |= HSR_REDBOX;
+				sw->overrides |= HSR_FORWARD;
+			} else if (!strcmp(*s, "redbox_")) {
 				features = HSR_REDBOX;
 				used |= HSR_REDBOX;
 			}
@@ -16836,7 +16915,11 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 			header = HSR_HLEN;
 	}
 	if (sw->eth_cnt && (map->proto & HSR_REDBOX)) {
-		setup_hsr_redbox(&sw->info->hsr, dev, i);
+		bool fwd = false;
+
+		if (sw->overrides & HSR_FORWARD)
+			fwd = true;
+		setup_hsr_redbox(&sw->info->hsr, dev, i, fwd);
 	}
 #endif
 #if defined(CONFIG_KSZ_AVB) || defined(CONFIG_KSZ_MRP)
@@ -18000,8 +18083,9 @@ static void link_read_work(struct work_struct *work)
 	struct sw_priv *hw_priv =
 		container_of(dwork, struct sw_priv, link_read);
 	struct ksz_sw *sw = &hw_priv->sw;
-	struct ksz_port *port = NULL;
+	struct ksz_port_info *linked = NULL;
 	struct ksz_port *sw_port = NULL;
+	struct ksz_port *port = NULL;
 	int i;
 	int changes = 0;
 	int s = 1;
@@ -18067,10 +18151,28 @@ static void link_read_work(struct work_struct *work)
 		}
 		if (media_connected == port->linked->state &&
 		    port->linked->phy) {
+
+			/* Indicate a linked port is found .*/
+			if (!linked)
+				linked = port->linked;
+			if (sw->overrides & DELAY_UPDATE_LINK) {
+				struct ksz_port_cfg *cfg;
+				uint p;
+
+				p = get_phy_port(sw, port->linked->phy_id);
+				cfg = get_port_cfg(sw, p);
+				if (cfg->stp_state[0] != STP_STATE_FORWARDING)
+					continue;
+			}
 			sw_port->linked = port->linked;
+			linked = NULL;
 			break;
 		}
 	}
+
+	/* Linked port not set before because it is not ready. */
+	if (linked)
+		sw_port->linked = linked;
 }  /* link_read_work */
 
 /*
@@ -18871,8 +18973,14 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	sw->stp |= stp;
 	sw->fast_aging |= fast_aging;
 #ifdef CONFIG_KSZ_STP
-	if (sw->stp)
+	if (sw->stp) {
 		sw->features |= STP_SUPPORT;
+
+		/* Delay link notification to avoid having receive drops in
+		 * the host port because the outgoing port is not sending.
+		 */
+		sw->overrides |= DELAY_UPDATE_LINK;
+	}
 #endif
 	if (sw->fast_aging)
 		sw->overrides |= FAST_AGING;
@@ -19034,6 +19142,13 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	for (p = 0; p < sw->port_cnt; p++) {
 		port_w(sw, p, REG_PORT_INT_MASK, 0xff);
 		port_w16(sw, p, REG_PTP_PORT_TX_INT_STATUS__2, 0xffff);
+
+		/* PHY interrupt may trigger before driver is ready. */
+		if (p < sw->phy_port_cnt) {
+			u8 val;
+
+			port_r8(sw, p, REG_PORT_PHY_INT_STATUS, &val);
+		}
 	}
 	sw->ops->release(sw);
 	ret = sw_start_interrupt(ks, dev_name(ks->dev));

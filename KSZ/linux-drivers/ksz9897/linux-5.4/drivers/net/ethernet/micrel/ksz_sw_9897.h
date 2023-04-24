@@ -761,9 +761,10 @@ struct phy_priv {
 #define FAST_AGING			BIT(1)
 #define MCAST_FILTER			BIT(2)
 #define HAVE_MORE_THAN_2_PORTS		BIT(3)
-#define DLR_FORWARD			BIT(4)
+#define HSR_FORWARD			BIT(4)
 #define UNK_MCAST_BLOCK			BIT(5)
 #define UPDATE_CSUM			BIT(6)
+#define DELAY_UPDATE_LINK		BIT(7)
 
 #define IBA_TEST			BIT(16)
 #define ACL_INTR_MONITOR		BIT(17)

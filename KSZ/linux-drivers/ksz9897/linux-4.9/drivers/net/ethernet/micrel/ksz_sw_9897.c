@@ -14029,10 +14029,11 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 		 * Bridge uses clones of socket buffer to send to both
 		 * devices!
 		 */
-		if (!skb_cloned(skb) && skb_headroom(skb) > VLAN_HLEN)
+		if (!skb_cloned(skb) && skb_headroom(skb) >= VLAN_HLEN)
 			nskb = skb;
 		if (!nskb) {
-			nskb = skb_copy(skb, GFP_ATOMIC);
+			nskb = skb_copy_expand(skb, VLAN_HLEN, skb->len,
+					       GFP_ATOMIC);
 			if (!nskb)
 				return skb;
 			dev_kfree_skb_irq(skb);
@@ -14142,6 +14143,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	u8 *tag;
 	int update_dst = (sw->overrides & TAIL_TAGGING);
 	int ptp_len = 0;
+	int headlen = 0;
 
 #ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp = ptr;
@@ -14182,6 +14184,10 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	tag_len = ptp_len + 2;
 	if (sw->TAIL_TAG_SHIFT != 7)
 		tag_len--;
+	if (sw->features & HSR_HW)
+		headlen = HSR_HLEN;
+	else if (sw->features & SW_VLAN_DEV)
+		headlen = VLAN_HLEN;
 
 	memset(&tx_tag, 0, sizeof(tx_tag));
 
@@ -14255,12 +14261,19 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		need_new_copy = true;
 		len = (skb->len + tag_len + padlen + 4) & ~3;
 	}
+	if (skb_headroom(skb) < headlen) {
+		need_new_copy = true;
+	}
 	if (need_new_copy) {
+		int headerlen = skb_headroom(skb);
+
+		if (headerlen < headlen)
+			headerlen = headlen;
+
 		/* The new socket buffer has no fragments but still needs
 		 * hardware checksum generation.
 		 */
-		skb = skb_copy_expand(org_skb, skb_headroom(org_skb), len,
-				      GFP_ATOMIC);
+		skb = skb_copy_expand(org_skb, headerlen, len, GFP_ATOMIC);
 		if (!skb)
 			return NULL;
 		consume_skb(org_skb);

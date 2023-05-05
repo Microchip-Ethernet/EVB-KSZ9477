@@ -1,0 +1,29 @@
+diff -Napur linux-linux4microchip-2022.04-orig/drivers/spi/spi.c linux-linux4microchip-2022.04/drivers/spi/spi.c
+--- linux-linux4microchip-2022.04-orig/drivers/spi/spi.c	2022-05-06 10:11:03.000000000 -0700
++++ linux-linux4microchip-2022.04/drivers/spi/spi.c	2023-04-28 16:23:08.097800847 -0700
+@@ -877,6 +877,12 @@ static void spi_set_cs(struct spi_device
+ 		enable = !enable;
+ 
+ 	if (spi->cs_gpiod || gpio_is_valid(spi->cs_gpio)) {
++#ifdef CONFIG_SPI_ATMEL
++		/* Some SPI masters need both GPIO CS & slave_select */
++		if ((spi->controller->flags & SPI_MASTER_GPIO_SS) &&
++		    spi->controller->set_cs)
++			spi->controller->set_cs(spi, !enable);
++#endif
+ 		if (!(spi->mode & SPI_NO_CS)) {
+ 			if (spi->cs_gpiod) {
+ 				/*
+@@ -902,10 +908,12 @@ static void spi_set_cs(struct spi_device
+ 				gpio_set_value_cansleep(spi->cs_gpio, !enable);
+ 			}
+ 		}
++#ifndef CONFIG_SPI_ATMEL
+ 		/* Some SPI masters need both GPIO CS & slave_select */
+ 		if ((spi->controller->flags & SPI_MASTER_GPIO_SS) &&
+ 		    spi->controller->set_cs)
+ 			spi->controller->set_cs(spi, !enable);
++#endif
+ 	} else if (spi->controller->set_cs) {
+ 		spi->controller->set_cs(spi, !enable);
+ 	}

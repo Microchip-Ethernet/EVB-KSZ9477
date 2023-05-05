@@ -1,0 +1,17 @@
+diff -Napur linux-at91-linux-5.15-mchp/drivers/pinctrl/pinctrl-at91.c linux-at91-linux-5.15-dev/drivers/pinctrl/pinctrl-at91.c
+--- linux-at91-linux-5.15-mchp/drivers/pinctrl/pinctrl-at91.c	2023-03-10 03:09:22.000000000 -0800
++++ linux-at91-linux-5.15-dev/drivers/pinctrl/pinctrl-at91.c	2023-03-16 14:00:21.027998764 -0700
+@@ -1546,8 +1546,13 @@ static void gpio_irq_unmask(struct irq_d
+ 	struct at91_gpio_chip *at91_gpio = irq_data_get_irq_chip_data(d);
+ 	void __iomem	*pio = at91_gpio->regbase;
+ 	unsigned	mask = 1 << d->hwirq;
++#if 1
++	unsigned long	isr;
+ 
+ 	if (pio)
++		isr = readl_relaxed(pio + PIO_ISR);
++#endif
++	if (pio)
+ 		writel_relaxed(mask, pio + PIO_IER);
+ }
+ 

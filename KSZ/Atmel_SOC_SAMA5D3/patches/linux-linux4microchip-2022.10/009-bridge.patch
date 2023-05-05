@@ -1,0 +1,13 @@
+diff -Napur linux-linux4microchip-2022.04-orig/net/bridge/br_device.c linux-linux4microchip-2022.04/net/bridge/br_device.c
+--- linux-linux4microchip-2022.04-orig/net/bridge/br_device.c	2022-05-06 10:11:03.000000000 -0700
++++ linux-linux4microchip-2022.04/net/bridge/br_device.c	2023-04-28 16:49:08.457866169 -0700
+@@ -496,6 +496,9 @@ void br_dev_setup(struct net_device *dev
+ 	dev->hw_features = COMMON_FEATURES | NETIF_F_HW_VLAN_CTAG_TX |
+ 			   NETIF_F_HW_VLAN_STAG_TX;
+ 	dev->vlan_features = COMMON_FEATURES;
++#ifdef CONFIG_KSZ_SWITCH
++	dev->hard_header_len += 6;
++#endif
+ 
+ 	br->dev = dev;
+ 	spin_lock_init(&br->lock);

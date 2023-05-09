@@ -1,7 +1,7 @@
 /**
  * Microchip MSTP driver header
  *
- * Copyright (c) 2016-2017 Microchip Technology Inc.
+ * Copyright (c) 2016-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -422,7 +422,7 @@ struct ksz_stp_bridge {
 struct ksz_stp_info;
 
 struct stp_ops {
-	int (*change_addr)(struct ksz_stp_info *stp, u8 *addr);
+	int (*change_addr)(struct ksz_stp_info *stp, const u8 *addr);
 	void (*link_change)(struct ksz_stp_info *stp, int update);
 
 	int (*dev_req)(struct ksz_stp_info *stp, char *arg, void *info);

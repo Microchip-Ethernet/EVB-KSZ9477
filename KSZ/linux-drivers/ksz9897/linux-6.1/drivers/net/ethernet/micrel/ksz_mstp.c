@@ -1,7 +1,7 @@
 /**
  * Microchip MSTP code
  *
- * Copyright (c) 2016-2019 Microchip Technology Inc.
+ * Copyright (c) 2016-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -5502,7 +5502,7 @@ static const u8 *stp_br_id(struct ksz_stp_info *stp)
 	return (u8 *) &stp->br.mvars[0].br_id_;
 }
 
-static int stp_change_addr(struct ksz_stp_info *stp, u8 *addr)
+static int stp_change_addr(struct ksz_stp_info *stp, const u8 *addr)
 {
 	int diff;
 	struct ksz_stp_bridge *br = &stp->br;

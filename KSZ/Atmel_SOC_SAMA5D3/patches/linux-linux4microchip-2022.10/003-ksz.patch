@@ -229,8 +229,8 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/hsr_m
 +#endif /*  __HSR_PRIVATE_H */
 diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-ksz8863.c linux-linux4microchip-2022.10/drivers/net/ethernet/micrel/i2c-ksz8863.c
 --- linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-ksz8863.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-linux4microchip-2022.10/drivers/net/ethernet/micrel/i2c-ksz8863.c	2023-03-25 13:53:58.696644911 -0700
-@@ -0,0 +1,465 @@
++++ linux-linux4microchip-2022.10/drivers/net/ethernet/micrel/i2c-ksz8863.c	2023-05-08 15:33:42.415997950 -0700
+@@ -0,0 +1,473 @@
 +/**
 + * Microchip KSZ8863 I2C driver
 + *
@@ -551,6 +551,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-k
 +{
 +	struct i2c_hw_priv *hw_priv;
 +	struct sw_priv *priv;
++	int err;
 +
 +	priv = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
 +	if (!priv)
@@ -572,7 +573,14 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-k
 +
 +	priv->irq = i2c->irq;
 +
-+	return ksz_probe(priv);
++	err = ksz_probe(priv);
++
++	/* This will load the I2C driver again because of mdiobus_register
++	 * failure, but the MAC driver still misses the connection.
++	 */
++	if (err == -EBUSY)
++		err = -EPROBE_DEFER;
++	return err;
 +}
 +
 +static int ksz8863_remove(struct i2c_client *i2c)
@@ -698,8 +706,8 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-k
 +#endif
 diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-ksz9897.c linux-linux4microchip-2022.10/drivers/net/ethernet/micrel/i2c-ksz9897.c
 --- linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-ksz9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-linux4microchip-2022.10/drivers/net/ethernet/micrel/i2c-ksz9897.c	2023-04-24 07:20:23.000000000 -0700
-@@ -0,0 +1,655 @@
++++ linux-linux4microchip-2022.10/drivers/net/ethernet/micrel/i2c-ksz9897.c	2023-05-08 15:33:30.831997994 -0700
+@@ -0,0 +1,663 @@
 +/**
 + * Microchip KSZ9897 I2C driver
 + *
@@ -1197,6 +1205,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-k
 +{
 +	struct i2c_hw_priv *hw_priv;
 +	struct sw_priv *priv;
++	int err;
 +
 +	priv = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
 +	if (!priv)
@@ -1218,7 +1227,14 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/micrel/i2c-k
 +
 +	priv->irq = i2c->irq;
 +
-+	return ksz_probe(priv);
++	err = ksz_probe(priv);
++
++	/* This will load the I2C driver again because of mdiobus_register
++	 * failure, but the MAC driver still misses the connection.
++	 */
++	if (err == -EBUSY)
++		err = -EPROBE_DEFER;
++	return err;
 +}
 +
 +static int ksz9897_remove(struct i2c_client *i2c)

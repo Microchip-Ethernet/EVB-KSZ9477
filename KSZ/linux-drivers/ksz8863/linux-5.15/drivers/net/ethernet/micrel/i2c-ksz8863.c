@@ -318,6 +318,7 @@ static int ksz8863_probe(struct i2c_client *i2c,
 {
 	struct i2c_hw_priv *hw_priv;
 	struct sw_priv *priv;
+	int err;
 
 	priv = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
 	if (!priv)
@@ -339,7 +340,14 @@ static int ksz8863_probe(struct i2c_client *i2c,
 
 	priv->irq = i2c->irq;
 
-	return ksz_probe(priv);
+	err = ksz_probe(priv);
+
+	/* This will load the I2C driver again because of mdiobus_register
+	 * failure, but the MAC driver still misses the connection.
+	 */
+	if (err == -EBUSY)
+		err = -EPROBE_DEFER;
+	return err;
 }
 
 static int ksz8863_remove(struct i2c_client *i2c)

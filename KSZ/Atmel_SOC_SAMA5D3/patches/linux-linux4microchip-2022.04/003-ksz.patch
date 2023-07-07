@@ -9823,12 +9823,12 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz88
 +#endif
 diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz9897.h linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz9897.h
 --- linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz9897.h	1969-12-31 16:00:00.000000000 -0800
-+++ linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz9897.h	2023-04-28 16:22:12.657798526 -0700
++++ linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz9897.h	2023-06-29 18:02:49.388456385 -0700
 @@ -0,0 +1,1730 @@
 +/**
 + * Microchip KSZ9897 definition file
 + *
-+ * Copyright (c) 2015-2018 Microchip Technology Inc.
++ * Copyright (c) 2015-2023 Microchip Technology Inc.
 + *	Tristram Ha <Tristram.Ha@microchip.com>
 + *
 + * Copyright (c) 2013-2015 Micrel, Inc.
@@ -9947,9 +9947,9 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz98
 +#define SW_IBA_ENABLE			(1 << 31)
 +#define SW_IBA_DA_MATCH			(1 << 30)
 +#define SW_IBA_INIT			(1 << 29)
-+#define SW_IBA_QID_M			0xF
++#define SW_IBA_QID_M			0x3
 +#define SW_IBA_QID_S			22
-+#define SW_IBA_PORT_M			0x2F
++#define SW_IBA_PORT_M			0x7
 +#define SW_IBA_PORT_S			16
 +#define SW_IBA_FRAME_TPID_M		0xFFFF
 +
@@ -10004,9 +10004,9 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz98
 +
 +#define SW_PLL_POWER_DOWN		(1 << 5)
 +#define SW_POWER_DOWN_MODE		0x3
++#define SW_POWER_DOWN_S			3
 +#define SW_ENERGY_DETECTION		1
 +#define SW_SOFT_POWER_DOWN		2
-+#define SW_POWER_SAVING			3
 +
 +/* 3 - Operation Control */
 +#define REG_SW_OPERATION		0x0300
@@ -21503,8 +21503,8 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_h
 +#endif
 diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_iba.c linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_iba.c
 --- linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_iba.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_iba.c	2023-04-19 11:50:00.000000000 -0700
-@@ -0,0 +1,3153 @@
++++ linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_iba.c	2023-07-07 12:33:34.000000000 -0700
+@@ -0,0 +1,3206 @@
 +/**
 + * Microchip IBA code
 + *
@@ -21535,6 +21535,10 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +#endif
 +
 +#define ETH_P_IBA			IBA_TAG_TYPE
++
++#define VALID_IBA_VAL			\
++	(SW_IBA_ENABLE | SW_IBA_DA_MATCH | SW_IBA_INIT |		\
++	 (SW_IBA_PORT_M << SW_IBA_PORT_S) | SW_IBA_FRAME_TPID_M)
 +
 +static void prepare_iba(struct ksz_iba_info *iba, u8 *dst, u8 *src)
 +{
@@ -21775,16 +21779,35 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +
 +		/* write can be 8-bit, 16-bit, 24-bit, or 32-bit. */
 +		if (IBA_CMD_READ != cmd) {
-+
-+#if 1
-+			/* Do not allow changing IBA port. */
 +			if (IBA_CMD_WRITE == cmd &&
 +			    REG_SW_IBA__4 <= addr && addr < REG_SW_IBA__4 + 4) {
-+				info->data[0] = info->cfg;
-+				addr = REG_SW_IBA__4;
-+				size = IBA_CMD_32;
-+			}
++				int shift;
++				u32 mask;
++
++				shift = addr - REG_SW_IBA__4;
++				mask = VALID_IBA_VAL;
++				if (size == IBA_CMD_8)
++					shift = 3 - shift;
++				else if (size == IBA_CMD_16)
++					shift = 2 - shift;
++				shift *= 8;
++				mask >>= shift;
++				if (size == IBA_CMD_8)
++					mask &= 0xff;
++				else if (size == IBA_CMD_16)
++					mask &= 0xffff;
++				if (((info->cfg >> shift) & mask) !=
++				    (info->data[0] & mask)) {
++#ifndef CONFIG_KSZ_IBA_ONLY
++					info->use_iba |= 0x60;
++#else
++					/* Do not allow changing IBA port. */
++					info->data[0] = info->cfg;
++					addr = REG_SW_IBA__4;
++					size = IBA_CMD_32;
 +#endif
++				}
++			}
 +			info->data[0] = iba_set_val(size, addr, info->data[0]);
 +		}
 +		size = iba_set_size(addr, size);
@@ -22268,8 +22291,15 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +static void sw_setup_iba(struct ksz_sw *sw)
 +{
 +	u32 data;
++	u32 mask;
 +
 +	data = sw->old->r32(sw, REG_SW_IBA__4);
++
++	/* Register value may become random after switch power down. */
++	mask = (SW_IBA_ENABLE | (SW_IBA_PORT_M << SW_IBA_PORT_S));
++	if (sw->info->iba.cfg &&
++	    (sw->info->iba.cfg & mask) != (data & mask))
++		data = sw->info->iba.cfg;
 +	sw->info->iba.tag_type = (data & SW_IBA_FRAME_TPID_M);
 +	data &= ~(SW_IBA_PORT_M << SW_IBA_PORT_S);
 +	data |= sw->HOST_PORT << SW_IBA_PORT_S;
@@ -22295,6 +22325,13 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 + */
 +static void iba_to_spi(struct ksz_sw *sw, struct ksz_iba_info *info)
 +{
++	bool restart = true;
++
++	if (info->use_iba & 0x20) {
++		info->use_iba &= ~0x60;
++		restart = false;
++		printk(KERN_ALERT "stop using IBA"NL);
++	}
 +	if (2 <= info->use_iba) {
 +if (info->use_iba != 5)
 +dbg_msg(" iba stops: %x"NL, info->use_iba);
@@ -22308,12 +22345,14 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +	sw_set_spi(sw, info);
 +	if (sw->intr_using != 2)
 +		mutex_unlock(sw->hwlock);
-+	printk(KERN_ALERT "revert to SPI"NL);
++	if (restart) {
++		printk(KERN_ALERT "revert to SPI"NL);
 +
 +#ifdef RETRY_IBA
-+	sw_setup_iba(sw);
-+	schedule_delayed_work(&sw->set_ops, msecs_to_jiffies(1000));
++		sw_setup_iba(sw);
++		schedule_delayed_work(&sw->set_ops, msecs_to_jiffies(1000));
 +#endif
++	}
 +}  /* iba_to_spi */
 +
 +static void iba_dbg_states(struct ksz_iba_info *info)
@@ -22410,7 +22449,6 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +	init_completion(&info->done);
 +	rc = iba_xmit(info);
 +	if (rc) {
-+printk("  !! %x"NL, rc);
 +		iba_dbg_states(info);
 +
 +		/* Not testing if IBA is okay. */
@@ -22435,6 +22473,8 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +			iba_to_spi(info->sw_dev, info);
 +		return 0;
 +	}
++	if (info->use_iba & 0x20)
++		iba_to_spi(info->sw_dev, info);
 +
 +	rc = 1;
 +	if (post)
@@ -22795,8 +22835,16 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +			u32 *ptr = (u32 *) buf;
 +			u32 loc = (REG_SW_IBA__4 - addr) / 4;
 +
-+			if (write)
++			if (write &&
++			    ((ptr[loc] & VALID_IBA_VAL) !=
++			    (info->cfg & VALID_IBA_VAL))) {
++#ifndef CONFIG_KSZ_IBA_ONLY
++				info->use_iba |= 0x60;
++#else
++				/* Do not allow changing IBA port. */
 +				ptr[loc] = info->cfg;
++#endif
++			}
 +		}
 +	} else {
 +		mult = 1;
@@ -22842,6 +22890,9 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +		iba_to_spi(info->sw_dev, info);
 +		return 0;
 +	}
++	if (info->use_iba & 0x40)
++		wait = 1;
++	else
 +	wait = wait_for_completion_timeout(&info->done, info->delay_ticks);
 +	if (!wait) {
 +dbg_msg("burst to"NL);
@@ -22849,6 +22900,8 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_i
 +		iba_to_spi(info->sw_dev, info);
 +		return 0;
 +	}
++	if (info->use_iba & 0x20)
++		iba_to_spi(info->sw_dev, info);
 +
 +	rc = post(info, data, NULL);
 +	rc *= 4;
@@ -41077,8 +41130,8 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_m
 +#endif
 diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.c linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_ptp_9897.c
 --- linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_ptp_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_ptp_9897.c	2023-04-19 11:54:17.000000000 -0700
-@@ -0,0 +1,8029 @@
++++ linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_ptp_9897.c	2023-07-07 12:34:04.000000000 -0700
+@@ -0,0 +1,8033 @@
 +/**
 + * Microchip PTP common code
 + *
@@ -43838,6 +43891,10 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_p
 +
 +	prepare_pps(ptp);
 +	ptp->started = true;
++	if (sw->dev_offset)
++		ptp->forward |= FWD_STP_DEV;
++	if (sw->features & SW_VLAN_DEV)
++		ptp->forward |= FWD_VLAN_DEV;
 +}  /* ptp_start */
 +
 +static void save_msg_info(struct ptp_info *ptp, struct ptp_msg_info *info,
@@ -87633,8 +87690,8 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +#endif
 diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_sw_9897.c
 --- linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_sw_9897.c	1969-12-31 16:00:00.000000000 -0800
-+++ linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_sw_9897.c	2023-04-24 11:42:02.000000000 -0700
-@@ -0,0 +1,19365 @@
++++ linux-linux4microchip-2022.04/drivers/net/ethernet/micrel/ksz_sw_9897.c	2023-07-07 13:31:29.828754604 -0700
+@@ -0,0 +1,19381 @@
 +/**
 + * Microchip gigabit switch common code
 + *
@@ -101843,9 +101900,11 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +	tag_len = ptp_len + 2;
 +	if (sw->TAIL_TAG_SHIFT != 7)
 +		tag_len--;
++#ifdef CONFIG_KSZ_HSR
 +	if (sw->features & HSR_HW)
 +		headlen = HSR_HLEN;
-+	else if (sw->features & SW_VLAN_DEV)
++#endif
++	if (sw->features & SW_VLAN_DEV && !headlen)
 +		headlen = VLAN_HLEN;
 +
 +	memset(&tx_tag, 0, sizeof(tx_tag));
@@ -101928,6 +101987,10 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +
 +		if (headerlen < headlen)
 +			headerlen = headlen;
++
++		/* The new socket buffer has no fragments but still needs
++		 * hardware checksum generation.
++		 */
 +		skb = skb_copy_expand(org_skb, headerlen, len, GFP_ATOMIC);
 +		if (!skb)
 +			return NULL;
@@ -102364,6 +102427,9 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +	flow_ctrl = port->flow_ctrl;
 +	switch (info->interface) {
 +	case PHY_INTERFACE_MODE_RGMII:
++	case PHY_INTERFACE_MODE_RGMII_ID:
++	case PHY_INTERFACE_MODE_RGMII_RXID:
++	case PHY_INTERFACE_MODE_RGMII_TXID:
 +		if (sw->features & GIGABIT_SUPPORT) {
 +			phylink_set(mask, 1000baseT_Full);
 +			phylink_set(mask, 1000baseX_Full);
@@ -102620,6 +102686,9 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +					if (name && !strcmp(name, "rmii"))
 +						sw->interface =
 +							PHY_INTERFACE_MODE_RMII;
++					if (name && !strcmp(name, "rgmii-id"))
++						sw->interface =
++							PHY_INTERFACE_MODE_RGMII_ID;
 +				}
 +				name = of_get_property(port, "label", NULL);
 +				if (name)
@@ -104159,7 +104228,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +		m &= ~((1 << last_phy_port) - 1);
 +		m &= left;
 +
-+		/* No more legimate port. */
++		/* No more legitimate port. */
 +		if (!m)
 +			break;
 +
@@ -104554,8 +104623,6 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +		port->flow_ctrl = PHY_TX_ONLY;
 +#endif
 +		setup_hsr(&sw->info->hsr, dev, i);
-+		if (header < HSR_HLEN)
-+			header = HSR_HLEN;
 +	}
 +	if (sw->eth_cnt && (map->proto & HSR_REDBOX)) {
 +		bool fwd = false;
@@ -104574,16 +104641,14 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +	info = get_port_info(sw, p);
 +	port->sw = sw;
 +	port->linked = info;
-+
-+	/* Point to port under netdev. */
-+	if (phy_offset) {
-+		phy_id = port->linked->phy_id;
-+	} else {
-+		phy_id = 0;
-+		info = get_port_info(sw, sw->HOST_PORT);
-+	}
 +	if (sw->features & AVB_SUPPORT)
 +		port->flow_ctrl = PHY_NO_FLOW_CTRL;
++
++	/* Point to port under netdev. */
++	if (phy_offset)
++		phy_id = port->first_port + phy_offset - 1;
++	else
++		phy_id = 0;
 +
 +	/* Replace virtual port with one from network device. */
 +	do {
@@ -104633,10 +104698,17 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +	if (features & VLAN_PORT)
 +		dev->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
 +
-+	/* Needed for inserting VLAN tag. */
-+	if (sw->features & SW_VLAN_DEV)
-+		if (header < VLAN_HLEN)
-+			header = VLAN_HLEN;
++	/* Default headroom is 2.  Adding 1 to hard_header_len makes it 1.
++	 * Adding 2 makes it 16.  Then adding more will subtract from that
++	 * number.  So header len of 4 results in 14, and header len of 6
++	 * results in 12.  But somehow when sending raw PTP Sync, Follow_Up,
++	 * and Delay_Req messages (which have size of 58 bytes from 68 bytes
++	 * or more used by other messages) will result in network_header to
++	 * become 12 rather than 32 in newer kernels.
++	 * The best number to use is therefore 2 to have the largest headroom.
++	 */
++	if (sw->features & (SW_VLAN_DEV | HSR_HW))
++		header = 2;
 +	dev->hard_header_len += header;
 +dbg_msg("%s %d:%d phy:%d l:%x"NL, __func__, port->first_port, port->port_cnt, phy_id,
 +port->live_ports);
@@ -105955,7 +106027,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +	{ KSZ8565_SKU,   5, INTF_RGMII, { 1, 2, 3, 4, 7, 0, 0, 0 }},
 +
 +	{ KSZ9477_5_SKU, 5, INTF_SGMII, { 1, 2, 3, 4, 6, 0, 0, 0 }},
-+	{ KSZ9477_3_SKU, 3, INTF_SGMII, { 1, 2, 6, 0, 0, 0, 0, 0 }},
++	{ KSZ9477_3_SKU, 3, INTF_SGMII, { 4, 5, 6, 0, 0, 0, 0, 0 }},
 +	{ KSZ9897_T_SKU, 6, INTF_RGMII, { 4, 3, 2, 1, 5, 6, 0, 0 }},
 +	{ KSZ9897_U_SKU, 6, INTF_RGMII, { 6, 4, 3, 2, 1, 5, 0, 0 }},
 +};
@@ -106092,6 +106164,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +	}
 +#endif
 +	sw->PORT_MASK = ports;
++	sw->PORT_INTR_MASK = ports;
 +dbg_msg("mask: %x %x %x"NL, ports, sw->HOST_MASK, sw->PORT_MASK);
 +	sw->mib_port_cnt = i;
 +
@@ -106214,8 +106287,8 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +
 +	sku = KSZ9897_SKU;
 +	port_count = 7;
++	mib_port_count = 7;
 +	if ((CHIP_ID_67 & 0x0f) == (id2 & 0x0f)) {
-+		mib_port_count = 7;
 +		phy_port_count = 5;
 +		sw->TAIL_TAG_SHIFT = 7;
 +		sw->TAIL_TAG_LOOKUP = (1 << (7 + 3));
@@ -106343,6 +106416,18 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +		}
 +	}
 +
++	/* This specifies the maximum physical port count of the switch. */
++	sw->port_cnt = port_count;
++
++	/* PORT_MASK may change if fewer ports are used. */
++	sw->PORT_INTR_MASK = (1 << port_count) - 1;
++	sw->PORT_MASK = (1 << port_count) - 1;
++
++	/* Find out which port is host port. */
++	/* Ignore user specified host port if not correct. */
++	if (sw_host_port < 0 || sw_host_port > port_count)
++		sw_host_port = 0;
++
 +	/* Find out how many ports are available. */
 +	port_count = ksz_setup_port_mappings(sw, sku);
 +	if (!port_count) {
@@ -106353,32 +106438,20 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +
 +	sw->id = sw_device_present;
 +
-+	mib_port_count = port_count - 1;
-+
-+	/* PORT_MASK may change if fewer ports are used. */
-+	sw->PORT_INTR_MASK = (1 << port_count) - 1;
-+	sw->PORT_MASK = (1 << port_count) - 1;
-+
-+	/* Find out which port is host port. */
-+	/* Ignore user specified host port if not correct. */
-+	if (sw_host_port < 0 || sw_host_port > port_count)
-+		sw_host_port = 0;
 +	ksz_update_port_mappings(sw, sku, &sw_host_port);
 +	sw->HOST_PORT = sw_host_port - 1;
 +
 +	/* No specific ports are specified. */
 +	if (!ports)
-+		ports = sw->PORT_MASK;
++		ports = (1 << port_count) - 1;
 +dbg_msg("ports: %x"NL, ports);
 +
 +	sw->dev_count = 1;
 +
 +	sw->mib_cnt = TOTAL_SWITCH_COUNTER_NUM;
-+	sw->mib_port_cnt = mib_port_count;
++	sw->mib_port_cnt = port_count - 1;
 +	sw->phy_port_cnt = phy_port_count;
 +	sw->HOST_MASK = (1 << sw->HOST_PORT);
-+
-+	sw->port_cnt = port_count;
 +
 +#ifdef DEBUG
 +	sw->verbose = 1;
@@ -106450,7 +106523,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/micrel/ksz_s
 +	}
 +	sw->interface = PHY_INTERFACE_MODE_RGMII;
 +	sw->ops->acquire(sw);
-+	for (; pi < sw->port_cnt; pi++) {
++	for (; pi < mib_port_count; pi++) {
 +		u16 data;
 +		u16 orig;
 +		u8 *data_lo;

@@ -2757,6 +2757,10 @@ static void ptp_start(struct ptp_info *ptp, int init)
 
 	prepare_pps(ptp);
 	ptp->started = true;
+	if (sw->dev_offset)
+		ptp->forward |= FWD_STP_DEV;
+	if (sw->features & SW_VLAN_DEV)
+		ptp->forward |= FWD_VLAN_DEV;
 }  /* ptp_start */
 
 static void save_msg_info(struct ptp_info *ptp, struct ptp_msg_info *info,

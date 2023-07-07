@@ -14206,9 +14206,11 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	tag_len = ptp_len + 2;
 	if (sw->TAIL_TAG_SHIFT != 7)
 		tag_len--;
+#ifdef CONFIG_KSZ_HSR
 	if (sw->features & HSR_HW)
 		headlen = HSR_HLEN;
-	else if (sw->features & SW_VLAN_DEV)
+#endif
+	if (sw->features & SW_VLAN_DEV && !headlen)
 		headlen = VLAN_HLEN;
 
 	memset(&tx_tag, 0, sizeof(tx_tag));
@@ -14291,6 +14293,10 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 
 		if (headerlen < headlen)
 			headerlen = headlen;
+
+		/* The new socket buffer has no fragments but still needs
+		 * hardware checksum generation.
+		 */
 		skb = skb_copy_expand(org_skb, headerlen, len, GFP_ATOMIC);
 		if (!skb)
 			return NULL;
@@ -14727,6 +14733,9 @@ static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 	flow_ctrl = port->flow_ctrl;
 	switch (info->interface) {
 	case PHY_INTERFACE_MODE_RGMII:
+	case PHY_INTERFACE_MODE_RGMII_ID:
+	case PHY_INTERFACE_MODE_RGMII_RXID:
+	case PHY_INTERFACE_MODE_RGMII_TXID:
 		if (sw->features & GIGABIT_SUPPORT) {
 			phylink_set(mask, 1000baseT_Full);
 			phylink_set(mask, 1000baseX_Full);
@@ -14960,6 +14969,9 @@ dbg_msg(" found eth\n");
 					if (name && !strcmp(name, "rmii"))
 						sw->interface =
 							PHY_INTERFACE_MODE_RMII;
+					if (name && !strcmp(name, "rgmii-id"))
+						sw->interface =
+							PHY_INTERFACE_MODE_RGMII_ID;
 				}
 				name = of_get_property(port, "label", NULL);
 				if (name)
@@ -16500,7 +16512,7 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 		m &= ~((1 << last_phy_port) - 1);
 		m &= left;
 
-		/* No more legimate port. */
+		/* No more legitimate port. */
 		if (!m)
 			break;
 
@@ -16895,8 +16907,6 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		port->flow_ctrl = PHY_TX_ONLY;
 #endif
 		setup_hsr(&sw->info->hsr, dev, i);
-		if (header < HSR_HLEN)
-			header = HSR_HLEN;
 	}
 	if (sw->eth_cnt && (map->proto & HSR_REDBOX)) {
 		bool fwd = false;
@@ -16915,16 +16925,14 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	info = get_port_info(sw, p);
 	port->sw = sw;
 	port->linked = info;
-
-	/* Point to port under netdev. */
-	if (phy_offset) {
-		phy_id = port->linked->phy_id;
-	} else {
-		phy_id = 0;
-		info = get_port_info(sw, sw->HOST_PORT);
-	}
 	if (sw->features & AVB_SUPPORT)
 		port->flow_ctrl = PHY_NO_FLOW_CTRL;
+
+	/* Point to port under netdev. */
+	if (phy_offset)
+		phy_id = port->first_port + phy_offset - 1;
+	else
+		phy_id = 0;
 
 	/* Replace virtual port with one from network device. */
 	do {
@@ -16974,10 +16982,17 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	if (features & VLAN_PORT)
 		dev->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
 
-	/* Needed for inserting VLAN tag. */
-	if (sw->features & SW_VLAN_DEV)
-		if (header < VLAN_HLEN)
-			header = VLAN_HLEN;
+	/* Default headroom is 2.  Adding 1 to hard_header_len makes it 1.
+	 * Adding 2 makes it 16.  Then adding more will subtract from that
+	 * number.  So header len of 4 results in 14, and header len of 6
+	 * results in 12.  But somehow when sending raw PTP Sync, Follow_Up,
+	 * and Delay_Req messages (which have size of 58 bytes from 68 bytes
+	 * or more used by other messages) will result in network_header to
+	 * become 12 rather than 32 in newer kernels.
+	 * The best number to use is therefore 2 to have the largest headroom.
+	 */
+	if (sw->features & (SW_VLAN_DEV | HSR_HW))
+		header = 2;
 	dev->hard_header_len += header;
 dbg_msg("%s %d:%d phy:%d l:%x"NL, __func__, port->first_port, port->port_cnt, phy_id,
 port->live_ports);
@@ -18296,7 +18311,7 @@ static struct ksz_port_mapping port_mappings[] = {
 	{ KSZ8565_SKU,   5, INTF_RGMII, { 1, 2, 3, 4, 7, 0, 0, 0 }},
 
 	{ KSZ9477_5_SKU, 5, INTF_SGMII, { 1, 2, 3, 4, 6, 0, 0, 0 }},
-	{ KSZ9477_3_SKU, 3, INTF_SGMII, { 1, 2, 6, 0, 0, 0, 0, 0 }},
+	{ KSZ9477_3_SKU, 3, INTF_SGMII, { 4, 5, 6, 0, 0, 0, 0, 0 }},
 	{ KSZ9897_T_SKU, 6, INTF_RGMII, { 4, 3, 2, 1, 5, 6, 0, 0 }},
 	{ KSZ9897_U_SKU, 6, INTF_RGMII, { 6, 4, 3, 2, 1, 5, 0, 0 }},
 };
@@ -18433,6 +18448,7 @@ dbg_msg(" %d= %d %d"NL, n, info->log_p, info->intf);
 	}
 #endif
 	sw->PORT_MASK = ports;
+	sw->PORT_INTR_MASK = ports;
 dbg_msg("mask: %x %x %x"NL, ports, sw->HOST_MASK, sw->PORT_MASK);
 	sw->mib_port_cnt = i;
 
@@ -18544,8 +18560,8 @@ dbg_msg("%02x %02x"NL, id1, id2);
 
 	sku = KSZ9897_SKU;
 	port_count = 7;
+	mib_port_count = 7;
 	if ((CHIP_ID_67 & 0x0f) == (id2 & 0x0f)) {
-		mib_port_count = 7;
 		phy_port_count = 5;
 		sw->TAIL_TAG_SHIFT = 7;
 		sw->TAIL_TAG_LOOKUP = (1 << (7 + 3));
@@ -18673,6 +18689,18 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 		}
 	}
 
+	/* This specifies the maximum physical port count of the switch. */
+	sw->port_cnt = port_count;
+
+	/* PORT_MASK may change if fewer ports are used. */
+	sw->PORT_INTR_MASK = (1 << port_count) - 1;
+	sw->PORT_MASK = (1 << port_count) - 1;
+
+	/* Find out which port is host port. */
+	/* Ignore user specified host port if not correct. */
+	if (sw_host_port < 0 || sw_host_port > port_count)
+		sw_host_port = 0;
+
 	/* Find out how many ports are available. */
 	port_count = ksz_setup_port_mappings(sw, sku);
 	if (!port_count) {
@@ -18683,32 +18711,20 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 
 	sw->id = sw_device_present;
 
-	mib_port_count = port_count - 1;
-
-	/* PORT_MASK may change if fewer ports are used. */
-	sw->PORT_INTR_MASK = (1 << port_count) - 1;
-	sw->PORT_MASK = (1 << port_count) - 1;
-
-	/* Find out which port is host port. */
-	/* Ignore user specified host port if not correct. */
-	if (sw_host_port < 0 || sw_host_port > port_count)
-		sw_host_port = 0;
 	ksz_update_port_mappings(sw, sku, &sw_host_port);
 	sw->HOST_PORT = sw_host_port - 1;
 
 	/* No specific ports are specified. */
 	if (!ports)
-		ports = sw->PORT_MASK;
+		ports = (1 << port_count) - 1;
 dbg_msg("ports: %x"NL, ports);
 
 	sw->dev_count = 1;
 
 	sw->mib_cnt = TOTAL_SWITCH_COUNTER_NUM;
-	sw->mib_port_cnt = mib_port_count;
+	sw->mib_port_cnt = port_count - 1;
 	sw->phy_port_cnt = phy_port_count;
 	sw->HOST_MASK = (1 << sw->HOST_PORT);
-
-	sw->port_cnt = port_count;
 
 #ifdef DEBUG
 	sw->verbose = 1;
@@ -18780,7 +18796,7 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 	}
 	sw->interface = PHY_INTERFACE_MODE_RGMII;
 	sw->ops->acquire(sw);
-	for (; pi < sw->port_cnt; pi++) {
+	for (; pi < mib_port_count; pi++) {
 		u16 data;
 		u16 orig;
 		u8 *data_lo;

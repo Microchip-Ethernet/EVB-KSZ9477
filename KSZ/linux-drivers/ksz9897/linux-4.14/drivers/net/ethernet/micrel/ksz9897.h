@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 definition file
  *
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -120,9 +120,9 @@
 #define SW_IBA_ENABLE			(1 << 31)
 #define SW_IBA_DA_MATCH			(1 << 30)
 #define SW_IBA_INIT			(1 << 29)
-#define SW_IBA_QID_M			0xF
+#define SW_IBA_QID_M			0x3
 #define SW_IBA_QID_S			22
-#define SW_IBA_PORT_M			0x2F
+#define SW_IBA_PORT_M			0x7
 #define SW_IBA_PORT_S			16
 #define SW_IBA_FRAME_TPID_M		0xFFFF
 
@@ -177,9 +177,9 @@
 
 #define SW_PLL_POWER_DOWN		(1 << 5)
 #define SW_POWER_DOWN_MODE		0x3
+#define SW_POWER_DOWN_S			3
 #define SW_ENERGY_DETECTION		1
 #define SW_SOFT_POWER_DOWN		2
-#define SW_POWER_SAVING			3
 
 /* 3 - Operation Control */
 #define REG_SW_OPERATION		0x0300

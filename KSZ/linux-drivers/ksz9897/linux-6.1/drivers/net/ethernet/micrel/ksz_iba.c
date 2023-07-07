@@ -29,6 +29,10 @@
 
 #define ETH_P_IBA			IBA_TAG_TYPE
 
+#define VALID_IBA_VAL			\
+	(SW_IBA_ENABLE | SW_IBA_DA_MATCH | SW_IBA_INIT |		\
+	 (SW_IBA_PORT_M << SW_IBA_PORT_S) | SW_IBA_FRAME_TPID_M)
+
 static void prepare_iba(struct ksz_iba_info *iba, const u8 *dst, const u8 *src)
 {
 #ifndef CAPTURE_IBA
@@ -268,16 +272,35 @@ static void *iba_cmd_data(struct ksz_iba_info *info, u32 cmd, u32 size,
 
 		/* write can be 8-bit, 16-bit, 24-bit, or 32-bit. */
 		if (IBA_CMD_READ != cmd) {
-
-#if 1
-			/* Do not allow changing IBA port. */
 			if (IBA_CMD_WRITE == cmd &&
 			    REG_SW_IBA__4 <= addr && addr < REG_SW_IBA__4 + 4) {
-				info->data[0] = info->cfg;
-				addr = REG_SW_IBA__4;
-				size = IBA_CMD_32;
-			}
+				int shift;
+				u32 mask;
+
+				shift = addr - REG_SW_IBA__4;
+				mask = VALID_IBA_VAL;
+				if (size == IBA_CMD_8)
+					shift = 3 - shift;
+				else if (size == IBA_CMD_16)
+					shift = 2 - shift;
+				shift *= 8;
+				mask >>= shift;
+				if (size == IBA_CMD_8)
+					mask &= 0xff;
+				else if (size == IBA_CMD_16)
+					mask &= 0xffff;
+				if (((info->cfg >> shift) & mask) !=
+				    (info->data[0] & mask)) {
+#ifndef CONFIG_KSZ_IBA_ONLY
+					info->use_iba |= 0x60;
+#else
+					/* Do not allow changing IBA port. */
+					info->data[0] = info->cfg;
+					addr = REG_SW_IBA__4;
+					size = IBA_CMD_32;
 #endif
+				}
+			}
 			info->data[0] = iba_set_val(size, addr, info->data[0]);
 		}
 		size = iba_set_size(addr, size);
@@ -761,8 +784,15 @@ static void *iba_w_pre(struct ksz_iba_info *info, void *in, void *obj)
 static void sw_setup_iba(struct ksz_sw *sw)
 {
 	u32 data;
+	u32 mask;
 
 	data = sw->old->r32(sw, REG_SW_IBA__4);
+
+	/* Register value may become random after switch power down. */
+	mask = (SW_IBA_ENABLE | (SW_IBA_PORT_M << SW_IBA_PORT_S));
+	if (sw->info->iba.cfg &&
+	    (sw->info->iba.cfg & mask) != (data & mask))
+		data = sw->info->iba.cfg;
 	sw->info->iba.tag_type = (data & SW_IBA_FRAME_TPID_M);
 	data &= ~(SW_IBA_PORT_M << SW_IBA_PORT_S);
 	data |= sw->HOST_PORT << SW_IBA_PORT_S;
@@ -788,6 +818,13 @@ static void sw_setup_iba(struct ksz_sw *sw)
  */
 static void iba_to_spi(struct ksz_sw *sw, struct ksz_iba_info *info)
 {
+	bool restart = true;
+
+	if (info->use_iba & 0x20) {
+		info->use_iba &= ~0x60;
+		restart = false;
+		printk(KERN_ALERT "stop using IBA"NL);
+	}
 	if (2 <= info->use_iba) {
 if (info->use_iba != 5)
 dbg_msg(" iba stops: %x"NL, info->use_iba);
@@ -801,12 +838,14 @@ dbg_msg(" iba stops: %x"NL, info->use_iba);
 	sw_set_spi(sw, info);
 	if (sw->intr_using != 2)
 		mutex_unlock(sw->hwlock);
-	printk(KERN_ALERT "revert to SPI"NL);
+	if (restart) {
+		printk(KERN_ALERT "revert to SPI"NL);
 
 #ifdef RETRY_IBA
-	sw_setup_iba(sw);
-	schedule_delayed_work(&sw->set_ops, msecs_to_jiffies(1000));
+		sw_setup_iba(sw);
+		schedule_delayed_work(&sw->set_ops, msecs_to_jiffies(1000));
 #endif
+	}
 }  /* iba_to_spi */
 
 static void iba_dbg_states(struct ksz_iba_info *info)
@@ -903,7 +942,6 @@ static int iba_reqs(struct ksz_iba_info *info, void **in, void *out, void *obj,
 	init_completion(&info->done);
 	rc = iba_xmit(info);
 	if (rc) {
-printk("  !! %x"NL, rc);
 		iba_dbg_states(info);
 
 		/* Not testing if IBA is okay. */
@@ -928,6 +966,8 @@ dbg_msg(" first fail: %02x %04x %04x"NL, info->respid, last_ok_reg,
 			iba_to_spi(info->sw_dev, info);
 		return 0;
 	}
+	if (info->use_iba & 0x20)
+		iba_to_spi(info->sw_dev, info);
 
 	rc = 1;
 	if (post)
@@ -1288,8 +1328,16 @@ static int iba_burst(struct ksz_iba_info *info, u32 addr, size_t cnt,
 			u32 *ptr = (u32 *) buf;
 			u32 loc = (REG_SW_IBA__4 - addr) / 4;
 
-			if (write)
+			if (write &&
+			    ((ptr[loc] & VALID_IBA_VAL) !=
+			    (info->cfg & VALID_IBA_VAL))) {
+#ifndef CONFIG_KSZ_IBA_ONLY
+				info->use_iba |= 0x60;
+#else
+				/* Do not allow changing IBA port. */
 				ptr[loc] = info->cfg;
+#endif
+			}
 		}
 	} else {
 		mult = 1;
@@ -1335,6 +1383,9 @@ dbg_iba_test = 1;
 		iba_to_spi(info->sw_dev, info);
 		return 0;
 	}
+	if (info->use_iba & 0x40)
+		wait = 1;
+	else
 	wait = wait_for_completion_timeout(&info->done, info->delay_ticks);
 	if (!wait) {
 dbg_msg("burst to"NL);
@@ -1342,6 +1393,8 @@ dbg_msg("burst to"NL);
 		iba_to_spi(info->sw_dev, info);
 		return 0;
 	}
+	if (info->use_iba & 0x20)
+		iba_to_spi(info->sw_dev, info);
 
 	rc = post(info, data, NULL);
 	rc *= 4;

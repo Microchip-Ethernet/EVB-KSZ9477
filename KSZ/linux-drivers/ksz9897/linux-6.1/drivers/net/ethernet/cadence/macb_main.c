@@ -366,6 +366,7 @@ static struct macb *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 
 		skb->len -= diff;
 		skb->tail -= diff;
+		len = skb->len;
 	}
 
 	bp = netdev_priv(dev);
@@ -373,7 +374,7 @@ static struct macb *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	/* Internal packets handled by the switch. */
 	if (!sw->net_ops->drv_rx(sw, skb, rx_port)) {
 		bp->dev->stats.rx_packets++;
-		bp->dev->stats.rx_bytes += skb->len;
+		bp->dev->stats.rx_bytes += len;
 		return NULL;
 	}
 
@@ -5276,24 +5277,16 @@ static const struct ethtool_ops gem_ethtool_ops = {
 	.set_rxnfc			= gem_set_rxnfc,
 };
 
-#ifdef CONFIG_KSZ_SWITCH
-#define SIOCDEVDEBUG			(SIOCDEVPRIVATE + 10)
-#endif
-
 static int macb_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 {
 	struct macb *bp = netdev_priv(dev);
 
-#ifdef CONFIG_KSZ_SWITCH
-	int result;
+#if defined(CONFIG_KSZ_SWITCH) && defined(CONFIG_1588_PTP)
 	struct ksz_sw *sw = bp->port.sw;
-#ifdef CONFIG_1588_PTP
+	int result = -EOPNOTSUPP;
 	struct ptp_info *ptp;
-#endif
 
-	result = -EOPNOTSUPP;
 	switch (cmd) {
-#ifdef CONFIG_1588_PTP
 	case SIOCSHWTSTAMP:
 		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
 			int i;
@@ -5308,29 +5301,8 @@ static int macb_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 			result = ptp->ops->hwtstamp_ioctl(ptp, rq, ports);
 		}
 		break;
-	case SIOCDEVPRIVATE + 15:
-		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
-			ptp = &sw->ptp_hw;
-			result = ptp->ops->dev_req(ptp, rq->ifr_data, NULL);
-		}
-		break;
-#endif
-#ifdef CONFIG_KSZ_MRP
-	case SIOCDEVPRIVATE + 14:
-		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
-			struct mrp_info *mrp = &sw->mrp;
-
-			result = mrp->ops->dev_req(mrp, rq->ifr_data);
-		}
-		break;
-#endif
-	case SIOCDEVPRIVATE + 13:
-		if (sw_is_switch(sw)) {
-			result = sw->ops->dev_req(sw, rq->ifr_data, NULL);
-		}
-		break;
 	default:
-		result = -EOPNOTSUPP;
+		break;
 	}
 	if (result != -EOPNOTSUPP)
 		return result;
@@ -5350,6 +5322,47 @@ static int macb_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 
 	return phylink_mii_ioctl(bp->phylink, rq, cmd);
 }
+
+#ifdef CONFIG_KSZ_SWITCH
+static int macb_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
+			       void __user *data, int cmd)
+{
+	struct macb *bp = netdev_priv(dev);
+	struct ksz_sw *sw = bp->port.sw;
+	int result = -EOPNOTSUPP;
+#ifdef CONFIG_1588_PTP
+	struct ptp_info *ptp;
+#endif
+
+	switch (cmd) {
+#ifdef CONFIG_1588_PTP
+	case SIOCDEVPRIVATE + 15:
+		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
+			ptp = &sw->ptp_hw;
+			result = ptp->ops->dev_req(ptp, ifr->ifr_data, NULL);
+		}
+		break;
+#endif
+#ifdef CONFIG_KSZ_MRP
+	case SIOCDEVPRIVATE + 14:
+		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
+			struct mrp_info *mrp = &sw->mrp;
+
+			result = mrp->ops->dev_req(mrp, ifr->ifr_data);
+		}
+		break;
+#endif
+	case SIOCDEVPRIVATE + 13:
+		if (sw_is_switch(sw)) {
+			result = sw->ops->dev_req(sw, ifr->ifr_data, NULL);
+		}
+		break;
+	default:
+		break;
+	}
+	return result;
+}
+#endif
 
 static inline void macb_set_txcsum_feature(struct macb *bp,
 					   netdev_features_t features)
@@ -5457,6 +5470,7 @@ static const struct net_device_ops macb_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_change_mtu		= macb_change_mtu,
 #ifdef CONFIG_KSZ_SWITCH
+	.ndo_siocdevprivate	= macb_siocdevprivate,
 	.ndo_set_mac_address	= macb_set_mac_addr,
 #else
 	.ndo_set_mac_address	= eth_mac_addr,
@@ -6646,7 +6660,7 @@ static int macb_probe(struct platform_device *pdev)
 	if ((bp->caps & MACB_CAPS_JUMBO) && bp->jumbo_max_len)
 		dev->max_mtu = bp->jumbo_max_len - ETH_HLEN - ETH_FCS_LEN;
 	else
-		dev->max_mtu = ETH_DATA_LEN + 4;
+		dev->max_mtu = ETH_DATA_LEN;
 
 #ifdef CONFIG_KSZ_SWITCH
 	if (macb_is_gem(bp))

@@ -399,6 +399,7 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 
 		skb->len -= diff;
 		skb->tail -= diff;
+		len = skb->len
 	}
 
 	fep = netdev_priv(dev);
@@ -406,7 +407,7 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	/* Internal packets handled by the switch. */
 	if (!sw->net_ops->drv_rx(sw, skb, rx_port)) {
 		dev->stats.rx_packets++;
-		dev->stats.rx_bytes += skb->len;
+		dev->stats.rx_bytes += len;
 		return NULL;
 	}
 
@@ -3553,25 +3554,17 @@ static const struct ethtool_ops fec_enet_ethtool_ops = {
 	.self_test		= net_selftest,
 };
 
-#ifdef CONFIG_KSZ_SWITCH
-#define SIOCDEVDEBUG			(SIOCDEVPRIVATE + 10)
-#endif
-
 static int fec_enet_ioctl(struct net_device *ndev, struct ifreq *rq, int cmd)
 {
 	struct fec_enet_private *fep = netdev_priv(ndev);
 	struct phy_device *phydev = ndev->phydev;
 
-#ifdef CONFIG_KSZ_SWITCH
-	int result;
+#if defined(CONFIG_KSZ_SWITCH) && defined(CONFIG_1588_PTP)
 	struct ksz_sw *sw = fep->port.sw;
-#ifdef CONFIG_1588_PTP
+	int result = -EOPNOTSUPP;
 	struct ptp_info *ptp;
-#endif
 
-	result = -EOPNOTSUPP;
 	switch (cmd) {
-#ifdef CONFIG_1588_PTP
 	case SIOCSHWTSTAMP:
 		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
 			int i;
@@ -3586,29 +3579,8 @@ static int fec_enet_ioctl(struct net_device *ndev, struct ifreq *rq, int cmd)
 			result = ptp->ops->hwtstamp_ioctl(ptp, rq, ports);
 		}
 		break;
-	case SIOCDEVPRIVATE + 15:
-		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
-			ptp = &sw->ptp_hw;
-			result = ptp->ops->dev_req(ptp, rq->ifr_data, NULL);
-		}
-		break;
-#endif
-#ifdef CONFIG_KSZ_MRP
-	case SIOCDEVPRIVATE + 14:
-		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
-			struct mrp_info *mrp = &sw->mrp;
-
-			result = mrp->ops->dev_req(mrp, rq->ifr_data);
-		}
-		break;
-#endif
-	case SIOCDEVPRIVATE + 13:
-		if (sw_is_switch(sw)) {
-			result = sw->ops->dev_req(sw, rq->ifr_data, NULL);
-		}
-		break;
 	default:
-		result = -EOPNOTSUPP;
+		break;
 	}
 	if (result != -EOPNOTSUPP)
 		return result;
@@ -3635,6 +3607,47 @@ static int fec_enet_ioctl(struct net_device *ndev, struct ifreq *rq, int cmd)
 
 	return phy_mii_ioctl(phydev, rq, cmd);
 }
+
+#ifdef CONFIG_KSZ_SWITCH
+static int fec_enet_siocdevprivate(struct net_device *ndev, struct ifreq *ifr,
+				   void __user *data, int cmd)
+{
+	struct fec_enet_private *fep = netdev_priv(ndev);
+	struct ksz_sw *sw = fep->port.sw;
+	int result = -EOPNOTSUPP;
+#ifdef CONFIG_1588_PTP
+	struct ptp_info *ptp;
+#endif
+
+	switch (cmd) {
+#ifdef CONFIG_1588_PTP
+	case SIOCDEVPRIVATE + 15:
+		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
+			ptp = &sw->ptp_hw;
+			result = ptp->ops->dev_req(ptp, ifr->ifr_data, NULL);
+		}
+		break;
+#endif
+#ifdef CONFIG_KSZ_MRP
+	case SIOCDEVPRIVATE + 14:
+		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
+			struct mrp_info *mrp = &sw->mrp;
+
+			result = mrp->ops->dev_req(mrp, ifr->ifr_data);
+		}
+		break;
+#endif
+	case SIOCDEVPRIVATE + 13:
+		if (sw_is_switch(sw)) {
+			result = sw->ops->dev_req(sw, ifr->ifr_data, NULL);
+		}
+		break;
+	default:
+		break;
+	}
+	return result;
+}
+#endif
 
 static void fec_enet_free_buffers(struct net_device *ndev)
 {
@@ -4740,6 +4753,9 @@ static const struct net_device_ops fec_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_tx_timeout		= fec_timeout,
 	.ndo_set_mac_address	= fec_set_mac_address,
+#ifdef CONFIG_KSZ_SWITCH
+	.ndo_siocdevprivate	= fec_enet_siocdevprivate,
+#endif
 	.ndo_eth_ioctl		= fec_enet_ioctl,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= fec_poll_controller,

@@ -463,6 +463,7 @@ static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 
 		skb->len -= diff;
 		skb->tail -= diff;
+		len = skb->len;
 	}
 
 	priv = netdev_priv(dev);
@@ -470,7 +471,7 @@ static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	/* Internal packets handled by the switch. */
 	if (!sw->net_ops->drv_rx(sw, skb, rx_port)) {
 		priv->dev->stats.rx_packets++;
-		priv->dev->stats.rx_bytes += skb->len;
+		priv->dev->stats.rx_bytes += len;
 		return NULL;
 	}
 
@@ -6876,10 +6877,6 @@ static void stmmac_poll_controller(struct net_device *dev)
 }
 #endif
 
-#ifdef CONFIG_KSZ_SWITCH
-#define SIOCDEVDEBUG			(SIOCDEVPRIVATE + 10)
-#endif
-
 /**
  *  stmmac_ioctl - Entry point for the Ioctl
  *  @dev: Device pointer.
@@ -6894,14 +6891,11 @@ static int stmmac_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	struct stmmac_priv *priv = netdev_priv (dev);
 	int ret = -EOPNOTSUPP;
 
-#ifdef CONFIG_KSZ_SWITCH
+#if defined(CONFIG_KSZ_SWITCH) && defined(CONFIG_1588_PTP)
 	struct ksz_sw *sw = priv->port.sw;
-#ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp;
-#endif
 
 	switch (cmd) {
-#ifdef CONFIG_1588_PTP
 	case SIOCSHWTSTAMP:
 		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
 			int i;
@@ -6916,29 +6910,8 @@ static int stmmac_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 			ret = ptp->ops->hwtstamp_ioctl(ptp, rq, ports);
 		}
 		break;
-	case SIOCDEVPRIVATE + 15:
-		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
-			ptp = &sw->ptp_hw;
-			ret = ptp->ops->dev_req(ptp, rq->ifr_data, NULL);
-		}
-		break;
-#endif
-#ifdef CONFIG_KSZ_MRP
-	case SIOCDEVPRIVATE + 14:
-		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
-			struct mrp_info *mrp = &sw->mrp;
-
-			ret = mrp->ops->dev_req(mrp, rq->ifr_data);
-		}
-		break;
-#endif
-	case SIOCDEVPRIVATE + 13:
-		if (sw_is_switch(sw)) {
-			ret = sw->ops->dev_req(sw, rq->ifr_data, NULL);
-		}
-		break;
 	default:
-		ret = -EOPNOTSUPP;
+		break;
 	}
 	if (ret != -EOPNOTSUPP)
 		return ret;
@@ -6965,6 +6938,47 @@ static int stmmac_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 
 	return ret;
 }
+
+#ifdef CONFIG_KSZ_SWITCH
+static int stmmac_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
+				 void __user *data, int cmd)
+{
+	struct stmmac_priv *priv = netdev_priv (dev);
+	struct ksz_sw *sw = priv->port.sw;
+	int result = -EOPNOTSUPP;
+#ifdef CONFIG_1588_PTP
+	struct ptp_info *ptp;
+#endif
+
+	switch (cmd) {
+#ifdef CONFIG_1588_PTP
+	case SIOCDEVPRIVATE + 15:
+		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
+			ptp = &sw->ptp_hw;
+			result = ptp->ops->dev_req(ptp, ifr->ifr_data, NULL);
+		}
+		break;
+#endif
+#ifdef CONFIG_KSZ_MRP
+	case SIOCDEVPRIVATE + 14:
+		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
+			struct mrp_info *mrp = &sw->mrp;
+
+			result = mrp->ops->dev_req(mrp, ifr->ifr_data);
+		}
+		break;
+#endif
+	case SIOCDEVPRIVATE + 13:
+		if (sw_is_switch(sw)) {
+			result = sw->ops->dev_req(sw, ifr->ifr_data, NULL);
+		}
+		break;
+	default:
+		break;
+	}
+	return result;
+}
+#endif
 
 static int stmmac_setup_tc_block_cb(enum tc_setup_type type, void *type_data,
 				    void *cb_priv)
@@ -7799,6 +7813,9 @@ static const struct net_device_ops stmmac_netdev_ops = {
 	.ndo_set_features = stmmac_set_features,
 	.ndo_set_rx_mode = stmmac_set_rx_mode,
 	.ndo_tx_timeout = stmmac_tx_timeout,
+#ifdef CONFIG_KSZ_SWITCH
+	.ndo_siocdevprivate = stmmac_siocdevprivate,
+#endif
 	.ndo_eth_ioctl = stmmac_ioctl,
 	.ndo_setup_tc = stmmac_setup_tc,
 	.ndo_select_queue = stmmac_select_queue,

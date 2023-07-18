@@ -4051,7 +4051,13 @@ skip_hw:
 
 reset_hw:
 #ifdef CONFIG_KSZ_SWITCH
-	bp = bp->hw_priv;
+	if (sw_is_switch(sw)) {
+		bp = bp->hw_priv;
+		if (bp->opened > 1)
+			bp->opened--;
+		if (bp->opened)
+			return err;
+	}
 #endif
 	macb_reset_hw(bp);
 	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)

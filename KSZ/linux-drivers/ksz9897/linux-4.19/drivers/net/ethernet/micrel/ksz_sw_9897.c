@@ -6637,7 +6637,7 @@ dbg_msg("%s %d %d"NL, __func__, port, state);
 		for (i = sw->dev_offset; i < sw->dev_offset + sw->dev_count;
 		     i++) {
 			netport = sw->netport[i];
-			if (netport && netport->first_port == port + 1) {
+			if (netport && netport->linked->phy_id == port + 1) {
 				schedule_work(&netport->link_update);
 				break;
 			}
@@ -15815,7 +15815,9 @@ static void link_update_work(struct work_struct *work)
 		if (!info->report)
 			continue;
 		info->report = false;
-		phydev = sw->phy[i];
+		phydev = sw->phy[p + 1];
+		if (!phydev)
+			continue;
 		phydev->link = (info->state == media_connected);
 		phydev->speed = info->tx_rate / TX_RATE_UNIT;
 		phydev->duplex = (info->duplex == 2);
@@ -15830,7 +15832,7 @@ static void link_update_work(struct work_struct *work)
 	if (dev) {
 		link = netif_carrier_ok(dev);
 		if (sw->overrides & DELAY_UPDATE_LINK) {
-			p = get_phy_port(sw, info->phy_id);
+			p = info->phy_id - 1;
 			cfg = get_port_cfg(sw, p);
 			port_not_ready =
 				cfg->stp_state[0] != STP_STATE_FORWARDING;
@@ -15936,7 +15938,7 @@ static void link_update_work(struct work_struct *work)
 			phy_link = (port->linked->state == media_connected);
 		link = netif_carrier_ok(dev);
 		if (sw->overrides & DELAY_UPDATE_LINK) {
-			p = get_phy_port(sw, port->linked->phy_id);
+			p = port->linked->phy_id - 1;
 			cfg = get_port_cfg(sw, p);
 			port_not_ready =
 				cfg->stp_state[0] != STP_STATE_FORWARDING;
@@ -16612,9 +16614,13 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	if (sw->features & AVB_SUPPORT)
 		port->flow_ctrl = PHY_NO_FLOW_CTRL;
 
+	p = get_phy_port(sw, port->first_port);
+	port->sw = sw;
+	port->linked = get_port_info(sw, p);
+
 	/* Point to port under netdev. */
 	if (phy_offset)
-		phy_id = port->first_port + phy_offset - 1;
+		phy_id = port->linked->phy_id;
 	else
 		phy_id = 0;
 
@@ -16631,12 +16637,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		priv = phydev->priv;
 		priv->port = port;
 	} while (0);
+
 	if (!phy_offset)
 		phy_offset = 1;
-
-	p = get_phy_port(sw, port->first_port);
-	port->sw = sw;
-	port->linked = get_port_info(sw, p);
 
 	for (cnt = 0, n = port->first_port; cnt < port_cnt; cnt++, n++) {
 		pi = get_phy_port(sw, n);
@@ -17227,7 +17230,7 @@ static void sw_init_phy_priv(struct sw_priv *ks)
 	uint n;
 	uint p;
 
-	for (n = 0; n <= sw->mib_port_cnt + 1; n++) {
+	for (n = 0; n <= sw->port_cnt; n++) {
 		phydata = &sw->phydata[n];
 		port = &ks->ports[n];
 		phydata->port = port;
@@ -17384,7 +17387,9 @@ static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 	struct ksz_sw *sw = &ks->sw;
 	int ret = 0xffff;
 
-	if (phy_id > sw->mib_port_cnt + 1)
+	if (phy_id > sw->port_cnt)
+		return 0xffff;
+	if (phy_id && get_log_port(sw, phy_id - 1) > sw->mib_port_cnt)
 		return 0xffff;
 
 	sw->ops->acquire(sw);
@@ -17415,7 +17420,9 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 	struct sw_priv *ks = bus->priv;
 	struct ksz_sw *sw = &ks->sw;
 
-	if (phy_id > sw->mib_port_cnt + 1)
+	if (phy_id > sw->port_cnt)
+		return -EINVAL;
+	if (phy_id && get_log_port(sw, phy_id - 1) > sw->mib_port_cnt)
 		return -EINVAL;
 
 	sw->ops->acquire(sw);
@@ -17511,7 +17518,7 @@ static int ksz_mii_init(struct sw_priv *ks)
 	bus->write = ksz_mii_write;
 	snprintf(bus->id, MII_BUS_ID_SIZE, "sw.%d", ks->sw.id);
 	bus->parent = &pdev->dev;
-	bus->phy_mask = ~((1 << (ks->sw.mib_port_cnt + 2)) - 1);
+	bus->phy_mask = ~((1 << (ks->sw.port_cnt + 1)) - 1);
 	bus->priv = ks;
 
 	for (i = 0; i < PHY_MAX_ADDR; i++)
@@ -17816,7 +17823,7 @@ static void link_read_work(struct work_struct *work)
 				struct ksz_port_cfg *cfg;
 				uint p;
 
-				p = get_phy_port(sw, port->linked->phy_id);
+				p = port->linked->phy_id - 1;
 				cfg = get_port_cfg(sw, p);
 				if (cfg->stp_state[0] != STP_STATE_FORWARDING)
 					continue;
@@ -17971,7 +17978,7 @@ static struct ksz_port_mapping port_mappings[] = {
 	{ KSZ8565_SKU,   5, INTF_RGMII, { 1, 2, 3, 4, 7, 0, 0, 0 }},
 
 	{ KSZ9477_5_SKU, 5, INTF_SGMII, { 1, 2, 3, 4, 6, 0, 0, 0 }},
-	{ KSZ9477_3_SKU, 3, INTF_SGMII, { 4, 5, 6, 0, 0, 0, 0, 0 }},
+	{ KSZ9477_3_SKU, 3, INTF_SGMII, { 4, 7, 6, 0, 0, 0, 0, 0 }},
 	{ KSZ9897_T_SKU, 6, INTF_RGMII, { 4, 3, 2, 1, 5, 6, 0, 0 }},
 	{ KSZ9897_U_SKU, 6, INTF_RGMII, { 6, 4, 3, 2, 1, 5, 0, 0 }},
 };

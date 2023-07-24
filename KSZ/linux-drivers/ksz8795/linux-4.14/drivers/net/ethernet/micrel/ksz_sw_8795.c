@@ -262,8 +262,6 @@ enum {
 
 static uint get_phy_port(struct ksz_sw *sw, uint n)
 {
-if (n > sw->mib_port_cnt + 1)
-dbg_msg("  !!! %s %d\n", __func__, n);
 	if (n >= sw->mib_port_cnt + 1)
 		n = 0;
 	return sw->port_info[n].phy_p;
@@ -271,10 +269,6 @@ dbg_msg("  !!! %s %d\n", __func__, n);
 
 static uint get_log_port(struct ksz_sw *sw, uint p)
 {
-if (p >= sw->port_cnt)
-dbg_msg("  !!! %s %d\n", __func__, p);
-if (!sw->port_info[p].log_m)
-dbg_msg("  ??? %s %d\n", __func__, p);
 	return sw->port_info[p].log_p;
 }
 
@@ -9653,7 +9647,9 @@ static void link_update_work(struct work_struct *work)
 		if (!info->report)
 			continue;
 		info->report = false;
-		phydev = sw->phy[i];
+		phydev = sw->phy[p + 1];
+		if (!phydev)
+			continue;
 		phydev->link = (info->state == media_connected);
 		phydev->speed = info->tx_rate / TX_RATE_UNIT;
 		phydev->duplex = (info->duplex == 2);
@@ -9867,7 +9863,7 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info->log_p = l;
 		info->log_m = 0;
 	}
-	n = (1 << cnt) - 1;
+	n = (1 << n) - 1;
 	ports &= n;
 	for (i = 0, n = 0; n <= sw->port_cnt; n++) {
 		if (n > 0) {
@@ -10290,9 +10286,13 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		setup_mrp(&sw->mrp, dev);
 #endif
 
+	p = get_phy_port(sw, port->first_port);
+	port->sw = sw;
+	port->linked = get_port_info(sw, p);
+
 	/* Point to port under netdev. */
 	if (phy_offset)
-		phy_id = port->first_port + phy_offset - 1;
+		phy_id = port->linked->phy_id;
 	else
 		phy_id = 0;
 
@@ -10309,12 +10309,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		priv = phydev->priv;
 		priv->port = port;
 	} while (0);
+
 	if (!phy_offset)
 		phy_offset = 1;
-
-	p = get_phy_port(sw, port->first_port);
-	port->sw = sw;
-	port->linked = get_port_info(sw, p);
 
 	for (cnt = 0, n = port->first_port; cnt < port_cnt; cnt++, n++) {
 		pi = get_phy_port(sw, n);
@@ -10956,7 +10953,9 @@ static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 	struct ksz_sw *sw = &ks->sw;
 	int ret = 0xffff;
 
-	if (phy_id > sw->mib_port_cnt + 1)
+	if (phy_id > sw->port_cnt)
+		return 0xffff;
+	if (phy_id && get_log_port(sw, phy_id - 1) > sw->mib_port_cnt)
 		return 0xffff;
 
 	mutex_lock(&ks->lock);
@@ -10987,8 +10986,12 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 	struct sw_priv *ks = bus->priv;
 	struct ksz_sw *sw = &ks->sw;
 
-	if (phy_id > sw->mib_port_cnt + 1)
+	if (phy_id > sw->port_cnt)
 		return -EINVAL;
+
+	/* Zero is used for the whole switch. */
+	if ((sw->multi_dev & 1) && phy_id == 0)
+		return 0;
 
 	mutex_lock(&ks->lock);
 	if (regnum < 6) {
@@ -11001,6 +11004,7 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 			first = 1;
 			last = sw->mib_port_cnt;
 		} else {
+			bool found;
 			int n;
 			int f;
 			int l;
@@ -11008,11 +11012,19 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 
 			first = phy_id;
 			last = phy_id;
+			found = false;
 			for (n = 0; n < sw->eth_cnt; n++) {
 				map = &sw->eth_maps[n];
 				f = map->first;
 				l = f + map->cnt - 1;
-				if (f <= phy_id && phy_id < l) {
+				for (i = f; i <= l; i++) {
+					p = get_phy_port(sw, i);
+					if (phy_id == p + 1) {
+						found = true;
+						break;
+					}
+				}
+				if (found) {
 					first = map->first;
 					last = first + map->cnt - 1;
 					break;
@@ -11046,7 +11058,7 @@ static void sw_init_phy_priv(struct sw_priv *ks)
 	uint n;
 	uint p;
 
-	for (n = 0; n <= sw->mib_port_cnt + 1; n++) {
+	for (n = 0; n <= sw->port_cnt; n++) {
 		phydata = &sw->phydata[n];
 		port = &ks->ports[n];
 		phydata->port = port;
@@ -11117,7 +11129,7 @@ static int ksz_mii_init(struct sw_priv *ks)
 	bus->write = ksz_mii_write;
 	snprintf(bus->id, MII_BUS_ID_SIZE, "sw.%d", ks->sw.id);
 	bus->parent = &pdev->dev;
-	bus->phy_mask = ~((1 << (ks->sw.mib_port_cnt + 2)) - 1);
+	bus->phy_mask = ~((1 << (ks->sw.port_cnt + 1)) - 1);
 	bus->priv = ks;
 
 	for (i = 0; i < PHY_MAX_ADDR; i++)

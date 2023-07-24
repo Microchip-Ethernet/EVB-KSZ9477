@@ -8401,7 +8401,7 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info->log_p = l;
 		info->log_m = 0;
 	}
-	n = (1 << cnt) - 1;
+	n = (1 << n) - 1;
 	ports &= n;
 	for (i = 0, n = 0; n <= sw->port_cnt; n++) {
 		if (n > 0) {
@@ -8825,7 +8825,8 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	sw->netport[i] = port;
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
-	port->dn = sw->devnode[phy_id - 1];
+	if (phy_id)
+		port->dn = sw->devnode[phy_id - 1];
 #ifdef CONFIG_PHYLINK
 	setup_phylink(port);
 #endif
@@ -9246,7 +9247,9 @@ static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 	int ret = 0xffff;
 
 	/* Last port can be a PHY. */
-	if (phy_id > sw->mib_port_cnt + 1)
+	if (phy_id > sw->port_cnt)
+		return 0xffff;
+	if (phy_id && get_log_port(sw, phy_id - 1) > sw->mib_port_cnt)
 		return 0xffff;
 
 	mutex_lock(&ks->lock);
@@ -9267,8 +9270,12 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 	struct ksz_sw *sw = &ks->sw;
 
 	/* Last port can be a PHY. */
-	if (phy_id > sw->mib_port_cnt + 1)
+	if (phy_id > sw->port_cnt)
 		return -EINVAL;
+
+	/* Zero is used for the whole switch. */
+	if ((sw->multi_dev & 1) && phy_id == 0)
+		return 0;
 
 	mutex_lock(&ks->lock);
 	if (regnum < 6) {
@@ -9281,6 +9288,7 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 			first = 1;
 			last = sw->mib_port_cnt;
 		} else {
+			bool found;
 			int n;
 			int f;
 			int l;
@@ -9288,11 +9296,19 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 
 			first = phy_id;
 			last = phy_id;
+			found = false;
 			for (n = 0; n < sw->eth_cnt; n++) {
 				map = &sw->eth_maps[n];
 				f = map->first;
 				l = f + map->cnt - 1;
-				if (f <= phy_id && phy_id < l) {
+				for (i = f; i <= l; i++) {
+					p = get_phy_port(sw, i);
+					if (phy_id == p + 1) {
+						found = true;
+						break;
+					}
+				}
+				if (found) {
 					first = map->first;
 					last = first + map->cnt - 1;
 					break;
@@ -9326,7 +9342,7 @@ static void sw_init_phy_priv(struct sw_priv *ks)
 	uint n;
 	uint p;
 
-	for (n = 0; n <= sw->mib_port_cnt + 1; n++) {
+	for (n = 0; n <= sw->port_cnt; n++) {
 		phydata = &sw->phydata[n];
 		port = &ks->ports[n];
 		phydata->port = port;
@@ -9397,7 +9413,7 @@ static int ksz_mii_init(struct sw_priv *ks)
 	bus->write = ksz_mii_write;
 	snprintf(bus->id, MII_BUS_ID_SIZE, "sw.%d", ks->sw.id);
 	bus->parent = &pdev->dev;
-	bus->phy_mask = ~((1 << (ks->sw.mib_port_cnt + 2)) - 1);
+	bus->phy_mask = ~((1 << (ks->sw.port_cnt + 1)) - 1);
 	bus->priv = ks;
 
 	for (i = 0; i < PHY_MAX_ADDR; i++)
@@ -9627,7 +9643,7 @@ static void link_read_work(struct work_struct *work)
 	}
 
 	/* Check last port. */
-	port = sw->phydata[sw->mib_port_cnt + 1].port;
+	port = sw->phydata[sw->port_cnt].port;
 	port_get_link_speed(port);
 
 	sw->phy_intr = 0;

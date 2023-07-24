@@ -17422,8 +17422,10 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 
 	if (phy_id > sw->port_cnt)
 		return -EINVAL;
-	if (phy_id && get_log_port(sw, phy_id - 1) > sw->mib_port_cnt)
-		return -EINVAL;
+
+	/* Zero is used for the whole switch. */
+	if ((sw->multi_dev & 1) && phy_id == 0)
+		return 0;
 
 	sw->ops->acquire(sw);
 	if (regnum < 11) {
@@ -17436,6 +17438,7 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 			first = 1;
 			last = sw->mib_port_cnt;
 		} else {
+			bool found;
 			int n;
 			int f;
 			int l;
@@ -17443,11 +17446,19 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 
 			first = phy_id;
 			last = phy_id;
+			found = false;
 			for (n = 0; n < sw->eth_cnt; n++) {
 				map = &sw->eth_maps[n];
 				f = map->first;
 				l = f + map->cnt - 1;
-				if (f <= phy_id && phy_id <= l) {
+				for (i = f; i <= l; i++) {
+					p = get_phy_port(sw, i);
+					if (phy_id == p + 1) {
+						found = true;
+						break;
+					}
+				}
+				if (found) {
 					first = map->first;
 					last = first + map->cnt - 1;
 					break;

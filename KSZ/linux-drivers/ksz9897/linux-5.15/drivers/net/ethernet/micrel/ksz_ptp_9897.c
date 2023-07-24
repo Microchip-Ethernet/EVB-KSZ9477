@@ -1355,8 +1355,10 @@ static void set_ptp_mode(struct ptp_info *ptp, u16 mode)
 	sav = val;
 	val &= ~(PTP_1STEP | PTP_TC_P2P | PTP_MASTER);
 	val |= mode;
-	if (val != sav)
+	if (val != sav) {
 		sw->reg->w16(sw, REG_PTP_MSG_CONF1, val);
+		sw->ops->chk_regs(sw, REG_PTP_MSG_CONF1, (u8 *)&val, 2);
+	}
 }  /* set_ptp_mode */
 
 static void synchronize_clk(struct ptp_info *ptp)
@@ -2695,6 +2697,7 @@ static void ptp_start(struct ptp_info *ptp, int init)
 	struct ksz_sw *sw = ptp->parent;
 	struct ksz_iba_info *iba = &sw->info->iba;
 	u32 ctrl;
+	u16 val;
 	struct timespec64 ts;
 	struct ptp_utime t;
 
@@ -2734,6 +2737,8 @@ static void ptp_start(struct ptp_info *ptp, int init)
 	dbg_msg("ptp_start: %04x %04x"NL,
 		ptp->mode, ptp->cfg);
 	sw->reg->w16(sw, REG_PTP_MSG_CONF1, ptp->mode);
+	val = htons(ptp->mode);
+	sw->ops->chk_regs(sw, REG_PTP_MSG_CONF1, (u8 *)&val, 2);
 	sw->reg->w16(sw, REG_PTP_MSG_CONF2, ptp->cfg);
 	sw->reg->w32(sw, REG_PTP_INT_STATUS__4, 0xffffffff);
 	ptp->tx_intr = PTP_PORT_XDELAY_REQ_INT;

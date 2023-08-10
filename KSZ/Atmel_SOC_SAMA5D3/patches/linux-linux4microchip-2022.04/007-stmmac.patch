@@ -73,7 +73,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  enum stmmac_state {
 diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c linux-linux4microchip-2022.04/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 --- linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2022-05-06 10:11:03.000000000 -0700
-+++ linux-linux4microchip-2022.04/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2023-04-28 16:28:09.373813459 -0700
++++ linux-linux4microchip-2022.04/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2023-08-09 22:15:16.000000000 -0700
 @@ -44,6 +44,59 @@
  #include "stmmac_ptp.h"
  #include "stmmac.h"
@@ -134,7 +134,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  #include <linux/reset.h>
  #include <linux/of_mdio.h>
  #include "dwmac1000.h"
-@@ -173,6 +226,361 @@ int stmmac_bus_clks_config(struct stmmac
+@@ -173,6 +226,362 @@ int stmmac_bus_clks_config(struct stmmac
  }
  EXPORT_SYMBOL_GPL(stmmac_bus_clks_config);
  
@@ -375,6 +375,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
 +
 +		skb->len -= diff;
 +		skb->tail -= diff;
++		len = skb->len;
 +	}
 +
 +	priv = netdev_priv(dev);
@@ -382,7 +383,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
 +	/* Internal packets handled by the switch. */
 +	if (!sw->net_ops->drv_rx(sw, skb, rx_port)) {
 +		priv->dev->stats.rx_packets++;
-+		priv->dev->stats.rx_bytes += skb->len;
++		priv->dev->stats.rx_bytes += len;
 +		return NULL;
 +	}
 +
@@ -496,7 +497,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  /**
   * stmmac_verify_args - verify the driver parameters.
   * Description: it checks the driver parameters and set a default in case of
-@@ -1075,6 +1483,21 @@ static void stmmac_mac_link_down(struct
+@@ -1075,6 +1484,21 @@ static void stmmac_mac_link_down(struct
  {
  	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
  
@@ -518,7 +519,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	stmmac_mac_set(priv, priv->ioaddr, false);
  	priv->eee_active = false;
  	priv->tx_lpi_enabled = false;
-@@ -1094,6 +1517,17 @@ static void stmmac_mac_link_up(struct ph
+@@ -1094,6 +1518,17 @@ static void stmmac_mac_link_up(struct ph
  	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
  	u32 ctrl;
  
@@ -536,7 +537,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	ctrl = readl(priv->ioaddr + MAC_CTRL_REG);
  	ctrl &= ~priv->hw->link.speed_mask;
  
-@@ -1230,6 +1664,19 @@ static int stmmac_init_phy(struct net_de
+@@ -1230,6 +1665,19 @@ static int stmmac_init_phy(struct net_de
  	struct device_node *node;
  	int ret;
  
@@ -556,7 +557,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	node = priv->plat->phylink_node;
  
  	if (node)
-@@ -1261,6 +1708,12 @@ static int stmmac_init_phy(struct net_de
+@@ -1261,6 +1709,12 @@ static int stmmac_init_phy(struct net_de
  	return ret;
  }
  
@@ -569,7 +570,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  static int stmmac_phy_setup(struct stmmac_priv *priv)
  {
  	struct stmmac_mdio_bus_data *mdio_bus_data = priv->plat->mdio_bus_data;
-@@ -1278,6 +1731,25 @@ static int stmmac_phy_setup(struct stmma
+@@ -1278,6 +1732,25 @@ static int stmmac_phy_setup(struct stmma
  	if (!fwnode)
  		fwnode = dev_fwnode(priv->device);
  
@@ -595,7 +596,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	phylink = phylink_create(&priv->phylink_config, fwnode,
  				 mode, &stmmac_phylink_mac_ops);
  	if (IS_ERR(phylink))
-@@ -2629,6 +3101,11 @@ static int stmmac_tx_clean(struct stmmac
+@@ -2629,6 +3102,11 @@ static int stmmac_tx_clean(struct stmmac
  		netif_dbg(priv, tx_done, priv->dev,
  			  "%s: restart transmit\n", __func__);
  		netif_tx_wake_queue(netdev_get_tx_queue(priv->dev, queue));
@@ -607,7 +608,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	}
  
  	if (tx_q->xsk_pool) {
-@@ -2697,6 +3174,11 @@ static void stmmac_tx_err(struct stmmac_
+@@ -2697,6 +3175,11 @@ static void stmmac_tx_err(struct stmmac_
  
  	priv->dev->stats.tx_errors++;
  	netif_tx_wake_queue(netdev_get_tx_queue(priv->dev, chan));
@@ -619,7 +620,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  }
  
  /**
-@@ -3255,6 +3737,305 @@ static int stmmac_fpe_start_wq(struct st
+@@ -3255,6 +3738,305 @@ static int stmmac_fpe_start_wq(struct st
  	return 0;
  }
  
@@ -925,7 +926,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  /**
   * stmmac_hw_setup - setup mac in a usable state.
   *  @dev : pointer to the device structure.
-@@ -3694,6 +4475,31 @@ static int stmmac_open(struct net_device
+@@ -3694,6 +4476,31 @@ static int stmmac_open(struct net_device
  	u32 chan;
  	int ret;
  
@@ -957,7 +958,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	ret = pm_runtime_get_sync(priv->device);
  	if (ret < 0) {
  		pm_runtime_put_noidle(priv->device);
-@@ -3724,6 +4530,11 @@ static int stmmac_open(struct net_device
+@@ -3724,6 +4531,11 @@ static int stmmac_open(struct net_device
  	if (bfsize < BUF_SIZE_16KiB)
  		bfsize = stmmac_set_bfsize(dev->mtu, priv->dma_buf_sz);
  
@@ -969,7 +970,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	priv->dma_buf_sz = bfsize;
  	buf_sz = bfsize;
  
-@@ -3774,9 +4585,52 @@ static int stmmac_open(struct net_device
+@@ -3774,9 +4586,52 @@ static int stmmac_open(struct net_device
  		goto irq_error;
  
  	stmmac_enable_all_queues(priv);
@@ -1022,7 +1023,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	return 0;
  
  irq_error:
-@@ -3805,6 +4659,52 @@ static void stmmac_fpe_stop_wq(struct st
+@@ -3805,6 +4660,52 @@ static void stmmac_fpe_stop_wq(struct st
  	netdev_info(priv->dev, "FPE workqueue stop");
  }
  
@@ -1075,7 +1076,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  /**
   *  stmmac_release - close entry point of the driver
   *  @dev : device pointer.
-@@ -3824,6 +4724,11 @@ static int stmmac_release(struct net_dev
+@@ -3824,6 +4725,11 @@ static int stmmac_release(struct net_dev
  	phylink_stop(priv->phylink);
  	phylink_disconnect_phy(priv->phylink);
  
@@ -1087,7 +1088,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	stmmac_disable_all_queues(priv);
  
  	for (chan = 0; chan < priv->plat->tx_queues_to_use; chan++)
-@@ -4244,12 +5149,40 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -4244,12 +5150,40 @@ static netdev_tx_t stmmac_xmit(struct sk
  	int entry, first_tx;
  	dma_addr_t des;
  
@@ -1128,7 +1129,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	/* Manage oversized TCP frames for GMAC4 device */
  	if (skb_is_gso(skb) && priv->tso) {
  		if (gso & (SKB_GSO_TCPV4 | SKB_GSO_TCPV6))
-@@ -4262,6 +5195,11 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -4262,6 +5196,11 @@ static netdev_tx_t stmmac_xmit(struct sk
  		if (!netif_tx_queue_stopped(netdev_get_tx_queue(dev, queue))) {
  			netif_tx_stop_queue(netdev_get_tx_queue(priv->dev,
  								queue));
@@ -1140,7 +1141,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  			/* This is a hard error, log it. */
  			netdev_err(priv->dev,
  				   "%s: Tx Ring full when queue awake\n",
-@@ -5100,6 +6038,13 @@ static int stmmac_rx(struct stmmac_priv
+@@ -5100,6 +6039,13 @@ static int stmmac_rx(struct stmmac_priv
  	int xdp_status = 0;
  	int buf_sz;
  
@@ -1154,7 +1155,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	dma_dir = page_pool_get_dma_dir(rx_q->page_pool);
  	buf_sz = DIV_ROUND_UP(priv->dma_buf_sz, PAGE_SIZE) * PAGE_SIZE;
  
-@@ -5322,6 +6267,24 @@ drain_data:
+@@ -5322,6 +6268,24 @@ drain_data:
  
  		stmmac_get_rx_hwtstamp(priv, p, np, skb);
  		stmmac_rx_vlan(priv->dev, skb);
@@ -1179,7 +1180,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  		skb->protocol = eth_type_trans(skb, priv->dev);
  
  		if (unlikely(!coe))
-@@ -5339,6 +6302,12 @@ drain_data:
+@@ -5339,6 +6303,12 @@ drain_data:
  		priv->dev->stats.rx_packets++;
  		priv->dev->stats.rx_bytes += len;
  		count++;
@@ -1192,7 +1193,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	}
  
  	if (status & rx_not_ls || skb) {
-@@ -5471,6 +6440,36 @@ static void stmmac_set_rx_mode(struct ne
+@@ -5471,6 +6441,36 @@ static void stmmac_set_rx_mode(struct ne
  {
  	struct stmmac_priv *priv = netdev_priv(dev);
  
@@ -1229,7 +1230,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	stmmac_set_filter(priv, priv->hw, dev);
  }
  
-@@ -5524,6 +6523,12 @@ static netdev_features_t stmmac_fix_feat
+@@ -5524,6 +6524,12 @@ static netdev_features_t stmmac_fix_feat
  {
  	struct stmmac_priv *priv = netdev_priv(dev);
  
@@ -1242,7 +1243,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	if (priv->plat->rx_coe == STMMAC_RX_COE_NONE)
  		features &= ~NETIF_F_RXCSUM;
  
-@@ -5554,6 +6559,12 @@ static int stmmac_set_features(struct ne
+@@ -5554,6 +6560,12 @@ static int stmmac_set_features(struct ne
  {
  	struct stmmac_priv *priv = netdev_priv(netdev);
  
@@ -1255,29 +1256,15 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	/* Keep the COE Type in case of csum is supporting */
  	if (features & NETIF_F_RXCSUM)
  		priv->hw->rx_csum = priv->plat->rx_coe;
-@@ -5837,6 +6848,10 @@ static void stmmac_poll_controller(struc
- }
- #endif
- 
-+#ifdef CONFIG_KSZ_SWITCH
-+#define SIOCDEVDEBUG			(SIOCDEVPRIVATE + 10)
-+#endif
-+
- /**
-  *  stmmac_ioctl - Entry point for the Ioctl
-  *  @dev: Device pointer.
-@@ -5851,6 +6866,56 @@ static int stmmac_ioctl(struct net_devic
+@@ -5851,6 +6863,32 @@ static int stmmac_ioctl(struct net_devic
  	struct stmmac_priv *priv = netdev_priv (dev);
  	int ret = -EOPNOTSUPP;
  
-+#ifdef CONFIG_KSZ_SWITCH
++#if defined(CONFIG_KSZ_SWITCH) && defined(CONFIG_1588_PTP)
 +	struct ksz_sw *sw = priv->port.sw;
-+#ifdef CONFIG_1588_PTP
 +	struct ptp_info *ptp;
-+#endif
 +
 +	switch (cmd) {
-+#ifdef CONFIG_1588_PTP
 +	case SIOCSHWTSTAMP:
 +		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
 +			int i;
@@ -1292,29 +1279,8 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
 +			ret = ptp->ops->hwtstamp_ioctl(ptp, rq, ports);
 +		}
 +		break;
-+	case SIOCDEVPRIVATE + 15:
-+		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
-+			ptp = &sw->ptp_hw;
-+			ret = ptp->ops->dev_req(ptp, rq->ifr_data, NULL);
-+		}
-+		break;
-+#endif
-+#ifdef CONFIG_KSZ_MRP
-+	case SIOCDEVPRIVATE + 14:
-+		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
-+			struct mrp_info *mrp = &sw->mrp;
-+
-+			ret = mrp->ops->dev_req(mrp, rq->ifr_data);
-+		}
-+		break;
-+#endif
-+	case SIOCDEVPRIVATE + 13:
-+		if (sw_is_switch(sw)) {
-+			ret = sw->ops->dev_req(sw, rq->ifr_data, NULL);
-+		}
-+		break;
 +	default:
-+		ret = -EOPNOTSUPP;
++		break;
 +	}
 +	if (ret != -EOPNOTSUPP)
 +		return ret;
@@ -1323,7 +1289,55 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	if (!netif_running(dev))
  		return -EINVAL;
  
-@@ -5956,6 +7021,35 @@ static int stmmac_set_mac_address(struct
+@@ -5873,6 +6911,47 @@ static int stmmac_ioctl(struct net_devic
+ 	return ret;
+ }
+ 
++#ifdef CONFIG_KSZ_SWITCH
++static int stmmac_siocdevprivate(struct net_device *dev, struct ifreq *ifr,
++				 void __user *data, int cmd)
++{
++	struct stmmac_priv *priv = netdev_priv (dev);
++	struct ksz_sw *sw = priv->port.sw;
++	int result = -EOPNOTSUPP;
++#ifdef CONFIG_1588_PTP
++	struct ptp_info *ptp;
++#endif
++
++	switch (cmd) {
++#ifdef CONFIG_1588_PTP
++	case SIOCDEVPRIVATE + 15:
++		if (sw_is_switch(sw) && (sw->features & PTP_HW)) {
++			ptp = &sw->ptp_hw;
++			result = ptp->ops->dev_req(ptp, ifr->ifr_data, NULL);
++		}
++		break;
++#endif
++#ifdef CONFIG_KSZ_MRP
++	case SIOCDEVPRIVATE + 14:
++		if (sw_is_switch(sw) && (sw->features & MRP_SUPPORT)) {
++			struct mrp_info *mrp = &sw->mrp;
++
++			result = mrp->ops->dev_req(mrp, ifr->ifr_data);
++		}
++		break;
++#endif
++	case SIOCDEVPRIVATE + 13:
++		if (sw_is_switch(sw)) {
++			result = sw->ops->dev_req(sw, ifr->ifr_data, NULL);
++		}
++		break;
++	default:
++		break;
++	}
++	return result;
++}
++#endif
++
+ static int stmmac_setup_tc_block_cb(enum tc_setup_type type, void *type_data,
+ 				    void *cb_priv)
+ {
+@@ -5956,6 +7035,35 @@ static int stmmac_set_mac_address(struct
  	if (ret)
  		goto set_mac_error;
  
@@ -1359,7 +1373,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	stmmac_set_umac_addr(priv, priv->hw, ndev->dev_addr, 0);
  
  set_mac_error:
-@@ -6255,6 +7349,13 @@ static int stmmac_vlan_rx_add_vid(struct
+@@ -6255,6 +7363,13 @@ static int stmmac_vlan_rx_add_vid(struct
  	bool is_double = false;
  	int ret;
  
@@ -1373,7 +1387,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	if (be16_to_cpu(proto) == ETH_P_8021AD)
  		is_double = true;
  
-@@ -6286,6 +7387,15 @@ static int stmmac_vlan_rx_kill_vid(struc
+@@ -6286,6 +7401,15 @@ static int stmmac_vlan_rx_kill_vid(struc
  		return ret;
  	}
  
@@ -1389,7 +1403,17 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	if (be16_to_cpu(proto) == ETH_P_8021AD)
  		is_double = true;
  
-@@ -7211,6 +8321,19 @@ int stmmac_dvr_probe(struct device *devi
+@@ -6658,6 +7782,9 @@ static const struct net_device_ops stmma
+ 	.ndo_set_features = stmmac_set_features,
+ 	.ndo_set_rx_mode = stmmac_set_rx_mode,
+ 	.ndo_tx_timeout = stmmac_tx_timeout,
++#ifdef CONFIG_KSZ_SWITCH
++	.ndo_siocdevprivate = stmmac_siocdevprivate,
++#endif
+ 	.ndo_eth_ioctl = stmmac_ioctl,
+ 	.ndo_setup_tc = stmmac_setup_tc,
+ 	.ndo_select_queue = stmmac_select_queue,
+@@ -7211,6 +8338,19 @@ int stmmac_dvr_probe(struct device *devi
  			goto error_xpcs_setup;
  	}
  
@@ -1409,7 +1433,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	ret = stmmac_phy_setup(priv);
  	if (ret) {
  		netdev_err(ndev, "failed to setup phy (%d)\n", ret);
-@@ -7244,6 +8367,17 @@ int stmmac_dvr_probe(struct device *devi
+@@ -7244,6 +8384,17 @@ int stmmac_dvr_probe(struct device *devi
  	 */
  	pm_runtime_put(device);
  
@@ -1427,7 +1451,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	return ret;
  
  error_serdes_powerup:
-@@ -7265,6 +8399,57 @@ error_hw_init:
+@@ -7265,6 +8416,57 @@ error_hw_init:
  }
  EXPORT_SYMBOL_GPL(stmmac_dvr_probe);
  
@@ -1485,7 +1509,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  /**
   * stmmac_dvr_remove
   * @dev: device pointer
-@@ -7282,6 +8467,10 @@ int stmmac_dvr_remove(struct device *dev
+@@ -7282,6 +8484,10 @@ int stmmac_dvr_remove(struct device *dev
  	pm_runtime_disable(dev);
  	pm_runtime_put_noidle(dev);
  
@@ -1496,7 +1520,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	stmmac_stop_all_dma(priv);
  	stmmac_mac_set(priv, priv->ioaddr, false);
  	netif_carrier_off(ndev);
-@@ -7327,6 +8516,12 @@ int stmmac_suspend(struct device *dev)
+@@ -7327,6 +8533,12 @@ int stmmac_suspend(struct device *dev)
  	if (!ndev || !netif_running(ndev))
  		return 0;
  
@@ -1509,7 +1533,7 @@ diff -Napur linux-linux4microchip-2022.04-orig/drivers/net/ethernet/stmicro/stmm
  	mutex_lock(&priv->lock);
  
  	netif_device_detach(ndev);
-@@ -7426,6 +8621,12 @@ int stmmac_resume(struct device *dev)
+@@ -7426,6 +8638,12 @@ int stmmac_resume(struct device *dev)
  	if (!netif_running(ndev))
  		return 0;
  

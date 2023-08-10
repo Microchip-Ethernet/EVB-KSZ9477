@@ -1,0 +1,22 @@
+diff -Napur linux-at91-linux4sam-2021.04-orig/net/hsr/hsr_framereg.c linux-at91-linux4sam-2021.04/net/hsr/hsr_framereg.c
+--- linux-at91-linux4sam-2021.04-orig/net/hsr/hsr_framereg.c	2021-07-29 07:58:03.000000000 -0700
++++ linux-at91-linux4sam-2021.04/net/hsr/hsr_framereg.c	2023-08-09 18:43:18.462319558 -0700
+@@ -249,6 +249,7 @@ struct hsr_node *hsr_get_node(struct hsr
+ 				san = true;
+ 			seq_out = HSR_SEQNR_START;
+ 		}
++		seq_out--;
+ 	}
+ 
+ 	return hsr_add_node(hsr, node_db, ethhdr->h_source, seq_out,
+diff -Napur linux-at91-linux4sam-2021.04-orig/net/hsr/hsr_netlink.c linux-at91-linux4sam-2021.04/net/hsr/hsr_netlink.c
+--- linux-at91-linux4sam-2021.04-orig/net/hsr/hsr_netlink.c	2021-07-29 07:58:03.000000000 -0700
++++ linux-at91-linux4sam-2021.04/net/hsr/hsr_netlink.c	2023-08-09 18:43:57.854319407 -0700
+@@ -82,6 +82,7 @@ static int hsr_newlink(struct net *src_n
+ 
+ 	if (!data[IFLA_HSR_VERSION]) {
+ 		proto_version = HSR_V0;
++		proto_version = HSR_V1;
+ 	} else {
+ 		if (proto == HSR_PROTOCOL_PRP) {
+ 			NL_SET_ERR_MSG_MOD(extack, "PRP version unsupported");

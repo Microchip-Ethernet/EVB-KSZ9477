@@ -399,7 +399,7 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 
 		skb->len -= diff;
 		skb->tail -= diff;
-		len = skb->len
+		len = skb->len;
 	}
 
 	fep = netdev_priv(dev);

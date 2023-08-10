@@ -4302,7 +4302,13 @@ skip_hw:
 
 phy_off:
 #ifdef CONFIG_KSZ_SWITCH
-	bp = bp->hw_priv;
+	if (sw_is_switch(sw)) {
+		bp = bp->hw_priv;
+		if (bp->opened > 1)
+			bp->opened--;
+		if (bp->opened)
+			return err;
+	}
 #endif
 	phy_power_off(bp->sgmii_phy);
 

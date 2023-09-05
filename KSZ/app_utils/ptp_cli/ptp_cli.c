@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <pthread.h>
 #include <netinet/in.h>
@@ -2860,6 +2861,28 @@ void *tsm_task(void *param)
 	return NULL;
 }
 
+static void handle_int_quit_term(int s)
+{
+	printf("\nUse command 'q' to quit.\n");
+}
+
+int handle_term_signals(void)
+{
+	if (SIG_ERR == signal(SIGINT, handle_int_quit_term)) {
+		fprintf(stderr, "cannot handle SIGINT\n");
+		return -1;
+	}
+	if (SIG_ERR == signal(SIGQUIT, handle_int_quit_term)) {
+		fprintf(stderr, "cannot handle SIGQUIT\n");
+		return -1;
+	}
+	if (SIG_ERR == signal(SIGTERM, handle_int_quit_term)) {
+		fprintf(stderr, "cannot handle SIGTERM\n");
+		return -1;
+	}
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	pthread_t tid[2];
@@ -2920,6 +2943,7 @@ int main(int argc, char *argv[])
 	selfClockIdentity.addr[7] = 0x88;
 	get_clock_ident(&dev[0].fd, 0, &selfClockIdentity);
 
+	handle_term_signals();
 	get_cmd(stdin);
 	param[0].stop = 1;
 	param[1].stop = 1;

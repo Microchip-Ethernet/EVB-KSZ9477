@@ -17,6 +17,7 @@
 #include <netinet/ip_icmp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <signal.h>
 #include "wrapthread.h"
 #ifndef IPV6_TCLASS
 #define IPV6_TCLASS		67
@@ -3202,6 +3203,28 @@ static SOCKET create_raw(struct ip_info *info, char *dest)
 }
 #endif
 
+static void handle_int_quit_term(int s)
+{
+	printf("\nUse comand 'q' to quit.\n");
+}
+
+int handle_term_signals(void)
+{
+	if (SIG_ERR == signal(SIGINT, handle_int_quit_term)) {
+		fprintf(stderr, "cannot handle SIGINT\n");
+		return -1;
+	}
+	if (SIG_ERR == signal(SIGQUIT, handle_int_quit_term)) {
+		fprintf(stderr, "cannot handle SIGQUIT\n");
+		return -1;
+	}
+	if (SIG_ERR == signal(SIGTERM, handle_int_quit_term)) {
+		fprintf(stderr, "cannot handle SIGTERM\n");
+		return -1;
+	}
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	TTaskParam param[4];
@@ -3594,6 +3617,7 @@ int main(int argc, char *argv[])
 			ptp_hw = 1;
 		}
 #endif
+		handle_term_signals();
 		rc = 0;
 		do {
 			switch (rc) {

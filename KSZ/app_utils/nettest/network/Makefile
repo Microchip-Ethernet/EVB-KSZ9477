@@ -31,6 +31,7 @@ OBJS = error.o inetfunc.o iofunc.o wrapsock.o wrapstdio.o ip.o wrapmcast.o
 OBJS += sockntop.o unpifi.o
 
 EXE=ptp prifinfo rstptest acltest authtest nettest iba kszsw ksz dlr dlr_daemon
+EXE+=echoclient echoudpclient echotcpserver
 
 all: $(EXE)
 
@@ -77,6 +78,15 @@ dlr: dlr.c $(HEADERS) $(OBJS) wrapthread.o
 	$(GCC) $(INCDIR) -O2 $(CFLAGS) -o $@ $< $(OBJS) wrapthread.o -pthread
 
 dlr_daemon: dlr_daemon.c $(HEADERS) $(OBJS) wrapthread.o
+	$(GCC) $(INCDIR) -O2 $(CFLAGS) -o $@ $< $(OBJS) wrapthread.o -pthread
+
+echoclient: echoclient.c $(HEADERS) $(OBJS) wrapthread.o
+	$(GCC) $(INCDIR) -O2 $(CFLAGS) -o $@ $< $(OBJS) wrapthread.o -pthread
+
+echoudpclient: echoudpclient.c $(HEADERS) $(OBJS) wrapthread.o
+	$(GCC) $(INCDIR) -O2 $(CFLAGS) -o $@ $< $(OBJS) wrapthread.o -pthread
+
+echotcpserver: echotcpserver.c $(HEADERS) $(OBJS) wrapthread.o
 	$(GCC) $(INCDIR) -O2 $(CFLAGS) -o $@ $< $(OBJS) wrapthread.o -pthread
 
 clean:

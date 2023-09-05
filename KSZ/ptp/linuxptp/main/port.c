@@ -942,6 +942,7 @@ static struct interval_info_tlv *interval_info_extract(struct ptp_message *m)
 	return NULL;
 }
 
+#if 0
 static struct wake_info_tlv *wake_info_extract(struct ptp_message *m)
 {
 	struct wake_info_tlv *f;
@@ -963,6 +964,7 @@ static struct wake_info_tlv *wake_info_extract(struct ptp_message *m)
 	}
 	return NULL;
 }
+#endif
 #endif
 
 static void free_foreign_masters(struct port *p)
@@ -4933,6 +4935,8 @@ printf(" too many faults\n");
 					      EV_FAULT_DETECTED, 0);
 			break;
 		case PS_LISTENING:
+			if (event == EV_INIT_COMPLETE)
+				break;
 
 			/* Not being slave anymore. */
 			if (PS_UNCALIBRATED == old || PS_SLAVE == old) {

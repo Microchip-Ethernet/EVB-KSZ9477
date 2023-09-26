@@ -4582,7 +4582,8 @@ static void port_cfg_rx_special(struct ksz_sw *sw, uint p, bool set)
 	int hsr = false;
 
 #ifdef CONFIG_KSZ_HSR
-	if (sw->features & HSR_HW)
+	/* Have HSR hardware. */
+	if (sw->features & REDUNDANCY_SUPPORT)
 		hsr = true;
 #endif
 	if (!hsr)
@@ -8851,10 +8852,6 @@ static void sw_setup(struct ksz_sw *sw)
 		else
 			port_setup_eee(sw, port);
 
-		/* Do not disable EEE if 1588 PTP is not used. */
-		if (!(sw->features & PTP_HW))
-			continue;
-
 		/* Disable EEE for now. */
 		port_mmd_read(sw, port, MMD_DEVICE_ID_EEE_ADV, MMD_EEE_ADV,
 			&val, 1);
@@ -10265,7 +10262,7 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 		break;
 	case PROC_HSR:
 #ifdef CONFIG_KSZ_HSR
-		if (sw->features & HSR_HW)
+		if (sw->features & REDUNDANCY_SUPPORT)
 			len = sw_d_hsr_table(sw, buf, len);
 #endif
 		break;
@@ -16118,6 +16115,39 @@ static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
 		if (phy_link && cfg->stp_state[0] != STP_STATE_FORWARDING)
 			link = phy_link;
 	}
+
+#ifdef CONFIG_KSZ_HSR
+	if (sw->features & HSR_HW) {
+		struct ksz_hsr_info *hsr = &sw->info->hsr;
+
+		if (dev == hsr->dev) {
+			hsr->hsr_up = phy_link;
+		} else if (dev == hsr->redbox) {
+			bool up = hsr->redbox_up;
+
+			hsr->redbox_up = phy_link;
+			if (up != hsr->redbox_up && up)
+				hsr_rmv_slaves(hsr);
+		}
+
+		/* Main device is used for communication so simulate link on
+		 * when Redbox is connected.
+		 */
+		if (sw->overrides & HSR_FORWARD) {
+			if (dev == hsr->dev) {
+				if (!phy_link)
+					phy_link = hsr->redbox_up;
+			} else if (!hsr->hsr_up) {
+				if (hsr->redbox_up &&
+				    !netif_carrier_ok(hsr->dev))
+					netif_carrier_on(hsr->dev);
+				else if (!hsr->redbox_up &&
+					 netif_carrier_ok(hsr->dev))
+					netif_carrier_off(hsr->dev);
+			}
+		}
+	}
+#endif
 	if (phy_link == link)
 		return;
 
@@ -16138,14 +16168,6 @@ dbg_msg(" %*pb\n", __ETHTOOL_LINK_MODE_MASK_NBITS, phydev->lp_advertising);
 	if (phydev->phy_link_change) {
 		phydev->phy_link_change(phydev, phy_link);
 	} else if (phy_link != link) {
-		if (phy_link)
-			netif_carrier_on(dev);
-		else
-			netif_carrier_off(dev);
-	}
-
-	/* HSR processing needs netif_carrier_ok to be current. */
-	if ((sw->features & HSR_HW) && phy_link != netif_carrier_ok(dev)) {
 		if (phy_link)
 			netif_carrier_on(dev);
 		else
@@ -16237,40 +16259,15 @@ static void link_update_work(struct work_struct *work)
 #ifdef CONFIG_KSZ_HSR
 	if (sw->features & HSR_HW) {
 		struct ksz_hsr_info *hsr = &sw->info->hsr;
-		struct net_device *dev;
-
-		dev = port->netdev;
-		if (dev && dev == hsr->redbox_dev) {
-			int up = hsr->redbox_up;
-
-			hsr->redbox_up = netif_carrier_ok(dev);
-			if (up != hsr->redbox_up && up)
-				hsr_rmv_slaves(hsr);
-		}
 
 		p = get_phy_port(sw, port->first_port);
 		if (hsr->dev && hsr->ports[0] == p) {
-			hsr->hsr_up = netif_carrier_ok(hsr->dev);
 			hsr->ops->link_change(hsr,
 				sw->port_info[hsr->ports[0]].state ==
 				media_connected,
 				sw->port_info[hsr->ports[1]].state ==
 				media_connected);
 			hsr->ops->check_announce(hsr);
-		}
-
-		/* Main device is used for communication so simulate link on
-		 * when Redbox is connected.
-		 */
-		if (sw->overrides & HSR_FORWARD) {
-			if (hsr->dev && !hsr->hsr_up) {
-				if (hsr->redbox_up &&
-				    !netif_carrier_ok(hsr->dev))
-					netif_carrier_on(hsr->dev);
-				else if (!hsr->redbox_up &&
-					 netif_carrier_ok(hsr->dev))
-					netif_carrier_off(hsr->dev);
-			}
 		}
 	}
 #endif
@@ -16589,14 +16586,9 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 #ifdef CONFIG_KSZ_DLR
 		if ((features & DLR_HW) && !(used & DLR_HW))
 			features = 0;
-		if (!(sw->features & DLR_HW) && (features & DLR_HW))
-			features = 0;
 #endif
 #ifdef CONFIG_KSZ_HSR
 		if ((features & HSR_HW) && !(used & HSR_HW))
-			features = 0;
-		if (!(sw->features & HSR_HW) &&
-		    (features & (HSR_HW | HSR_REDBOX)))
 			features = 0;
 		if (features == HSR_REDBOX)
 			used |= features;
@@ -16651,7 +16643,10 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 	}
 
 	/* Not all ports are used. */
-	left &= ~((1 << last_phy_port) - 1);
+	if (last_phy_port < sw->mib_port_cnt)
+		left &= ~((1 << last_phy_port) - 1);
+	else
+		left = 0;
 	if (multi_dev != 1)
 		left = 0;
 	features = 0;
@@ -16661,7 +16656,7 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 		features = STP_SUPPORT;
 #endif
 #ifdef CONFIG_KSZ_HSR
-	if (left && (sw->features & HSR_HW)) {
+	if (left && (used & HSR_HW)) {
 
 		/* Redbox is explicitly specified. */
 		if (used & HSR_REDBOX)
@@ -16712,6 +16707,8 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 	}
 	if (p > 1)
 		sw->features |= SW_VLAN_DEV;
+	else if (multi_dev == 1)
+		multi_dev = 0;
 	sw->eth_cnt = p;
 	for (p = 0; p < sw->eth_cnt; p++) {
 		map = &sw->eth_maps[p];
@@ -16724,10 +16721,14 @@ setup_next:
 #ifdef CONFIG_KSZ_DLR
 	if (!(used & DLR_HW))
 		sw->features &= ~DLR_HW;
+	else
+		sw->features |= DLR_HW;
 #endif
 #ifdef CONFIG_KSZ_HSR
 	if (!(used & HSR_HW))
 		sw->features &= ~HSR_HW;
+	else
+		sw->features |= HSR_HW;
 #endif
 	if ((sw->features & (DLR_HW | HSR_HW)) || sw->eth_cnt > 1) {
 		if (multi_dev < 0)
@@ -18660,9 +18661,6 @@ dbg_msg("%02x %02x"NL, id1, id2);
 			sw->features |= NEW_XMII;
 			if (id & SW_REDUNDANCY_ABLE) {
 				sw->features |= REDUNDANCY_SUPPORT;
-#ifdef CONFIG_KSZ_HSR
-				sw->features |= HSR_HW;
-#endif
 			}
 		} else {
 			if (!(id & SW_QW_ABLE))
@@ -18674,11 +18672,6 @@ dbg_msg("%02x %02x"NL, id1, id2);
 			sw->features |= PTP_HW;
 #endif
 		}
-
-		/* DLR can be used if supervisor is not needed. */
-#ifdef CONFIG_KSZ_DLR
-		sw->features |= DLR_HW;
-#endif
 
 		switch (id & 0x0f) {
 		case SW_9477_SL_5_2:
@@ -18699,7 +18692,7 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 !!(id & SW_AVB_ABLE), !!(id & SW_REDUNDANCY_ABLE), !!(id & SW_GIGABIT_ABLE));
 	} else if ((FAMILY_ID_95 & 0x0f) == (id1 & 0x0f))
 		sw->features |= AVB_SUPPORT;
-	if ((sw->features & (HSR_HW | DLR_HW)) && port_count > 3)
+	if ((sw->features & REDUNDANCY_SUPPORT) && port_count > 3)
 		sw->overrides |= HAVE_MORE_THAN_2_PORTS;
 	if (sw->features & IS_9893) {
 		sw->chip_id = KSZ9893_SW_CHIP;

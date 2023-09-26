@@ -4578,7 +4578,8 @@ static void port_cfg_rx_special(struct ksz_sw *sw, uint p, bool set)
 	int hsr = false;
 
 #ifdef CONFIG_KSZ_HSR
-	if (sw->features & HSR_HW)
+	/* Have HSR hardware. */
+	if (sw->features & REDUNDANCY_SUPPORT)
 		hsr = true;
 #endif
 	if (!hsr)
@@ -8844,10 +8845,7 @@ static void sw_setup(struct ksz_sw *sw)
 		else
 			port_setup_eee(sw, port);
 
-		/* Do not disable EEE if 1588 PTP is not used. */
-		if (!(sw->features & PTP_HW))
-			continue;
-
+		/* Disable EEE for now. */
 		port_mmd_read(sw, port, MMD_DEVICE_ID_EEE_ADV, MMD_EEE_ADV,
 			&val, 1);
 /*
@@ -8958,7 +8956,7 @@ static void sw_reset_hw(struct ksz_sw *sw)
 	delay_micro(1);
 
 	/* Turn off SPI auto edge detection. */
-	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0);
+	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0x40);
 }  /* sw_reset_hw */
 
 static void sw_reset(struct ksz_sw *sw)
@@ -10255,7 +10253,7 @@ static ssize_t sysfs_sw_read(struct ksz_sw *sw, int proc_num,
 		break;
 	case PROC_HSR:
 #ifdef CONFIG_KSZ_HSR
-		if (sw->features & HSR_HW)
+		if (sw->features & REDUNDANCY_SUPPORT)
 			len = sw_d_hsr_table(sw, buf, len);
 #endif
 		break;
@@ -15895,7 +15893,7 @@ static void link_update_work(struct work_struct *work)
 		struct ksz_hsr_info *hsr = &sw->info->hsr;
 
 		dev = port->netdev;
-		if (dev && dev == hsr->redbox_dev) {
+		if (dev && dev == hsr->redbox) {
 			int up = hsr->redbox_up;
 
 			hsr->redbox_up = netif_carrier_ok(dev);
@@ -16272,14 +16270,9 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 #ifdef CONFIG_KSZ_DLR
 		if ((features & DLR_HW) && !(used & DLR_HW))
 			features = 0;
-		if (!(sw->features & DLR_HW) && (features & DLR_HW))
-			features = 0;
 #endif
 #ifdef CONFIG_KSZ_HSR
 		if ((features & HSR_HW) && !(used & HSR_HW))
-			features = 0;
-		if (!(sw->features & HSR_HW) &&
-		    (features & (HSR_HW | HSR_REDBOX)))
 			features = 0;
 		if (features == HSR_REDBOX)
 			used |= features;
@@ -16334,7 +16327,10 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 	}
 
 	/* Not all ports are used. */
-	left &= ~((1 << last_phy_port) - 1);
+	if (last_phy_port < sw->mib_port_cnt)
+		left &= ~((1 << last_phy_port) - 1);
+	else
+		left = 0;
 	if (multi_dev != 1)
 		left = 0;
 	features = 0;
@@ -16344,7 +16340,7 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 		features = STP_SUPPORT;
 #endif
 #ifdef CONFIG_KSZ_HSR
-	if (left && (sw->features & HSR_HW)) {
+	if (left && (used & HSR_HW)) {
 
 		/* Redbox is explicitly specified. */
 		if (used & HSR_REDBOX)
@@ -16395,6 +16391,8 @@ static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
 	}
 	if (p > 1)
 		sw->features |= SW_VLAN_DEV;
+	else if (multi_dev == 1)
+		multi_dev = 0;
 	sw->eth_cnt = p;
 	for (p = 0; p < sw->eth_cnt; p++) {
 		map = &sw->eth_maps[p];
@@ -16407,10 +16405,14 @@ setup_next:
 #ifdef CONFIG_KSZ_DLR
 	if (!(used & DLR_HW))
 		sw->features &= ~DLR_HW;
+	else
+		sw->features |= DLR_HW;
 #endif
 #ifdef CONFIG_KSZ_HSR
 	if (!(used & HSR_HW))
 		sw->features &= ~HSR_HW;
+	else
+		sw->features |= HSR_HW;
 #endif
 	if ((sw->features & (DLR_HW | HSR_HW)) || sw->eth_cnt > 1) {
 		if (multi_dev < 0)
@@ -18200,7 +18202,7 @@ static int ksz_probe_next(struct sw_priv *ks)
 
 #ifndef CONFIG_KSZ_IBA_ONLY
 	/* Turn off SPI auto edge detection. */
-	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0);
+	sw->reg->w8(sw, REG_SW_GLOBAL_SERIAL_CTRL_0, 0x40);
 #endif
 
 	/* simple check for a valid chip being connected to the bus */
@@ -18288,9 +18290,6 @@ dbg_msg("%02x %02x"NL, id1, id2);
 			sw->features |= NEW_XMII;
 			if (id & SW_REDUNDANCY_ABLE) {
 				sw->features |= REDUNDANCY_SUPPORT;
-#ifdef CONFIG_KSZ_HSR
-				sw->features |= HSR_HW;
-#endif
 			}
 		} else {
 			if (id & SW_QW_ABLE)
@@ -18304,11 +18303,6 @@ dbg_msg("%02x %02x"NL, id1, id2);
 			sw->features |= PTP_HW;
 #endif
 		}
-
-		/* DLR can be used if supervisor is not needed. */
-#ifdef CONFIG_KSZ_DLR
-		sw->features |= DLR_HW;
-#endif
 
 		switch (id & 0x0f) {
 		case SW_9477_SL_5_2:
@@ -18329,7 +18323,7 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 !!(id & SW_AVB_ABLE), !!(id & SW_REDUNDANCY_ABLE), !!(id & SW_GIGABIT_ABLE));
 	} else if ((FAMILY_ID_95 & 0x0f) == (id1 & 0x0f))
 		sw->features |= AVB_SUPPORT;
-	if ((sw->features & (HSR_HW | DLR_HW)) && port_count > 3)
+	if ((sw->features & REDUNDANCY_SUPPORT) && port_count > 3)
 		sw->overrides |= HAVE_MORE_THAN_2_PORTS;
 	if (sw->features & IS_9893) {
 		sw->chip_id = KSZ9893_SW_CHIP;

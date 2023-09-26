@@ -69,7 +69,7 @@ static void proc_hsr_cfg(struct ksz_hsr_info *info, u8 *addr, u16 member)
 	cfg_work->sw = info->sw_dev;
 	memcpy(cfg_work->addr, addr, ETH_ALEN);
 	cfg_work->member = member;
-	if (info->redbox_dev)
+	if (info->redbox)
 		cfg_work->vlan = info->redbox_vlan;
 	schedule_work(&cfg_work->work);
 }  /* proc_hsr_cfg */
@@ -1001,7 +1001,7 @@ static int hsr_xmit(struct ksz_hsr_info *info)
 	int len = info->len;
 
 	/* Do not send if network device is not ready. */
-	if (!netif_running(info->dev) || !netif_carrier_ok(info->dev))
+	if (!netif_running(info->dev) || !info->hsr_up)
 		return 0;
 
 	if (len < 60) {
@@ -1222,7 +1222,7 @@ static void hsr_announce(unsigned long data)
 		msecs_to_jiffies(HSR_LIFE_CHECK_INTERVAL);
 
 #ifdef CONFIG_KSZ_SWITCH
-	if (netif_running(master->dev) && netif_carrier_ok(master->dev))
+	if (netif_running(master->dev) && info->hsr_up)
 #endif
 		add_timer(&hsr->announce_timer);
 }
@@ -1415,7 +1415,7 @@ dbg_msg("local only: %d\n", port->type);
 		if (hsr_register_frame_out(port, frame->node_src,
 					   frame->sequence_nr))
 		{
-#if 1
+#if 0
 dbg_msg("saw before: %d %04x %d\n", port->type, frame->sequence_nr,
 frame->is_supervision);
 #endif
@@ -1519,7 +1519,7 @@ dbg_msg(" S ");
 		hsr_addr_subst_source(frame->node_src, skb);
 
 		/* No Redbox or Redbox is not up or no internal forwarding. */
-		if (!info->redbox_dev || !info->redbox_up || !info->redbox_fwd)
+		if (!info->redbox || !info->redbox_up || !info->redbox_fwd)
 			return;
 		do {
 			struct ksz_sw *sw = info->sw_dev;
@@ -1740,7 +1740,7 @@ static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 	int forward;
 	int ret = 2;
 
-	if (!info->redbox_dev)
+	if (!info->redbox)
 		return ret;
 
 	/* Stop processing if coming from HSR ports. */
@@ -2050,7 +2050,7 @@ static void hsr_check_announce(struct ksz_hsr_info *info)
 
 	if (info->state < 0)
 		return;
-	state = netif_running(info->dev) && netif_carrier_ok(info->dev);
+	state = netif_running(info->dev) && info->hsr_up;
 	if (state != info->state) {
 dbg_msg("%s %d %d\n", __func__, info->state, state);
 		if (state) {
@@ -2428,14 +2428,11 @@ static void stop_hsr(struct ksz_hsr_info *info)
 
 static void start_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
 {
-	info->redbox_dev = dev;
 	info->redbox_up = netif_carrier_ok(dev);
 }
 
 static void stop_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
 {
-	if (info->redbox_dev == dev)
-		info->redbox_dev = NULL;
 	info->redbox_up = 0;
 }
 

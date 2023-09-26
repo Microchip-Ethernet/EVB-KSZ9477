@@ -60,7 +60,6 @@ struct ksz_hsr_info {
 	void *sw_dev;
 	struct net_device *dev;
 	struct net_device *redbox;
-	struct net_device *redbox_dev;
 	struct hsr_priv hsr;
 	struct hsr_port hsr_ports[HSR_PT_PORTS];
 	struct hsr_node *center;

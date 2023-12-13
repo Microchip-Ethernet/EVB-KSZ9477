@@ -1,0 +1,13 @@
+diff -Napur linux-6.6.6-orig/net/bridge/br_device.c linux-6.6.6/net/bridge/br_device.c
+--- linux-6.6.6-orig/net/bridge/br_device.c	2023-12-11 01:40:17.000000000 -0800
++++ linux-6.6.6/net/bridge/br_device.c	2023-12-12 15:07:21.472780309 -0800
+@@ -501,6 +501,9 @@ void br_dev_setup(struct net_device *dev
+ 	dev->hw_features = COMMON_FEATURES | NETIF_F_HW_VLAN_CTAG_TX |
+ 			   NETIF_F_HW_VLAN_STAG_TX;
+ 	dev->vlan_features = COMMON_FEATURES;
++#ifdef CONFIG_KSZ_SWITCH
++	dev->hard_header_len += 6;
++#endif
+ 
+ 	br->dev = dev;
+ 	spin_lock_init(&br->lock);

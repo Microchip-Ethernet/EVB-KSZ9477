@@ -1,0 +1,14 @@
+--- a/include/sys/timex.h	2016-07-02 15:29:24.000000000 -0700
++++ b/include/sys/timex.h	2023-07-10 17:38:11.688014221 -0700
+@@ -55,9 +55,10 @@ struct timex
+   long int stbcnt;	/* stability limit exceeded (ro) */
+ 
+   /* ??? */
++  int tai;
+   int  :32; int  :32; int  :32; int  :32;
+   int  :32; int  :32; int  :32; int  :32;
+-  int  :32; int  :32; int  :32; int  :32;
++  int  :32; int  :32; int  :32;
+ };
+ 
+ /* Mode codes (timex.mode) */

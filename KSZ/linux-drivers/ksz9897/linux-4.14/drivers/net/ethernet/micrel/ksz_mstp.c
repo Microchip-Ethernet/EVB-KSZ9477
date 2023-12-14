@@ -5429,11 +5429,9 @@ static void proc_rx(struct work_struct *work)
 			skb = skb_dequeue(&p->rxq);
 			last = skb_queue_empty(&p->rxq);
 			if (skb) {
-				uint port;
 				struct bpdu *bpdu;
 				u16 len = 0;
 
-				port = skb->cb[0];
 				bpdu = chk_bpdu(skb->data, &len);
 				if (bpdu)
 					stp_proc_rx(p, bpdu, len);
@@ -5462,9 +5460,6 @@ static int stp_rcv(struct ksz_stp_info *stp, struct sk_buff *skb, uint port)
 		struct ksz_stp_port *p = &br->ports[port];
 
 		if (stp->machine_running || rcvdBPDU || br->port_rx) {
-
-			/* Use control buffer to save port information. */
-			skb->cb[0] = (char) port;
 			skb_queue_tail(&p->rxq, skb);
 			br->port_rx |= (1 << port);
 			schedule_work(&stp->rx_proc);
@@ -6399,8 +6394,7 @@ static struct stp_ops stp_ops = {
 
 static void ksz_stp_exit(struct ksz_stp_info *stp)
 {
-	flush_work(&stp->state_machine);
-	flush_work(&stp->rx_proc);
+	/* stp_stop should be called before. */
 }  /* ksz_stp_exit */
 
 static void ksz_stp_init(struct ksz_stp_info *stp, struct ksz_sw *sw)

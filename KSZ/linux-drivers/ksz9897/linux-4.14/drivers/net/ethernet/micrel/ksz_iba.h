@@ -1,7 +1,7 @@
 /**
  * Microchip IBA header
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -172,5 +172,18 @@ struct ksz_iba_info {
 	iba->data[0] = (d);						\
 	iba->fptr = iba->ops->cmd_data(iba, cmd, size, addr);		\
 }
+
+#define IBA_USE_CODE_MASK		0x0f
+#define IBA_USE_CODE_OFF		0
+#define IBA_USE_CODE_ON			1
+#define IBA_USE_CODE_PREPARE		2
+#define IBA_USE_CODE_ONLY		3
+#define IBA_USE_CODE_HARD_RESET		4
+#define IBA_USE_CODE_LOST		5
+#define IBA_USE_CODE_SOFT_RESET		6
+
+#define IBA_USE_CODE_TESTING		0x80
+#define IBA_USE_CODE_NO_WAIT		0x40
+#define IBA_USE_CODE_TURN_OFF		0x20
 
 #endif

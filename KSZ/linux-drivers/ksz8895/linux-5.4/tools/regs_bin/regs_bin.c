@@ -61,7 +61,7 @@ static int put_regs(uint first, size_t size, size_t count,
 }
 
 static void display_regs(uint first, size_t size, size_t count,
-			 void *buf)
+			 void *buf, int fixed_size)
 {
 	size_t i;
 	unsigned int *buf_32 = buf;
@@ -74,7 +74,15 @@ static void display_regs(uint first, size_t size, size_t count,
 		else if (first & 2)
 			size = 2;
 	}
-	if (size < acc_size) {
+	if (!fixed_size)
+		fixed_size = (size <= acc_size);
+	if (fixed_size && size > acc_size && (size == 4 || size == 2)) {
+		if (size == 4)
+			*buf_32 = ntohl(*buf_32);
+		else
+			*buf_16 = ntohs(*buf_16);
+	}
+	if (fixed_size) {
 		char fmt[8];
 
 		printf("%04x: ", first);
@@ -82,9 +90,11 @@ static void display_regs(uint first, size_t size, size_t count,
 			strcpy(fmt, "%04x\n");
 		else if (1 == size)
 			strcpy(fmt, "%02x\n");
-		if (4 == acc_size)
+		else
+			strcpy(fmt, "%08x\n");
+		if (4 == size)
 			printf(fmt, *buf_32);
-		else if (2 == acc_size)
+		else if (2 == size)
 			printf(fmt, *buf_16);
 		else
 			printf(fmt, *buf_8);
@@ -240,18 +250,22 @@ static void get_cmd(FILE *fp)
 		case 'r':
 			if (count >= 2) {
 				size_t size = acc_size;
+				int one = 0;
 
 				if (count >= 3)
 					count = num[1];
 				else
 					count = 1;
 				if (1 == count) {
+					one = 1;
 					if ('b' == cmd[1])
 						size = 1;
 					else if ('w' == cmd[1])
 						size = 2;
 					else if ('d' == cmd[1])
 						size = 4;
+					else
+						one = 0;
 					if (fixed_boundary) {
 						if (num[0] & 1)
 							size = 1;
@@ -266,7 +280,7 @@ static void get_cmd(FILE *fp)
 					rc = get_regs(num[0], count, data);
 					if (rc > 0) {
 						display_regs(num[0], count, rc,
-							data);
+							data, one);
 						count -= rc;
 						num[0] += rc;
 					} else
@@ -362,7 +376,7 @@ static void get_cmd(FILE *fp)
 					rc = get_regs(phy_id, size, data);
 					if (rc > 0) {
 						display_regs(phy_id, size, rc,
-							     data);
+							     data, 0);
 						count -= rc;
 						phy_id += rc;
 					}

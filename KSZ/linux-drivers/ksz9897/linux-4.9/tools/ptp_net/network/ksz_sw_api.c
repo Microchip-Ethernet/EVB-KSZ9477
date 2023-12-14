@@ -1,7 +1,7 @@
 /**
  * Microchip switch driver API code
  *
- * Copyright (c) 2016-2017 Microchip Technology Inc.
+ * Copyright (c) 2016-2020 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -51,6 +51,7 @@ typedef uint64_t u64;
 
 struct dev_info {
 	int fd;
+	int id;
 	u8 *buf;
 	int len;
 	int index;
@@ -122,6 +123,8 @@ int sw_init(struct dev_info *dev)
 	char device[20];
 
 	sprintf(device, "/dev/sw_dev");
+	if (dev->id > 0)
+		sprintf(device, "/dev/sw_dev_%u", dev->id);
 	dev->fd = open(device, O_RDWR);
 	if (dev->fd < 0) {
 		printf("cannot open sw device\n");

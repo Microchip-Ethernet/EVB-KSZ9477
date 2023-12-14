@@ -1764,18 +1764,10 @@ int main(int argc, char *argv[])
 	int multi_loop = 0;
 	int dlr_hw;
 	int hsr_hw;
-
-#ifdef USE_DEV_IOCTL
-	if (sw_init(&swdev)) {
-		printf("cannot access device\n");
-		return 1;
-	}
-#endif
-
-	SocketInit(0);
+	int id = 0;
 
 	if (argc < 2) {
-		printf("usage: %s <local_if>\n",
+		printf("usage: %s <local_if> [-6] [-i[0..1]]\n",
 			argv[0]);
 		return 1;
 	}
@@ -1799,6 +1791,11 @@ int main(int argc, char *argv[])
 							argv[i][2] <= '9')
 						dbg_rcv = argv[i][2] - '0';
 					break;
+				case 'i':
+					if ('0' <= argv[i][2] &&
+					    argv[i][2] <= '9')
+						id = argv[i][2] - '0';
+					break;
 				case 'l':
 					multi_loop = 1;
 					break;
@@ -1821,6 +1818,16 @@ int main(int argc, char *argv[])
 #ifdef USE_NET_IOCTL
 	strncpy(swdev.name, devname, sizeof(swdev.name));
 #endif
+
+#ifdef USE_DEV_IOCTL
+	swdev.id = id;
+	if (sw_init(&swdev)) {
+		printf("cannot access device\n");
+		return 1;
+	}
+#endif
+
+	SocketInit(0);
 
 	if (get_host_info(argv[1], &info)) {
 		memcpy(host_addr, &info.addr.sin_addr, 4);

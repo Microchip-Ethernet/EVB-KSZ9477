@@ -1,8 +1,10 @@
 /**
  * ksz_ptp.h - Micrel PTP common header
  *
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
+ *	Tristram Ha <Tristram.Ha@microchip.com>
+ *
  * Copyright (c) 2010-2014 Micrel, Inc.
- *	Tristram Ha <Tristram.Ha@micrel.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -514,6 +516,7 @@ struct ptp_cfg_options {
 #define PTP_CMD_ON_TIME			0x04
 #define PTP_CMD_REL_TIME		0x08
 #define PTP_CMD_CLK_OPT			0x10
+#define PTP_CMD_SW_OPER			0x20
 #define PTP_CMD_CASCADE_RESET_OPER	0x40
 #define PTP_CMD_CANCEL_OPER		0x80
 

@@ -1752,6 +1752,7 @@ int get_hw_cmd(FILE *fp)
 	int ptp_priority = 0;
 	int ptp_started = 0;
 	void *fd = &ptpdev;
+	int ptp_clk_id = 0;
 
 	get_global_cfg(fd, &ptp_master, &ptp_2step, &ptp_p2p,
 		&ptp_as, &ptp_unicast, &ptp_alternate, &ptp_csum, &ptp_check,
@@ -1869,9 +1870,11 @@ int get_hw_cmd(FILE *fp)
 		} else if ('c' == line[1]) {
 			switch (line[0]) {
 			case 'g':
-				rc = get_clock(fd, &num[0], &num[1]);
+				if (count < 2)
+					num[0] = ptp_clk_id;
+				rc = get_clock(fd, &num[1], &num[2], num[0]);
 				if (!rc)
-					printf("%x:%9u\n", num[0], num[1]);
+					printf("%x:%9u\n", num[1], num[2]);
 				else
 					print_err(rc);
 				break;
@@ -1880,7 +1883,9 @@ int get_hw_cmd(FILE *fp)
 					break;
 				if (count < 3)
 					num[1] = 0;
-				rc = set_clock(fd, num[0], num[1]);
+				if (count < 4)
+					num[2] = ptp_clk_id;
+				rc = set_clock(fd, num[0], num[1], num[2]);
 				print_err(rc);
 				break;
 			case 'i':
@@ -1888,31 +1893,46 @@ int get_hw_cmd(FILE *fp)
 					break;
 				if (count < 3)
 					num[1] = 0;
+				if (count < 4)
+					num[2] = ptp_clk_id;
 				if (900000000 <= num[0] && count >= 4)
 					rc = set_clock(fd,
-						0xffffffff, 100000000);
-				rc = get_clock(fd, &num[2], &num[3]);
-				rc = adj_freq(fd, num[1], num[0], 0, 0);
-				rc = get_clock(fd, &num[4], &num[5]);
-				printf("%x:%9u\n", num[2], num[3]);
-				printf("%x:%9u\n", num[4], num[5]);
+						0xffffffff, 100000000, num[2]);
+				rc = get_clock(fd, &num[3], &num[4], num[2]);
+				rc = adj_freq(fd, num[1], num[0], 0, 0,
+					num[2]);
+				rc = get_clock(fd, &num[5], &num[6], num[2]);
+				if (rc) {
+					print_err(rc);
+					break;
+				}
+				printf("%x:%9u\n", num[3], num[4]);
+				printf("%x:%9u\n", num[5], num[6]);
 				break;
 			case 'd':
 				if (count < 2)
 					break;
 				if (count < 3)
 					num[1] = 0;
+				if (count < 4)
+					num[2] = ptp_clk_id;
 				if (900000000 <= num[0] && count >= 4)
-					rc = set_clock(fd, 1, 0);
-				rc = get_clock(fd, &num[2], &num[3]);
-				rc = adj_freq(fd, -num[1], -num[0], 0, 0);
-				rc = get_clock(fd, &num[4], &num[5]);
-				printf("%x:%9u\n", num[2], num[3]);
-				printf("%x:%9u\n", num[4], num[5]);
+					rc = set_clock(fd, 1, 0, num[2]);
+				rc = get_clock(fd, &num[3], &num[4], num[2]);
+				rc = adj_freq(fd, -num[1], -num[0], 0, 0,
+					num[2]);
+				rc = get_clock(fd, &num[5], &num[6], num[2]);
+				if (rc) {
+					print_err(rc);
+					break;
+				}
+				printf("%x:%9u\n", num[3], num[4]);
+				printf("%x:%9u\n", num[5], num[6]);
 				break;
 			case 'a':
 				if (count < 2) {
-					rc = get_freq(fd, &ptp_drift);
+					num[0] = ptp_clk_id;
+					rc = get_freq(fd, &ptp_drift, num[0]);
 					if (!rc)
 						printf("drift = %d\n",
 							ptp_drift);
@@ -1921,8 +1941,16 @@ int get_hw_cmd(FILE *fp)
 					break;
 				}
 				num[1] = 1000000000;
-				rc = adj_freq(fd, 0, 0, num[0], num[1]);
+				num[2] = ptp_clk_id;
+				rc = adj_freq(fd, 0, 0, num[0], num[1],
+					num[2]);
 				print_err(rc);
+				break;
+			case 'z':
+				if (count < 2)
+					printf("%d\n", ptp_clk_id);
+				else if (num[0] >= 0 && num[0] <= 9)
+					ptp_clk_id = num[0];
 				break;
 			}
 		} else if ('d' == line[1]) {

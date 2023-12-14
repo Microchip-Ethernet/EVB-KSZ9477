@@ -207,6 +207,8 @@ struct ptp_clock_identity masterClockIdentity;
 static int ptp_correction;
 static int ptp_count = 1;
 static int ptp_num;
+static int delay_num = 10;
+static int pause_num = 200;
 static int ptp_domain;
 static int ptp_dst_port;
 static int ptp_src_port;
@@ -322,6 +324,8 @@ void *tlv_msg(void *msg, int *size, u16 tlvType, int ext)
 			(struct IEEE_C37_238_data *) org->dataField;
 		struct IEEE_802_1AS_data_1 *avb =
 			(struct IEEE_802_1AS_data_1 *) org->dataField;
+		struct IEEE_802_1AS_data_2 *req =
+			(struct IEEE_802_1AS_data_2 *) org->dataField;
 
 		switch (ext) {
 		case 0:
@@ -355,6 +359,23 @@ void *tlv_msg(void *msg, int *size, u16 tlvType, int ext)
 				sizeof(struct IEEE_802_1AS_data_1);
 			avb++;
 			msg = avb;
+			break;
+		case 2:
+			org->organizationId[0] = 0x00;
+			org->organizationId[1] = 0x80;
+			org->organizationId[2] = 0xC2;
+			org->organizationSubType[0] = 0;
+			org->organizationSubType[1] = 0;
+			org->organizationSubType[2] = 0x02;
+			req->linkDelayInterval = 127;
+			req->timeSyncInterval = -3;
+			req->announceInterval = 127;
+			req->flags = 3;
+			req->reserved = 0;
+			len = sizeof(struct ptp_organization_ext_tlv) - 1 +
+				sizeof(struct IEEE_802_1AS_data_2);
+			req++;
+			msg = req;
 			break;
 		}
 		break;
@@ -497,6 +518,33 @@ struct ptp_msg *signaling_msg(int type, int message, u8 period, u32 duration)
 	}
 	len = sizeof(struct ptp_msg_signaling_base) + 4 +
 		ntohs(signaling->tlv.request[0].tlv.lengthField);
+	prepare_hdr(&msg->hdr, SIGNALING_MSG, len, seqid, ctrl, logInterval,
+		clock);
+	return msg;
+}
+
+struct ptp_msg *interval_msg(void)
+{
+	static char payload[(sizeof(struct ptp_msg) + 4000) & ~3];
+	struct ptp_msg* msg = (struct ptp_msg *) payload;
+	int len;
+	int logInterval;
+	int seqid;
+	int ctrl;
+	struct ptp_clock_identity *clock;
+	struct ptp_msg_signaling_base *signaling;
+	void *tlv;
+
+	clock = &selfClockIdentity;
+	ctrl = 5;
+	logInterval = 0x7F;
+	seqid_signaling++;
+	seqid = seqid_signaling;
+	signaling = &msg->data.signaling.b;
+	memset(signaling, 0xff, 10);
+	len = sizeof(struct ptp_msg_signaling_base);
+	tlv = signaling + 1;
+	tlv = tlv_msg(tlv, &len, TLV_ORGANIZATION_EXTENSION, 2);
 	prepare_hdr(&msg->hdr, SIGNALING_MSG, len, seqid, ctrl, logInterval,
 		clock);
 	return msg;
@@ -840,6 +888,7 @@ void send_msg(struct ptp_msg *msg, int family, int len)
 	}
 	memset(&buf[len], 0, 7);
 	buf[len + 4] = 0x30;
+	buf[len + 5] = 0xff;
 	len += 7;
 #endif
 	} else
@@ -1007,19 +1056,37 @@ int disp_tlv(void *msg, int left)
 		} else if (0x00 == org->organizationId[0] &&
 				0x80 == org->organizationId[1] &&
 				0xC2 == org->organizationId[2]) {
-			struct IEEE_802_1AS_data_1 *data =
-				(struct IEEE_802_1AS_data_1 *) org->dataField;
+			if (0x00 == org->organizationSubType[0] &&
+			    0x00 == org->organizationSubType[1] &&
+			    0x01 == org->organizationSubType[2]) {
+				struct IEEE_802_1AS_data_1 *data =
+					(struct IEEE_802_1AS_data_1 *)
+					org->dataField;
 
 #if (__BITS_PER_LONG == 64)
-			printf("%d %u %d,%ld %d",
+				printf("%d %u %d,%ld %d",
 #else
-			printf("%d %u %d,%lld %d",
+				printf("%d %u %d,%lld %d",
 #endif
-				ntohl(data->cumulativeScaledRateOffset),
-				ntohs(data->gmTimeBaseIndicator),
-				data->lastGmPhaseChange.hi,
-				data->lastGmPhaseChange.lo,
-				ntohl(data->scaledLastGmFreqChange));
+					ntohl(data->cumulativeScaledRateOffset),
+					ntohs(data->gmTimeBaseIndicator),
+					data->lastGmPhaseChange.hi,
+					data->lastGmPhaseChange.lo,
+					ntohl(data->scaledLastGmFreqChange));
+			}
+			if (0x00 == org->organizationSubType[0] &&
+			    0x00 == org->organizationSubType[1] &&
+			    0x02 == org->organizationSubType[2]) {
+				struct IEEE_802_1AS_data_2 *data =
+					(struct IEEE_802_1AS_data_2 *)
+					org->dataField;
+
+				printf("%d %d %d %02x",
+					data->linkDelayInterval,
+					data->timeSyncInterval,
+					data->announceInterval,
+					data->flags);
+			}
 		}
 		left -= len + 4;
 		break;
@@ -1331,9 +1398,10 @@ void disp_msg(struct ptp_msg *req, int len)
 		if (ptp_rx_port)
 			printf("r=%x %x:%9u\n", ptp_rx_port,
 				ptp_rx_sec, ptp_rx_nsec);
-	} else
+	} else if (req->hdr.reserved3) {
 		printf("r=%x %04x\n",
 			req->hdr.reserved2, ntohl(req->hdr.reserved3));
+	}
 #endif
 	printf("d=%x", req->hdr.domainNumber);
 	printf("  ");
@@ -1586,6 +1654,9 @@ static void print_sw_help(void)
 	printf("\ts\tsource port\n");
 	printf("\tt\t0 = 1-step; 1 = 2-step\n");
 	printf("\tu\treply count\n");
+	printf("\tuu\tsend count\n");
+	printf("\tud\tdelay count\n");
+	printf("\tup\tpause count\n");
 	printf("\tv\talternate master\n");
 	printf("\tw 1\tsend TLV\n");
 	printf("\tw 2 #\tsend Path Trace\n");
@@ -1611,7 +1682,7 @@ int get_cmd(FILE *fp)
 	struct ptp_msg* msg = (struct ptp_msg *) payload;
 
 	do {
-		printf("> ");
+		printf("sw> ");
 		if (fgets(line, 80, fp) == NULL)
 			break;
 		cmd[0] = '\0';
@@ -1705,6 +1776,14 @@ int get_cmd(FILE *fp)
 				TLV_ACKNOWLEDGE_CANCEL_UNICAST_TRANSMISSION,
 				ANNOUNCE_MSG, 0, 0);
 			send_msg(msg, ip_family, len);
+		} else if (!strcmp(cmd, "sgi")) {
+			msg = interval_msg();
+			send_msg(msg, ip_family, len);
+		} else if (!strcmp(cmd, "ts")) {
+			if (count >= 2) {
+				transport = !!num[0];
+			} else
+				printf("transport = %d\n", transport);
 		} else if (!strcmp(cmd, "hw")) {
 			return 1;
 		} else if (!strcmp(cmd, "sw")) {
@@ -1734,8 +1813,8 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 1)
-					usleep(10);
+				if ((send_cnt % pause_num) == pause_num - 1)
+					usleep(delay_num);
 #endif
 				if (msg_len && !(msg_len & 1)) {
 					++len;
@@ -1765,8 +1844,8 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 1)
-					usleep(10);
+				if ((send_cnt % pause_num) == pause_num - 1)
+					usleep(delay_num);
 #endif
 			} while (++send_cnt < ptp_num);
 			disp_tx_timestamp(&msg->hdr);
@@ -1790,8 +1869,8 @@ int get_cmd(FILE *fp)
 #endif
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 1)
-					usleep(10);
+				if ((send_cnt % pause_num) == pause_num - 1)
+					usleep(delay_num);
 #endif
 			} while (++send_cnt < ptp_num);
 			disp_tx_timestamp(&msg->hdr);
@@ -1823,8 +1902,8 @@ int get_cmd(FILE *fp)
 				prepare_msg(msg, ANNOUNCE_MSG);
 				send_msg(msg, ip_family, len);
 #ifdef _SYS_SOCKET_H
-				if (ptp_num > 1)
-					usleep(10);
+				if ((send_cnt % pause_num) == pause_num - 1)
+					usleep(delay_num);
 #endif
 			} while (++send_cnt < ptp_num);
 			break;
@@ -1889,6 +1968,22 @@ int get_cmd(FILE *fp)
 					printf("%d\n", ptp_num);
 				break;
 			}
+			if (line[1] == 'd') {
+				if (count >= 2 && num[0] > 0)
+					delay_num = num[0];
+				else
+					printf("%d\n", delay_num);
+				break;
+			}
+			if (line[1] == 'p') {
+				if (count >= 2 && num[0] > 0)
+					pause_num = num[0];
+				else
+					printf("%d\n", pause_num);
+				break;
+			}
+			if (line[1] != ' ' && line[1] != '\n')
+				break;
 			if (count >= 2)
 				ptp_count = num[0];
 			else
@@ -1985,6 +2080,7 @@ int get_hw_cmd(FILE *fp)
 	int ptp_priority = 0;
 	int ptp_started = 0;
 	void *fd = &ptpdev;
+	int ptp_clk_id = 0;
 
 	get_global_cfg(fd, &ptp_master, &ptp_2step, &ptp_p2p,
 		&ptp_as, &ptp_unicast, &ptp_alternate, &ptp_csum, &ptp_check,
@@ -1992,7 +2088,7 @@ int get_hw_cmd(FILE *fp)
 		&ptp_drop_sync, &ptp_priority, &ptp_domain, &ptp_access_delay,
 		&ptp_started);
 	do {
-		printf("> ");
+		printf("hw> ");
 		if (fgets(line, 80, fp) == NULL)
 			break;
 		cmd[0] = '\0';
@@ -2098,9 +2194,11 @@ int get_hw_cmd(FILE *fp)
 		} else if ('c' == line[1]) {
 			switch (line[0]) {
 			case 'g':
-				rc = get_clock(fd, &num[0], &num[1]);
+				if (count < 2)
+					num[0] = ptp_clk_id;
+				rc = get_clock(fd, &num[1], &num[2], num[0]);
 				if (!rc)
-					printf("%x:%9u\n", num[0], num[1]);
+					printf("%x:%9u\n", num[1], num[2]);
 				else
 					print_err(rc);
 				break;
@@ -2109,7 +2207,9 @@ int get_hw_cmd(FILE *fp)
 					break;
 				if (count < 3)
 					num[1] = 0;
-				rc = set_clock(fd, num[0], num[1]);
+				if (count < 4)
+					num[2] = ptp_clk_id;
+				rc = set_clock(fd, num[0], num[1], num[2]);
 				print_err(rc);
 				break;
 			case 'i':
@@ -2117,31 +2217,46 @@ int get_hw_cmd(FILE *fp)
 					break;
 				if (count < 3)
 					num[1] = 0;
+				if (count < 4)
+					num[2] = ptp_clk_id;
 				if (900000000 <= num[0] && count >= 4)
 					rc = set_clock(fd,
-						0xffffffff, 100000000);
-				rc = get_clock(fd, &num[2], &num[3]);
-				rc = adj_freq(fd, num[1], num[0], 0, 0);
-				rc = get_clock(fd, &num[4], &num[5]);
-				printf("%x:%9u\n", num[2], num[3]);
-				printf("%x:%9u\n", num[4], num[5]);
+						0xffffffff, 100000000, num[2]);
+				rc = get_clock(fd, &num[3], &num[4], num[2]);
+				rc = adj_freq(fd, num[1], num[0], 0, 0,
+					num[2]);
+				rc = get_clock(fd, &num[5], &num[6], num[2]);
+				if (rc) {
+					print_err(rc);
+					break;
+				}
+				printf("%x:%9u\n", num[3], num[4]);
+				printf("%x:%9u\n", num[5], num[6]);
 				break;
 			case 'd':
 				if (count < 2)
 					break;
 				if (count < 3)
 					num[1] = 0;
+				if (count < 4)
+					num[2] = ptp_clk_id;
 				if (900000000 <= num[0] && count >= 4)
-					rc = set_clock(fd, 1, 0);
-				rc = get_clock(fd, &num[2], &num[3]);
-				rc = adj_freq(fd, -num[1], -num[0], 0, 0);
-				rc = get_clock(fd, &num[4], &num[5]);
-				printf("%x:%9u\n", num[2], num[3]);
-				printf("%x:%9u\n", num[4], num[5]);
+					rc = set_clock(fd, 1, 0, num[2]);
+				rc = get_clock(fd, &num[3], &num[4], num[2]);
+				rc = adj_freq(fd, -num[1], -num[0], 0, 0,
+					num[2]);
+				rc = get_clock(fd, &num[5], &num[6], num[2]);
+				if (rc) {
+					print_err(rc);
+					break;
+				}
+				printf("%x:%9u\n", num[3], num[4]);
+				printf("%x:%9u\n", num[5], num[6]);
 				break;
 			case 'a':
 				if (count < 2) {
-					rc = get_freq(fd, &ptp_drift);
+					num[0] = ptp_clk_id;
+					rc = get_freq(fd, &ptp_drift, num[0]);
 					if (!rc)
 						printf("drift = %d\n",
 							ptp_drift);
@@ -2150,8 +2265,16 @@ int get_hw_cmd(FILE *fp)
 					break;
 				}
 				num[1] = 1000000000;
-				rc = adj_freq(fd, 0, 0, num[0], num[1]);
+				num[2] = ptp_clk_id;
+				rc = adj_freq(fd, 0, 0, num[0], num[1],
+					num[2]);
 				print_err(rc);
+				break;
+			case 'z':
+				if (count < 2)
+					printf("%d\n", ptp_clk_id);
+				else if (num[0] >= 0 && num[0] <= 9)
+					ptp_clk_id = num[0];
 				break;
 			}
 		} else if ('d' == line[1]) {

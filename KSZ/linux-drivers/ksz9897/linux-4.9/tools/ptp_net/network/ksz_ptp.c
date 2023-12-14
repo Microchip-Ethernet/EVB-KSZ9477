@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2018 Microchip Technology Inc.
+ * Copyright (c) 2015-2020 Microchip Technology Inc.
  * Copyright (c) 2012-2014 Micrel, Inc.
  *
  */
@@ -71,7 +71,7 @@ static void init_req(void *ptr,
 	req->param.data[5] = '2';
 }  /* init_req */
 
-static void get_freq_req(void *ptr)
+static void get_freq_req(void *ptr, int clk_id)
 {
 	struct ksz_request *req = (struct ksz_request *) ptr;
 
@@ -79,11 +79,11 @@ static void get_freq_req(void *ptr)
 	req->size += sizeof(struct ptp_clk_options);
 	req->cmd = DEV_CMD_GET;
 	req->subcmd = DEV_PTP_CLK;
-	req->output = 1;
+	req->output = 1 | (clk_id << 16);
 }  /* get_freq_req */
 
 static void adj_freq_req(void *ptr,
-	int sign, u32 sec, u32 nsec, int drift, u32 interval)
+	int sign, u32 sec, u32 nsec, int drift, u32 interval, int clk_id)
 {
 	struct ksz_request *req = (struct ksz_request *) ptr;
 	struct ptp_clk_options *param = (struct ptp_clk_options *)
@@ -93,14 +93,14 @@ static void adj_freq_req(void *ptr,
 	req->size += sizeof(struct ptp_clk_options);
 	req->cmd = DEV_CMD_PUT;
 	req->subcmd = DEV_PTP_CLK;
-	req->output = sign;
+	req->output = sign | (clk_id << 16);
 	param->sec = sec;
 	param->nsec = nsec;
 	param->drift = drift;
 	param->interval = interval;
 }  /* adj_freq_req */
 
-static void get_clock_req(void *ptr)
+static void get_clock_req(void *ptr, int clk_id)
 {
 	struct ksz_request *req = (struct ksz_request *) ptr;
 
@@ -108,11 +108,11 @@ static void get_clock_req(void *ptr)
 	req->size += sizeof(struct ptp_clk_options);
 	req->cmd = DEV_CMD_GET;
 	req->subcmd = DEV_PTP_CLK;
-	req->output = 0;
+	req->output = clk_id << 16;
 }  /* get_clock_req */
 
 static void set_clock_req(void *ptr,
-	u32 sec, u32 nsec)
+	u32 sec, u32 nsec, int clk_id)
 {
 	struct ksz_request *req = (struct ksz_request *) ptr;
 	struct ptp_clk_options *param = (struct ptp_clk_options *)
@@ -122,7 +122,7 @@ static void set_clock_req(void *ptr,
 	req->size += sizeof(struct ptp_clk_options);
 	req->cmd = DEV_CMD_PUT;
 	req->subcmd = DEV_PTP_CLK;
-	req->output = 0;
+	req->output = clk_id << 16;
 	param->sec = sec;
 	param->nsec = nsec;
 }  /* set_clock_req */
@@ -721,14 +721,14 @@ int ptp_port_info(void *fd,
 }
 
 int get_freq(void *fd,
-	int *drift)
+	int *drift, int clk_id)
 {
 	struct ksz_request_actual req;
 	int rc;
 
 	if (ptp_version < 2)
 		return DEV_IOC_INVALID_CMD;
-	get_freq_req(&req);
+	get_freq_req(&req, clk_id);
 	rc = ptp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -738,7 +738,7 @@ int get_freq(void *fd,
 }  /* get_freq */
 
 int adj_freq(void *fd,
-	int sec, int nsec, int drift, u32 interval)
+	int sec, int nsec, int drift, u32 interval, int clk_id)
 {
 	struct ksz_request_actual req;
 	int rc;
@@ -750,7 +750,7 @@ int adj_freq(void *fd,
 		nsec = -nsec;
 	} else
 		sign = 2;
-	adj_freq_req(&req, sign, sec, nsec, drift, interval);
+	adj_freq_req(&req, sign, sec, nsec, drift, interval, clk_id);
 	rc = ptp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -758,12 +758,12 @@ int adj_freq(void *fd,
 }  /* adj_freq */
 
 int get_clock(void *fd,
-	u32 *sec, u32 *nsec)
+	u32 *sec, u32 *nsec, int clk_id)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	get_clock_req(&req);
+	get_clock_req(&req, clk_id);
 	rc = ptp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;
@@ -778,12 +778,12 @@ int get_clock(void *fd,
 }  /* get_clock */
 
 int set_clock(void *fd,
-	u32 sec, u32 nsec)
+	u32 sec, u32 nsec, int clk_id)
 {
 	struct ksz_request_actual req;
 	int rc;
 
-	set_clock_req(&req, sec, nsec);
+	set_clock_req(&req, sec, nsec, clk_id);
 	rc = ptp_ioctl(fd, &req);
 	if (!rc)
 		rc = req.result;

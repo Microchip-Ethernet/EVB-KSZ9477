@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2022 Microchip Technology Inc.
  * Copyright (c) 2012-2014 Micrel, Inc.
  *
  */
@@ -527,7 +527,7 @@ static void rx_event_req(void *ptr,
 
 static void tx_event_req(void *ptr,
 	u8 tso, u8 gpo, u8 event, u32 pulse, u32 cycle, u16 cnt,
-	u32 iterate, u32 sec, u32 nsec, u8 flags)
+	u32 iterate, u32 sec, u32 nsec, u8 flags, u8 factor)
 {
 	struct ksz_request *req = (struct ksz_request *) ptr;
 	struct ptp_tso_options *param = (struct ptp_tso_options *)
@@ -548,6 +548,7 @@ static void tx_event_req(void *ptr,
 	param->sec = sec;
 	param->nsec = nsec;
 	param->iterate = iterate;
+	param->reserved[0] = factor;
 }  /* tx_event_req */
 
 static void tx_cascade_req(void *ptr,
@@ -1224,13 +1225,13 @@ int rx_event(void *fd,
 
 int tx_event(void *fd,
 	u8 tso, u8 gpo, u8 event, u32 pulse, u32 cycle, u16 cnt,
-	u32 iterate, u32 sec, u32 nsec, u8 flags, int *unit)
+	u32 iterate, u32 sec, u32 nsec, u8 flags, u8 factor, int *unit)
 {
 	struct ksz_request_actual req;
 	int rc;
 
 	tx_event_req(&req, tso, gpo, event, pulse, cycle, cnt,
-		iterate, sec, nsec, flags);
+		iterate, sec, nsec, flags, factor);
 	rc = ptp_ioctl(fd, &req);
 	if (!rc) {
 		rc = req.result;
@@ -1332,7 +1333,7 @@ int get_rx_event_info(void *fd,
 	return rc;
 }  /* get_rx_event_info */
 
-int proc_rx_event(u8 *data, size_t len)
+int proc_rx_event(u8 *data, size_t len, int stop_rx)
 {
 	int i;
 	u32 edge;
@@ -1349,6 +1350,8 @@ int proc_rx_event(u8 *data, size_t len)
 		printf("%d is not correct\n", len);
 		return DEV_IOC_INVALID_SIZE;
 	}
+	if (stop_rx)
+		return 0;
 	printf("\n");
 	printf("unit: %d=%d\n", info->unit, info->event);
 	edge = info->edge;

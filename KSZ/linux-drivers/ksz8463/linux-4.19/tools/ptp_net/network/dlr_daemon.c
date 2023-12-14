@@ -1253,7 +1253,8 @@ struct ksz_dlr_active_node node;
      	 printf("DLR Daemon runing cmdport=%d event_port=%d version=1.%d\n", CMD_PORT,EVENT_PORT, APP_VERSION);   
   		
   		mhp_mutex_init(&g_mutex);
- 
+
+	dlrdev.id = 0; 
        if (sw_init(&dlrdev)) {
 						printf("cannot access device\n");
 						return -1;

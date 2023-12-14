@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8462 HLI Ethernet driver
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -61,6 +61,17 @@
 #define CONFIG_1588_PTP
 #endif
 
+#ifdef CONFIG_KSZ_MRP
+/* MRP code not implemented yet. */
+#undef CONFIG_KSZ_MRP
+#undef CONFIG_KSZ_MMRP
+#undef CONFIG_KSZ_MVRP
+#undef CONFIG_KSZ_MSRP
+#endif
+/* Can be defined if KSZ9897 driver is included also. */
+#undef CONFIG_KSZ_DLR
+#undef CONFIG_KSZ_HSR
+
 #include "ksz_common.h"
 #include "ksz_req.h"
 #include "ksz_sw.h"
@@ -113,8 +124,8 @@
 
 #define DRV_NAME			"ksz8462_hli"
 #define DRV_VERSION			"1.1.0"
-#define SW_DRV_VERSION			"1.2.2"
-#define SW_DRV_RELDATE			"Jan 30, 2020"
+#define SW_DRV_VERSION			"1.2.3"
+#define SW_DRV_RELDATE			"Aug 24, 2021"
 
 #define MAX_RECV_FRAMES			180 /* 32 */
 #define MAX_BUF_SIZE			2048
@@ -271,8 +282,6 @@ struct ksz_hw {
 #include "ksz_req.c"
 
 /* -------------------------------------------------------------------------- */
-
-#include "ksz_sw.h"
 
 /**
  * struct dev_priv - Network device private data structure
@@ -704,7 +713,12 @@ static void get_private_data_(struct device *d, struct semaphore **proc_sem,
 #define get_private_data		get_private_data_
 
 #define USE_DIFF_PORT_PRIORITY
+
+/* Do not emulate PHY device in ksz_sw.c code. */
 #define NO_PHYDEV
+
+/* KSZ8463 and KSZ8863 use same ksz_sw.c code. */
+#undef CONFIG_HAVE_KSZ8863
 #include "ksz_sw.c"
 
 static struct ksz_sw_reg_ops sw_reg_ops = {
@@ -1037,8 +1051,9 @@ static void update_link(struct net_device *dev, struct ks_net *priv,
 
 static void ksz8462_link_update_work(struct work_struct *work)
 {
+	struct delayed_work *dwork = to_delayed_work(work);
 	struct ksz_port *port =
-		container_of(work, struct ksz_port, link_update);
+		container_of(dwork, struct ksz_port, link_update);
 	struct net_device *dev;
 	struct ksz_sw *sw = port->sw;
 
@@ -1795,20 +1810,16 @@ static int det_rcv_cnt(struct ksz_hw *hw, u8 *data, int len)
 static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 	u16 sts, u32 len)
 {
-	struct net_device *parent_dev = NULL;
-	struct sk_buff *parent_skb = NULL;
 	struct net_device *dev = hw_priv->dev;
 	struct ks_net *priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	struct ksz_sw *sw = hw_priv->sw;
 	unsigned long flags;
-	int extra_skb;
 	int forward = 0;
 	int tcp = hw->rx_tcp;
 	int rx_port = 0;
 	int tag = 0;
 	void *ptr = NULL;
-	void (*rx_tstamp)(void *ptr, struct sk_buff *skb) = NULL;
 #ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp = &sw->ptp_hw;
 	int ptp_tag = 0;
@@ -1869,14 +1880,10 @@ static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 			dev_kfree_skb_irq(skb);
 			return 0;
 		}
-		if (ptp_tag)
-			rx_tstamp = ptp->ops->get_rx_tstamp;
 	}
 #endif
 	if (sw_is_switch(sw))
-		dev = sw->net_ops->parent_rx(sw, dev, skb, &forward,
-			&parent_dev, &parent_skb);
-	extra_skb = (parent_skb != NULL);
+		dev = sw->net_ops->parent_rx(sw, dev, &forward);
 
 	/* Update receive statistics. */
 	priv = netdev_priv(dev);
@@ -1884,8 +1891,7 @@ static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 	dev->stats.rx_bytes += len;
 
 	if (sw_is_switch(sw))
-		extra_skb |= sw->net_ops->port_vlan_rx(sw, dev, parent_dev,
-			skb, forward, tag, ptr, rx_tstamp);
+		sw->net_ops->port_vlan_rx(skb, forward, tag);
 	if (!hw_priv->use_napi)
 		tcp = det_rcv_cnt(hw, skb->data, len);
 	skb->protocol = eth_type_trans(skb, dev);
@@ -3734,7 +3740,8 @@ static int ks846x_probe(struct platform_device *pdev)
 
 		priv->phy_addr = sw->net_ops->setup_dev(sw, netdev, dev_name,
 			&priv->port, i, port_count, mib_port_count);
-		INIT_WORK(&priv->port.link_update, ksz8462_link_update_work);
+		INIT_DELAYED_WORK(&priv->port.link_update,
+				  ksz8462_link_update_work);
 
 		netdev->mem_start = (unsigned long) hw->hw_addr;
 		netdev->mem_end = netdev->mem_start + 0x20 - 1;

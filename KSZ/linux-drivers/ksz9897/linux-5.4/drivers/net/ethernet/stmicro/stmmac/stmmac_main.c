@@ -364,9 +364,7 @@ static int priv_match_multi(void *ptr, u8 *data)
 }  /* priv_match_multi */
 #endif
 
-static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
-	int *ptp_tag, struct net_device **parent_dev,
-	struct sk_buff **parent_skb)
+static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb)
 {
 	struct net_device *dev;
 	struct stmmac_priv *priv;
@@ -376,13 +374,10 @@ static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	int forward = 0;
 	int tag = 0;
 	void *ptr = NULL;
-	void (*rx_tstamp)(void *ptr, struct sk_buff *skb) = NULL;
-#endif
-#if defined(CONFIG_KSZ_SWITCH)
-	int extra_skb;
 #endif
 #ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp = &sw->ptp_hw;
+	int ptp_tag;
 #endif
 
 	*parent_skb = NULL;
@@ -427,13 +422,11 @@ static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 #ifdef CONFIG_1588_PTP
 	ptr = ptp;
 	if (sw->features & PTP_HW) {
-		if (ptp->ops->drop_pkt(ptp, skb, sw->vlan_id, &tag, ptp_tag,
+		if (ptp->ops->drop_pkt(ptp, skb, sw->vlan_id, &tag, &ptp_tag,
 				       &forward)) {
 			dev_kfree_skb_any(skb);
 			return NULL;
 		}
-		if (*ptp_tag)
-			rx_tstamp = ptp->ops->get_rx_tstamp;
 	}
 #endif
 
@@ -449,18 +442,15 @@ static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	/* No VLAN port forwarding; need to send to parent. */
 	if ((forward & FWD_VLAN_DEV) && !tag)
 		forward &= ~FWD_VLAN_DEV;
-	dev = sw->net_ops->parent_rx(sw, dev, skb, &forward, parent_dev,
-		parent_skb);
+	dev = sw->net_ops->parent_rx(sw, dev, &forward);
 
 	/* dev may change. */
 	if (dev != skb->dev) {
 		skb->dev = dev;
 		priv = netdev_priv(dev);
 	}
-	extra_skb = (parent_skb != NULL);
 
-	extra_skb |= sw->net_ops->port_vlan_rx(sw, dev, *parent_dev, skb,
-		forward, tag, ptr, rx_tstamp);
+	sw->net_ops->port_vlan_rx(skb, forward, tag);
 #endif
 	return priv;
 }  /* sw_rx_proc */
@@ -475,7 +465,7 @@ static void hw_set_promisc(struct stmmac_priv *priv, int promisc)
 
 static void dev_set_multicast(struct stmmac_priv *priv, int multicast)
 {
-	if (multicast != priv->multi) {
+	if ((!multicast && priv->multi) || (multicast && !priv->multi)) {
 		struct stmmac_priv *hw_priv = priv->hw_priv;
 		u8 hw_multi = hw_priv->hw_multi;
 
@@ -3266,7 +3256,7 @@ static void stmmac_sw_exit(struct stmmac_priv *priv)
 		if (!dev)
 			continue;
 		priv = netdev_priv(dev);
-		flush_work(&priv->port.link_update);
+		cancel_delayed_work_sync(&priv->port.link_update);
 		if (priv->phylink) {
 			if (priv->port.pl == priv->phylink)
 				priv->port.pl = NULL;
@@ -4388,10 +4378,7 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
 	struct sk_buff *skb = NULL;
 
 #ifdef CONFIG_KSZ_SWITCH
-	struct net_device *parent_dev = NULL;
-	struct sk_buff *parent_skb = NULL;
 	struct ksz_sw *sw = priv->port.sw;
-	int ptp_tag = 0;
 #endif
 
 	if (netif_msg_rx_status(priv)) {
@@ -4567,12 +4554,7 @@ read_again:
 		if (sw_is_switch(sw)) {
 			struct stmmac_priv *hw_priv;
 
-			/* Initialize variables. */
-			parent_dev = NULL;
-			parent_skb = NULL;
-			ptp_tag = 0;
-			hw_priv = sw_rx_proc(sw, skb, &ptp_tag, &parent_dev,
-				&parent_skb);
+			hw_priv = sw_rx_proc(sw, skb);
 			if (!hw_priv)
 				continue;
 
@@ -4940,9 +4922,15 @@ static int stmmac_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 			u16 ports;
 
 			ports = 0;
-			for (i = 0, p = priv->port.first_port;
-			     i < priv->port.port_cnt; i++, p++)
-				ports |= (1 << p);
+			if (priv->port.port_cnt > 1) {
+				p = priv->port.first_port + priv->port.port_cnt
+				       - 1;
+				ports = (1 << p);
+			} else {
+				for (i = 0, p = priv->port.first_port - 1;
+				     i < priv->port.port_cnt; i++, p++)
+					ports |= (1 << p);
+			}
 			ptp = &sw->ptp_hw;
 			ret = ptp->ops->hwtstamp_ioctl(ptp, rq, ports);
 		}
@@ -5847,7 +5835,7 @@ static void stmmac_sw_remove(struct stmmac_priv *priv)
 	}
 #endif
 	if (do_exit) {
-		flush_work(&priv->port.link_update);
+		cancel_delayed_work_sync(&priv->port.link_update);
 		stmmac_sw_exit(priv);
 	}
 #ifdef CONFIG_KSZ_SMI

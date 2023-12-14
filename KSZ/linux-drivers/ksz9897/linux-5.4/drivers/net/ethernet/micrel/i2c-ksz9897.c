@@ -107,8 +107,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Apr 23, 2023"
-#define SW_DRV_VERSION			"1.2.7"
+#define SW_DRV_RELDATE			"Nov 17, 2023"
+#define SW_DRV_VERSION			"1.2.8"
 
 /* -------------------------------------------------------------------------- */
 
@@ -564,6 +564,8 @@ static const struct of_device_id ksz9897_dt_ids[] = {
 	{ .compatible = "microchip,ksz8565" },
 	{ .compatible = "microchip,ksz9893" },
 	{ .compatible = "microchip,ksz9563" },
+	{ .compatible = "microchip,ksz8563" },
+	{ .compatible = "microchip,lan9646" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, ksz9897_dt_ids);

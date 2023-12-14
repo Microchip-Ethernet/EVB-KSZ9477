@@ -262,7 +262,7 @@ struct stmmac_priv {
 	struct stmmac_priv	*hw_priv;
 	struct ksz_port		port;
 	int			phy_addr;
-	u32			multi:1;
+	u32			multi:2;
 	u32			promisc:1;
 	u8			opened;
 	u8			hw_multi;

@@ -1229,6 +1229,8 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 
 	memcpy(skb->data, stp->tx_frame, len);
 	memcpy(&skb->data[6], info->mac_addr, ETH_ALEN);
+	skb_reset_mac_header(skb);
+	skb_set_network_header(skb, ETH_HLEN);
 
 	skb_put(skb, len);
 	sw->net_ops->add_tail_tag(sw, skb, ports);

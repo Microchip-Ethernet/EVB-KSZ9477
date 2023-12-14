@@ -57,9 +57,10 @@
 			};
 
 			spi0: spi@f0004000 {
+				pinctrl-names = "default", "cs";
+				pinctrl-1 = <&pinctrl_spi0_cs>;
 				cs-gpios = <&pioD 13 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioD 16 GPIO_ACTIVE_LOW>;
 				status = "okay";
-				id = <0>;
 
 				ksz9563: ksz9563@0 {
 					compatible = "microchip,ksz9563";
@@ -479,9 +480,10 @@
 			};
 
 			spi1: spi@f8008000 {
+				pinctrl-names = "default", "cs";
+				pinctrl-1 = <&pinctrl_spi1_cs>;
 				cs-gpios = <&pioC 25 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioC 28 GPIO_ACTIVE_LOW>;
 				status = "okay";
-				id = <1>;
 
 				ksz8863: ksz8863@3 {
 					compatible = "microchip,ksz8863";

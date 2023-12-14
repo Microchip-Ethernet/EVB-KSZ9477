@@ -57,9 +57,10 @@
 			};
 
 			spi0: spi@f0004000 {
+				pinctrl-names = "default", "cs";
+				pinctrl-1 = <&pinctrl_spi0_cs>;
 				cs-gpios = <&pioD 13 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioD 16 GPIO_ACTIVE_LOW>;
 				status = "okay";
-				id = <0>;
 
 				ksz9563: ksz9563@0 {
 					compatible = "microchip,ksz9563";
@@ -77,10 +78,12 @@
 						port@0 {
 							reg = <0>;
 							label = "lan1";
+							phy-handle = <&swphy_0>;
 						};
 						port@1 {
 							reg = <1>;
 							label = "lan2";
+							phy-handle = <&swphy_1>;
 						};
 						port@2 {
 							reg = <2>;
@@ -94,6 +97,20 @@
 								full-duplex;
 								pause;
 							};
+						};
+					};
+					mdio {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						swphy_0: ethernet-phy@0 {
+							reg = <0>;
+							eee-broken-100tx;
+							eee-broken-1000t;
+						};
+						swphy_1: ethernet-phy@1 {
+							reg = <1>;
+							eee-broken-100tx;
+							eee-broken-1000t;
 						};
 					};
 				};
@@ -401,9 +418,10 @@
 			};
 
 			spi1: spi@f8008000 {
+				pinctrl-names = "default", "cs";
+				pinctrl-1 = <&pinctrl_spi1_cs>;
 				cs-gpios = <&pioC 25 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioC 28 GPIO_ACTIVE_LOW>;
 				status = "okay";
-				id = <1>;
 
 				ksz8863: ksz8863@3 {
 					compatible = "microchip,ksz8863";
@@ -473,21 +491,39 @@
 						port@0 {
 							reg = <0>;
 							label = "lan1";
+							phy-handle = <&swphy0>;
 						};
 						port@1 {
 							reg = <1>;
 							label = "lan2";
+							phy-handle = <&swphy1>;
 						};
 						port@2 {
 							reg = <2>;
 							label = "cpu";
 							ethernet = <&macb0>;
 							phy-mode = "rgmii-id";
+							rx-internal-delay-ps = <2000>;
+							tx-internal-delay-ps = <2000>;
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
 								pause;
 							};
+						};
+					};
+					mdio {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						swphy0: ethernet-phy@0 {
+							reg = <0>;
+							eee-broken-100tx;
+							eee-broken-1000t;
+						};
+						swphy1: ethernet-phy@1 {
+							reg = <1>;
+							eee-broken-100tx;
+							eee-broken-1000t;
 						};
 					};
 				};
@@ -587,8 +623,8 @@
 		usb1: ohci@600000 {
 			num-ports = <3>;
 			atmel,vbus-gpio = <0
-					   &pioE 3 GPIO_ACTIVE_LOW
-					   &pioE 4 GPIO_ACTIVE_LOW
+					   &pioE 3 GPIO_ACTIVE_HIGH
+					   &pioE 4 GPIO_ACTIVE_HIGH
 					  >;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usb_default>;

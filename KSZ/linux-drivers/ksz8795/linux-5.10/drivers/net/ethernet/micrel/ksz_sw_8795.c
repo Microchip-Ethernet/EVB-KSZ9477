@@ -5018,7 +5018,6 @@ static int port_get_link_speed(struct ksz_port *port)
 	if (change) {
 		port->report = true;
 		port->link_ports |= change;
-		schedule_work(&port->link_update);
 	}
 	return change;
 }  /* port_get_link_speed */
@@ -6577,6 +6576,8 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 			port_force_link_speed(port);
 			sw->phy_intr = sw->PORT_MASK;
 			port_get_link_speed(port);
+			if (port->link_ports)
+				schedule_delayed_work(&port->link_update, 0);
 			sw->phy_intr = 0;
 		} else
 			port_set_link_speed(port);
@@ -8463,55 +8464,29 @@ static int sw_match_pkt(struct ksz_sw *sw, struct net_device **dev,
 }  /* sw_match_pkt */
 
 static struct net_device *sw_parent_rx(struct ksz_sw *sw,
-	struct net_device *dev, struct sk_buff *skb, int *forward,
-	struct net_device **parent_dev, struct sk_buff **parent_skb)
+				       struct net_device *dev, int *forward)
 {
 	if (sw->dev_offset && dev != sw->netdev[0]) {
-		*parent_dev = sw->netdev[0];
 		if (!*forward)
-			*forward = FWD_MAIN_DEV | FWD_STP_DEV;
-		if ((*forward & (FWD_MAIN_DEV | FWD_STP_DEV)) ==
-		    (FWD_MAIN_DEV | FWD_STP_DEV))
-			*parent_skb = skb_clone(skb, GFP_ATOMIC);
-		else if (!(*forward & FWD_STP_DEV))
-			dev = *parent_dev;
+			*forward = FWD_MAIN_DEV;
+		if (!(*forward & FWD_STP_DEV))
+			dev = sw->netdev[0];
 		else
 			*forward &= ~FWD_VLAN_DEV;
 	}
 	return dev;
 }  /* sw_parent_rx */
 
-static int sw_port_vlan_rx(struct ksz_sw *sw, struct net_device *dev,
-	struct net_device *parent_dev, struct sk_buff *skb, int forward,
-	int tag, void *ptr, void (*rx_tstamp)(void *ptr, struct sk_buff *skb))
+static int sw_port_vlan_rx(struct sk_buff *skb, int forward, int tag)
 {
-	struct sk_buff *vlan_skb;
-	struct net_device *vlan_dev = dev;
-
 	/* Add VLAN tag manually. */
-	if (!(forward & FWD_VLAN_DEV))
+	if (!(forward & FWD_VLAN_DEV) || !tag)
 		return false;
 
-	if (!tag || !(sw->features & VLAN_PORT))
-		return false;
 	tag += VLAN_PORT_START;
 
 	/* Only forward to one network device. */
-	if (!(forward & FWD_MAIN_DEV)) {
-		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
-		return true;
-	}
-	vlan_skb = skb_clone(skb, GFP_ATOMIC);
-	if (!vlan_skb)
-		return false;
-	skb_reset_mac_header(vlan_skb);
-	__vlan_hwaccel_put_tag(vlan_skb, htons(ETH_P_8021Q), tag);
-	if (parent_dev && dev != parent_dev) {
-		vlan_dev = parent_dev;
-		vlan_skb->dev = vlan_dev;
-	}
-	vlan_skb->protocol = eth_type_trans(vlan_skb, vlan_dev);
-	netif_rx(vlan_skb);
+	__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
 	return true;
 }  /* sw_port_vlan_rx */
 
@@ -8771,11 +8746,11 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		skb_copy_header(skb, org_skb);
 		consume_skb(org_skb);
 	}
+	skb_set_tail_pointer(skb, skb->len);
 	if (padlen) {
 		if (__skb_put_padto(skb, skb->len + padlen, false))
 			return NULL;
 	}
-	skb_set_tail_pointer(skb, skb->len);
 	len = skb->len;
 
 	if (!dest) {
@@ -9335,6 +9310,8 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 	else
 		port_set_link_speed(port);
 	port_get_link_speed(port);
+	if (port->link_ports)
+		schedule_delayed_work(&port->link_update, 0);
 	sw->phy_intr = 0;
 	sw->ops->release(sw);
 	for (i = 0; i < sw->eth_cnt; i++) {
@@ -10174,14 +10151,36 @@ dbg_msg(" %*pb\n", __ETHTOOL_LINK_MODE_MASK_NBITS, phydev->lp_advertising);
 
 static void link_update_work(struct work_struct *work)
 {
+	struct delayed_work *dwork = to_delayed_work(work);
 	struct ksz_port *port =
-		container_of(work, struct ksz_port, link_update);
+		container_of(dwork, struct ksz_port, link_update);
 	struct ksz_sw *sw = port->sw;
 	struct ksz_port_info *info;
 
 	/* Netdevice associated with port was closed. */
 	if (!port->opened)
-		return;
+		goto do_main;
+
+	if (sw->dev_offset && sw->netport[0]) {
+		int dev_cnt = sw->dev_count + sw->dev_offset;
+		struct ksz_port *sw_port = sw->netport[0];
+		struct ksz_port *dev_port;
+		int i;
+
+		for (i = sw->dev_offset; i < dev_cnt; i++) {
+			struct phy_priv *phydata;
+
+			dev_port = sw->netport[i];
+			if (!dev_port) {
+				phydata = &sw->phydata[i];
+				dev_port = phydata->port;
+			}
+			if (media_connected == dev_port->linked->state) {
+				sw_port->linked = dev_port->linked;
+				break;
+			}
+		}
+	}
 
 #ifdef CONFIG_KSZ_DLR
 	if (sw->features & DLR_HW) {
@@ -10205,6 +10204,8 @@ static void link_update_work(struct work_struct *work)
 		stp->ops->link_change(stp, true);
 	}
 #endif
+
+do_main:
 	port->link_ports = 0;
 
 	/* There is an extra network device for the main device. */
@@ -10727,6 +10728,8 @@ static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
 static void sw_leave_dev(struct ksz_sw *sw)
 {
 	int dev_count = sw->dev_count + sw->dev_offset;
+	struct sw_priv *ks = sw->dev;
+	struct phy_priv *phydata;
 #ifdef CONFIG_PHYLINK
 	struct ksz_port *port;
 #endif
@@ -10751,8 +10754,14 @@ static void sw_leave_dev(struct ksz_sw *sw)
 		sw->netdev[i] = NULL;
 		sw->netport[i] = NULL;
 	}
+
+	/* Reset port pointer as it is pointed to one from device. */
+	for (i = 0; i <= sw->port_cnt; i++) {
+		phydata = &sw->phydata[i];
+		phydata->port = &ks->ports[i];
+	}
 	sw->eth_cnt = 0;
-	sw->dev_count = 0;
+	sw->dev_count = 1;
 	sw->dev_offset = 0;
 	sw->phy_offset = 0;
 }  /* sw_leave_dev */
@@ -10871,7 +10880,7 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 			sw->features |= DIFF_MAC_ADDR;
 	}
 
-	INIT_WORK(&port->link_update, link_update_work);
+	INIT_DELAYED_WORK(&port->link_update, link_update_work);
 	features = sw->features;
 	if (sw->features & SW_VLAN_DEV)
 		features = map->proto;
@@ -11433,7 +11442,7 @@ static void sw_init_phy_priv(struct sw_priv *ks)
 		port->linked = get_port_info(sw, p);
 dbg_msg(" %s %d=p:%d; f:%d c:%d i:%d\n", __func__, n, p,
 port->first_port, port->port_cnt, port->linked->phy_id);
-		INIT_WORK(&port->link_update, link_update_work);
+		INIT_DELAYED_WORK(&port->link_update, link_update_work);
 		sw->phy_map[n].priv = phydata;
 	}
 }  /* sw_init_phy_priv */
@@ -11546,7 +11555,7 @@ static void ksz_mii_exit(struct sw_priv *ks)
 			struct ksz_port *port;
 
 			port = &ks->ports[i];
-			flush_work(&port->link_update);
+			cancel_delayed_work_sync(&port->link_update);
 		}
 	}
 	mdiobus_unregister(bus);
@@ -11672,7 +11681,6 @@ static void link_read_work(struct work_struct *work)
 	struct ksz_port *port = NULL;
 	struct ksz_port *sw_port = NULL;
 	int i;
-	int changes = 0;
 	int s = 1;
 	int dev_cnt = sw->dev_count + sw->dev_offset;
 
@@ -11697,7 +11705,7 @@ static void link_read_work(struct work_struct *work)
 		phydata = &sw->phydata[n];
 		if (!port)
 			port = phydata->port;
-		changes |= port_get_link_speed(port);
+		port_get_link_speed(port);
 
 		/* Copy all port information for user access. */
 		if (port != phydata->port)
@@ -11707,14 +11715,10 @@ static void link_read_work(struct work_struct *work)
 	sw->phy_intr = 0;
 	sw->ops->release(sw);
 
-	/* Change linked port for main device if it is not connected. */
-	if (!sw_port || (media_connected == sw_port->linked->state))
-		changes = 0;
-
-	/* Not to read PHY registers unnecessarily if no link change. */
-	if (!changes)
-		return;
-
+	/* Need to invoke link_update_work before sw_port->linked is updated
+	 * as link_update_work can be called before link_read_work is
+	 * finished if the delay is not long enough.
+	 */
 	for (i = sw->dev_offset; i < dev_cnt; i++) {
 		struct phy_priv *phydata;
 
@@ -11723,10 +11727,8 @@ static void link_read_work(struct work_struct *work)
 			phydata = &sw->phydata[i];
 			port = phydata->port;
 		}
-		if (media_connected == port->linked->state) {
-			sw_port->linked = port->linked;
-			break;
-		}
+		if (port->link_ports)
+			schedule_delayed_work(&port->link_update, 0);
 	}
 }  /* link_read_work */
 
@@ -11761,7 +11763,8 @@ static void ksz8795_dev_monitor(struct timer_list *t)
 		if (priv->state != phydev->state) {
 			priv->state = phydev->state;
 			if (PHY_UP == phydev->state)
-				schedule_work(&priv->port->link_update);
+				schedule_delayed_work(&priv->port->link_update,
+					              0);
 		}
 	}
 	if (!(hw_priv->intr_working & 1))

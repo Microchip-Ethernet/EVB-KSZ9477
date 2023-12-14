@@ -372,12 +372,8 @@ struct ksz_sw_net_ops {
 		int (*match_multi)(void *ptr, u8 *data),
 		struct sk_buff *skb, u8 h_promiscuous);
 	struct net_device *(*parent_rx)(struct ksz_sw *sw,
-		struct net_device *dev, struct sk_buff *skb, int *forward,
-		struct net_device **parent_dev, struct sk_buff **parent_skb);
-	int (*port_vlan_rx)(struct ksz_sw *sw, struct net_device *dev,
-		struct net_device *parent_dev, struct sk_buff *skb,
-		int forward, int tag, void *ptr,
-		void (*rx_tstamp)(void *ptr, struct sk_buff *skb));
+		struct net_device *dev, int *forward);
+	int (*port_vlan_rx)(struct sk_buff *skb, int forward, int tag);
 	struct sk_buff *(*final_skb)(struct ksz_sw *sw, struct sk_buff *skb,
 		struct net_device *dev, struct ksz_port *port);
 	int (*drv_rx)(struct ksz_sw *sw, struct sk_buff *skb, uint port);
@@ -685,7 +681,7 @@ struct ksz_port {
 
 	struct ksz_sw *sw;
 
-	struct work_struct link_update;
+	struct delayed_work link_update;
 	struct net_device *netdev;
 	struct phy_device *phydev;
 	struct device_node *dn;
@@ -699,6 +695,18 @@ struct ksz_port {
 static inline void sw_update_csum(struct ksz_sw *sw)
 {
 	sw->overrides |= UPDATE_CSUM;
+}
+
+#ifdef CONFIG_KSZ_HSR
+static inline bool using_hsr(struct ksz_sw *sw)
+{
+	return (sw->features & HSR_HW);
+}
+#endif
+
+static inline bool using_tail_tag(struct ksz_sw *sw)
+{
+	return (sw->overrides & TAIL_TAGGING);
 }
 
 struct lan_attributes {

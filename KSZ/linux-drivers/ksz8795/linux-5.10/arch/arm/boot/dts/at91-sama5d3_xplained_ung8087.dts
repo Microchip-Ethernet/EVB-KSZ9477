@@ -585,8 +585,8 @@
 		usb1: ohci@600000 {
 			num-ports = <3>;
 			atmel,vbus-gpio = <0
-					   &pioE 3 GPIO_ACTIVE_LOW
-					   &pioE 4 GPIO_ACTIVE_LOW
+					   &pioE 3 GPIO_ACTIVE_HIGH
+					   &pioE 4 GPIO_ACTIVE_HIGH
 					  >;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usb_default>;

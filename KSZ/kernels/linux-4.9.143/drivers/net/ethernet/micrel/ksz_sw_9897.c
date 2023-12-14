@@ -6333,7 +6333,7 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 	bool setup_xmii = sw->HOST_PORT >= sw->phy_port_cnt;
 
 #ifdef CONFIG_KSZ_IBA
-	if (2 <= sw->info->iba.use_iba)
+	if (IBA_USE_CODE_PREPARE <= sw->info->iba.use_iba)
 		setup_xmii = 0;
 #endif
 	if (setup_xmii) {
@@ -6639,14 +6639,9 @@ dbg_msg("%s %d %d"NL, __func__, port, state);
 		     i++) {
 			netport = sw->netport[i];
 			if (netport && netport->linked->phy_id == port + 1) {
-				schedule_work(&netport->link_update);
+				schedule_delayed_work(&netport->link_update, 0);
 				break;
 			}
-		}
-		if (!sw->dev_offset) {
-			netport = sw->netport[0];
-			if (netport)
-				schedule_work(&netport->link_update);
 		}
 	}
 
@@ -6826,7 +6821,7 @@ static void sw_setup_stp(struct ksz_sw *sw)
 	alu = &info->alu_table[STP_ENTRY];
 	alu->index = 0;
 	alu->type = 1;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	if (sw->stp)
 		alu->forward = FWD_STP_DEV | FWD_HOST | FWD_HOST_OVERRIDE;
@@ -6847,7 +6842,7 @@ static void sw_set_mcast_table(struct ksz_sw *sw, int i, const u8 *addr)
 	entry->valid = 1;
 	alu = &sw->info->alu_table[i];
 	alu->forward = FWD_MAIN_DEV | FWD_MCAST | FWD_KNOWN;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 2;
@@ -6878,7 +6873,7 @@ static void sw_setup_ptp(struct ksz_sw *sw)
 	entry->ports = sw->PORT_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 3;
@@ -6892,7 +6887,7 @@ static void sw_setup_ptp(struct ksz_sw *sw)
 	entry->ports = sw->PORT_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 3;
@@ -6906,7 +6901,7 @@ static void sw_setup_ptp(struct ksz_sw *sw)
 	entry->ports = sw->PORT_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 3;
@@ -6922,7 +6917,7 @@ static void sw_setup_ptp(struct ksz_sw *sw)
 	entry->override = 1;
 	alu = &info->alu_table[i];
 	alu->forward = forward | FWD_HOST_OVERRIDE;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 3;
@@ -6937,7 +6932,7 @@ static void sw_setup_ptp(struct ksz_sw *sw)
 	entry->override = 1;
 	alu = &info->alu_table[i];
 	alu->forward = forward | FWD_HOST_OVERRIDE;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 3;
@@ -6952,7 +6947,7 @@ static void sw_setup_ptp(struct ksz_sw *sw)
 	entry->override = 1;
 	alu = &info->alu_table[i];
 	alu->forward = forward | FWD_HOST_OVERRIDE;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0xE;
 	alu->type = 1;
@@ -7039,7 +7034,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7051,7 +7046,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7062,7 +7057,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7073,7 +7068,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7084,7 +7079,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7095,7 +7090,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7106,7 +7101,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7117,7 +7112,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7128,7 +7123,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7139,7 +7134,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7150,7 +7145,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7161,7 +7156,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7172,7 +7167,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7189,7 +7184,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	alu = &info->alu_table[i];
 	alu->forward = forward;
 #endif
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7200,7 +7195,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7211,7 +7206,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7222,7 +7217,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->HOST_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7236,7 +7231,7 @@ static void sw_setup_multi(struct ksz_sw *sw)
 	entry->ports = sw->PORT_MASK;
 	alu = &info->alu_table[i];
 	alu->forward = forward;
-	alu->owner = 1;
+	alu->owner = 0x8000;
 	alu->valid = 1;
 	alu->index = 0;
 	alu->type = 1;
@@ -7337,15 +7332,13 @@ dbg_msg("%s %d %d"NL, __func__, priv->port_cnt, port);
 		if (alu->valid && (alu->owner & owner)) {
 			/* Remove device ownership. */
 			alu->owner &= ~owner;
+
+			/* Mark as present as it is likely set again. */
+			alu->owner |= 0x4000;
 			if (!port)
 				alu->forward &= ~FWD_MAIN_DEV;
 			else if (alu->owner <= 1)
 				alu->forward &= ~FWD_STP_DEV;
-			if (!alu->owner) {
-				alu->valid = 0;
-				entry->ports = 0;
-				entry->valid = 0;
-			}
 		}
 	}
 	netdev_for_each_mc_addr(ha, dev) {
@@ -7385,6 +7378,24 @@ dbg_msg("%s %d %d"NL, __func__, priv->port_cnt, port);
 			memcpy(entry->addr, ha->addr, ETH_ALEN);
 			entry->ports = sw->PORT_MASK;
 			entry->valid = 1;
+		}
+	}
+	for (i = SWITCH_MAC_TABLE_ENTRIES; i < info->multi_net; i++) {
+		entry = &info->mac_table[i];
+		alu = &info->alu_table[i];
+
+		/* Look for previously set entries. */
+		if ((alu->owner & 0x4000)) {
+			alu->owner &= ~0x4000;
+
+			/* Nobody owns this entry. */
+			if (!alu->owner) {
+				alu->valid = 0;
+				entry->ports = 0;
+				entry->valid = 0;
+			}
+		} else if (alu->valid && (alu->owner & owner)) {
+			/* Newly added entry. */
 		}
 	}
 }  /* sw_set_multi */
@@ -8082,8 +8093,9 @@ static void phy_port_set_speed(struct ksz_sw *sw, uint p, int speed,
 
 	local = port_advertised_flow_ctrl(flow_ctrl, local);
 
+	/* 1000 half-duplex is not supported. */
 	if (sw->features & GIGABIT_SUPPORT)
-		ctrl |= PORT_AUTO_NEG_1000BT_FD | PORT_AUTO_NEG_1000BT;
+		ctrl |= PORT_AUTO_NEG_1000BT_FD;
 	local |= PORT_AUTO_NEG_100BTX_FD | PORT_AUTO_NEG_100BTX |
 		PORT_AUTO_NEG_10BT_FD | PORT_AUTO_NEG_10BT;
 
@@ -8252,7 +8264,6 @@ static int port_get_link_speed(struct ksz_port *port)
 #endif
 	if (change) {
 		port->link_ports |= change;
-		schedule_work(&port->link_update);
 	}
 	return change;
 }  /* port_get_link_speed */
@@ -8996,6 +9007,22 @@ static void sw_reset(struct ksz_sw *sw)
 		port_w16(sw, p, REG_PORT_XMII_CTRL_0,
 			sw->cached.xmii[p - sw->phy_port_cnt]);
 	}
+
+#ifdef CONFIG_KSZ_IBA
+	do {
+		u32 iba;
+
+		iba = sw->reg->r32(sw, REG_SW_IBA__4);
+
+		/* IBA is strapped to enable. */
+		if (iba & SW_IBA_ENABLE) {
+			iba &= ~(SW_IBA_PORT_M << SW_IBA_PORT_S);
+			iba |= sw->HOST_PORT << SW_IBA_PORT_S;
+			sw->reg->w32(sw, REG_SW_IBA__4, iba);
+		}
+	} while (0);
+#endif
+
 	sw_reset_acl(sw);
 	sw->overrides &= ~TAIL_TAGGING;
 	sw->overrides &= ~PTP_TAG;
@@ -9223,7 +9250,7 @@ static void sw_set_spi(struct ksz_sw *sw, struct ksz_iba_info *iba)
 		ptp->reg = &ptp_reg_ops;
 	}
 #endif
-	iba->use_iba = 0;
+	iba->use_iba = IBA_USE_CODE_OFF;
 }  /* sw_set_spi */
 
 /**
@@ -9245,8 +9272,13 @@ static void sw_set_ops(struct work_struct *work)
 	if (sw->reg == &sw_iba_ops)
 		return;
 
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw))
+		return;
+#endif
+
 	/* Catch bug if triggered. */
-	if (!iba->dev) {
+	if (!iba->dev || !netif_running(iba->dev)) {
 		dbg_msg("No IBA dev"NL);
 		return;
 	}
@@ -9274,15 +9306,15 @@ static void sw_set_ops(struct work_struct *work)
 #endif
 		sw->reg = &sw_iba_ops;
 		iba->cnt = 0;
-		iba->use_iba = 1;
+		iba->use_iba = IBA_USE_CODE_ON;
 	}
 	if (iba->use_iba) {
 		u32 id;
 
 		sw->intr_using += 3;
-		iba->use_iba |= 0x80;
+		iba->use_iba |= IBA_USE_CODE_TESTING;
 		id = sw->reg->r32(sw, REG_CHIP_ID0__1);
-		iba->use_iba &= ~0x80;
+		iba->use_iba &= ~IBA_USE_CODE_TESTING;
 dbg_msg("id = %08x"NL, id);
 #if 1
 /*
@@ -9359,7 +9391,11 @@ static void sw_set_dev(struct ksz_sw *sw, struct net_device *dev, u8 *mac_addr)
 		schedule_delayed_work(&sw->set_ops, delay_tick);
 	mutex_lock(sw->hwlock);
 	iba->dev = dev;
+#ifdef CONFIG_KSZ_IBA_ONLY
+	prepare_iba(iba, mac_addr, mac_addr);
+#else
 	prepare_iba(iba, iba->dst, mac_addr);
+#endif
 	mutex_unlock(sw->hwlock);
 }  /* sw_set_dev */
 #endif
@@ -9369,6 +9405,11 @@ static void sw_set_mrp(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
 	struct ksz_sw *sw = container_of(dwork, struct ksz_sw, set_mrp);
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw))
+		return;
+#endif
 
 	if (sw->HOST_PORT < sw->phy_port_cnt &&
 	    !netif_carrier_ok(sw->main_dev)) {
@@ -10491,6 +10532,8 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 			port_force_link_speed(port);
 			sw->phy_intr = sw->PORT_MASK;
 			port_get_link_speed(port);
+			if (port->link_ports)
+				schedule_delayed_work(&port->link_update, 0);
 			sw->phy_intr = 0;
 		} else
 			port_set_link_speed(port);
@@ -13228,6 +13271,8 @@ enum {
 	KSZ9893_SW_CHIP,
 	KSZ9563_SW_CHIP,
 	KSZ8563_SW_CHIP,
+	LAN9646_SW_CHIP,
+	LAST_SW_CHIP
 };
 
 static void sw_cfg_src_filter(struct ksz_sw *sw, bool set)
@@ -13365,6 +13410,11 @@ static void sw_tx_fwd(struct work_struct *work)
 	struct sk_buff *skb;
 	struct ksz_sw *sw = container_of(work, struct ksz_sw, tx_fwd);
 	const struct net_device_ops *ops = sw->main_dev->netdev_ops;
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw))
+		return;
+#endif
 
 	last = skb_queue_empty(&sw->txq);
 	while (!last) {
@@ -13520,7 +13570,8 @@ dbg_msg(" 2 vid: %x"NL, vlan_tci);
 #ifdef CONFIG_KSZ_IBA
 	if (proto == IBA_TAG_TYPE)
 		return sw->netdev[0];
-	if (2 == sw->info->iba.use_iba && !sw->info->iba.ready)
+	if (IBA_USE_CODE_PREPARE == sw->info->iba.use_iba &&
+	    !sw->info->iba.ready)
 		return NULL;
 #endif
 
@@ -13657,78 +13708,31 @@ static int sw_match_pkt(struct ksz_sw *sw, struct net_device **dev,
 }  /* sw_match_pkt */
 
 static struct net_device *sw_parent_rx(struct ksz_sw *sw,
-	struct net_device *dev, struct sk_buff *skb, int *forward,
-	struct net_device **parent_dev, struct sk_buff **parent_skb)
+				       struct net_device *dev, int *forward)
 {
 	if (sw->dev_offset && dev != sw->netdev[0]) {
-		*parent_dev = sw->netdev[0];
 		if (!*forward)
 			*forward = FWD_MAIN_DEV;
-		if ((*forward & (FWD_MAIN_DEV | FWD_STP_DEV)) ==
-		    (FWD_MAIN_DEV | FWD_STP_DEV))
-			*parent_skb = skb_clone(skb, GFP_ATOMIC);
-		else if (!(*forward & FWD_STP_DEV))
-			dev = *parent_dev;
+		if (!(*forward & FWD_STP_DEV))
+			dev = sw->netdev[0];
 		else
 			*forward &= ~FWD_VLAN_DEV;
 	}
 	return dev;
 }  /* sw_parent_rx */
 
-static int sw_port_vlan_rx(struct ksz_sw *sw, struct net_device *dev,
-	struct net_device *parent_dev, struct sk_buff *skb, int forward,
-	int tag, void *ptr, void (*rx_tstamp)(void *ptr, struct sk_buff *skb))
+static int sw_port_vlan_rx(struct sk_buff *skb, int forward, int tag)
 {
-	struct sk_buff *vlan_skb;
-	struct net_device *vlan_dev = dev;
-
 	/* Add VLAN tag manually. */
-	if (!(forward & FWD_VLAN_DEV))
-		return false;
-
-	if (!tag || !(sw->features & VLAN_PORT))
+	if (!(forward & FWD_VLAN_DEV) || !tag)
 		return false;
 
 	tag += VLAN_PORT_START;
 
 	/* Only forward to one network device. */
-	if (!(forward & FWD_MAIN_DEV)) {
-		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
-		return true;
-	}
-	vlan_skb = skb_clone(skb, GFP_ATOMIC);
-	if (!vlan_skb)
-		return false;
-	skb_reset_mac_header(vlan_skb);
-	__vlan_hwaccel_put_tag(vlan_skb, htons(ETH_P_8021Q), tag);
-#ifdef CONFIG_1588_PTP
-	do {
-		struct ptp_info *ptp = ptr;
-
-		if (rx_tstamp && (ptp->rx_en & 1))
-			rx_tstamp(ptp, vlan_skb);
-	} while (0);
-#endif
-	if (parent_dev && dev != parent_dev) {
-		vlan_dev = parent_dev;
-		vlan_skb->dev = vlan_dev;
-	}
-	vlan_skb->protocol = eth_type_trans(vlan_skb, vlan_dev);
-	netif_rx(vlan_skb);
+	__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
 	return true;
 }  /* sw_port_vlan_rx */
-
-static int sw_drop_icmp(struct sk_buff *skb, int extra_skb)
-{
-	int drop = 0;
-
-	if (skb && extra_skb &&	skb->protocol == htons(ETH_P_IP)) {
-		struct iphdr *iph = (struct iphdr *) skb->data;
-
-		drop = (iph->protocol == IPPROTO_ICMP);
-	}
-	return drop;
-}  /* sw_drop_icmp */
 
 static int sw_drv_rx(struct ksz_sw *sw, struct sk_buff *skb, uint port)
 {
@@ -13741,7 +13745,7 @@ static int sw_drv_rx(struct ksz_sw *sw, struct sk_buff *skb, uint port)
 			return ret;
 
 #ifdef CONFIG_KSZ_IBA_ONLY
-		if (2 == sw->info->iba.use_iba) {
+		if (IBA_USE_CODE_PREPARE == sw->info->iba.use_iba) {
 			dev_kfree_skb_irq(skb);
 			return 0;
 		}
@@ -14457,7 +14461,7 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 	int setup = true;
 
 #ifdef CONFIG_KSZ_IBA
-	if (2 <= sw->info->iba.use_iba)
+	if (IBA_USE_CODE_PREPARE <= sw->info->iba.use_iba)
 		setup = false;
 #endif
 	sw->ops->acquire(sw);
@@ -14597,7 +14601,7 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 	int hw_access = true;
 
 #ifdef CONFIG_KSZ_IBA
-	if (2 <= sw->info->iba.use_iba) {
+	if (IBA_USE_CODE_PREPARE <= sw->info->iba.use_iba) {
 		hw_access = false;
 	}
 #endif
@@ -14628,17 +14632,36 @@ static int sw_stop(struct ksz_sw *sw, int complete)
 #endif
 
 #ifdef CONFIG_KSZ_IBA
-	if (2 <= sw->info->iba.use_iba) {
-		if (sw->info->iba.use_iba < 4) {
+	if (IBA_USE_CODE_PREPARE <= sw->info->iba.use_iba) {
+		if (sw->info->iba.use_iba < IBA_USE_CODE_HARD_RESET) {
 			sw->ops->acquire(sw);
 
 			/* Indicate no wait as there is no IBA response. */
-			sw->info->iba.use_iba |= 0x40;
+			sw->info->iba.use_iba |= IBA_USE_CODE_NO_WAIT;
 			sw->reg->w8(sw, REG_SW_OPERATION, SW_RESET);
 			sw->ops->release(sw);
 
 			/* Indicate no more hardware access. */
-			sw->info->iba.use_iba = 4;
+			sw->info->iba.use_iba = IBA_USE_CODE_HARD_RESET;
+		} else if (sw->info->iba.use_iba == IBA_USE_CODE_SOFT_RESET) {
+			uint n, p;
+
+			sw->ops->acquire(sw);
+			sw->info->iba.use_iba = IBA_USE_CODE_ONLY;
+			sw_dis_intr(sw);
+			for (n = 1; n <= sw->mib_port_cnt; n++) {
+				p = get_phy_port(sw, n);
+				port_w8(sw, p, REG_PORT_LUE_MSTP_STATE, 6);
+				port_w32(sw, p, REG_PORT_VLAN_MEMBERSHIP__4,
+					 sw->PORT_MASK);
+			}
+			port_cfg_tail_tag(sw, sw->HOST_PORT, 0);
+			sw->reg->w16(sw, 0x514, 0x39);
+			sw->overrides &= ~PTP_TAG;
+			sw->info->iba.use_iba = IBA_USE_CODE_HARD_RESET;
+			sw_reset_setup(sw);
+			sw_reset_acl(sw);
+			sw->ops->release(sw);
 		}
 		return reset;
 	}
@@ -14756,12 +14779,9 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 	uint p;
 	struct ksz_port_info *info;
 
-	/* Update in case it is changed. */
-	if (dev->phydev)
-		port->phydev = dev->phydev;
 #ifdef CONFIG_KSZ_IBA
-        if (!sw->info->iba.use_iba && dev == sw->main_dev)
-                sw_set_dev(sw, sw->main_dev, sw->main_dev->dev_addr);
+	if (!sw->info->iba.use_iba && dev == sw->main_dev)
+		sw_set_dev(sw, sw->main_dev, sw->main_dev->dev_addr);
 #endif
 	for (i = 0, n = port->first_port; i < port->port_cnt; i++, n++) {
 		p = get_phy_port(sw, n);
@@ -14833,6 +14853,8 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 	else
 		port_set_link_speed(port);
 	port_get_link_speed(port);
+	if (port->link_ports)
+		schedule_delayed_work(&port->link_update, 0);
 	sw->phy_intr = 0;
 	sw->ops->release(sw);
 	for (i = 0; i < sw->eth_cnt; i++) {
@@ -14876,10 +14898,13 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 #endif
 
 #ifdef CONFIG_KSZ_IBA
-	if (2 <= sw->info->iba.use_iba && dev == sw->main_dev)
+#ifdef CONFIG_KSZ_IBA_ONLY
+	if (IBA_USE_CODE_PREPARE <= sw->info->iba.use_iba &&
+	    dev == sw->main_dev)
 		return;
-        if (sw->info->iba.use_iba && dev == sw->main_dev)
-                sw_set_dev(sw, NULL, sw->main_dev->dev_addr);
+#endif
+	if (sw->info->iba.use_iba && dev == sw->main_dev)
+		sw_set_dev(sw, NULL, sw->main_dev->dev_addr);
 #endif
 
 	/* Need to shut the port manually in multiple device interfaces mode. */
@@ -14905,6 +14930,8 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 			port_set_stp_state(sw, p, STP_STATE_DISABLED);
 		}
 		sw->ops->release(sw);
+		if (sw->netport[0])
+			schedule_delayed_work(&sw->netport[0]->link_update, 0);
 	} else if (sw->dev_count == 1) {
 #ifdef CONFIG_KSZ_MRP
 		uint n;
@@ -14975,12 +15002,13 @@ static void sw_close(struct ksz_sw *sw)
 	int hw_access = true;
 
 #ifdef CONFIG_KSZ_IBA
-	if (2 <= sw->info->iba.use_iba) {
+	if (IBA_USE_CODE_PREPARE <= sw->info->iba.use_iba) {
 		hw_access = false;
 	}
 #endif
 	sw->running = false;
 	flush_work(&sw->set_addr);
+	flush_work(&sw->tx_fwd);
 #if defined(CONFIG_KSZ_AVB) || defined(CONFIG_KSZ_MRP)
 	if (sw->features & (AVB_SUPPORT | MRP_SUPPORT))
 		mrp_close(&sw->mrp, hw_access);
@@ -14998,6 +15026,11 @@ static void sw_close(struct ksz_sw *sw)
 static void sw_delayed_set_addr(struct work_struct *work)
 {
 	struct ksz_sw *sw = container_of(work, struct ksz_sw, set_addr);
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw))
+		return;
+#endif
 
 	sw->ops->acquire(sw);
 	sw_set_addr(sw, sw->netdev[0]->dev_addr);
@@ -15762,6 +15795,8 @@ static void sw_init_dev(struct ksz_sw *sw)
 	if (sw->id)
 		sprintf(sw->dev_name, "sw_dev_%u", sw->id);
 	sw->dev_major = init_sw_dev(sw->id, 0, sw->dev_name);
+	if (sw->dev_major < 0)
+		return;
 	sw->msg_buf = kzalloc(MAX_SW_LEN, GFP_KERNEL);
 	sw_majors[sw->id].dev = sw;
 	sw_majors[sw->id].major = sw->dev_major;
@@ -15778,12 +15813,13 @@ static void sw_exit_dev(struct ksz_sw *sw)
 
 static void link_update_work(struct work_struct *work)
 {
+	struct delayed_work *dwork = to_delayed_work(work);
 	struct ksz_port *port =
-		container_of(work, struct ksz_port, link_update);
+		container_of(dwork, struct ksz_port, link_update);
 	struct ksz_sw *sw = port->sw;
-	struct net_device *dev;
-	struct phy_device *phydev;
 	struct ksz_port_info *info;
+	struct phy_device *phydev;
+	struct net_device *dev;
 	bool port_not_ready = false;
 	struct ksz_port_cfg *cfg;
 	uint i;
@@ -15792,6 +15828,11 @@ static void link_update_work(struct work_struct *work)
 #ifdef CONFIG_KSZ_AVB
 	u32 speed;
 	bool duplex;
+#endif
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw))
+		return;
 #endif
 
 #ifdef CONFIG_KSZ_DLR
@@ -15821,13 +15862,63 @@ static void link_update_work(struct work_struct *work)
 		phydev->duplex = (info->duplex == 2);
 	}
 
+	if (sw->dev_offset && sw->netport[0]) {
+		int dev_cnt = sw->dev_count + sw->dev_offset;
+		struct ksz_port *sw_port = sw->netport[0];
+		struct ksz_port_info *linked = NULL;
+		struct ksz_port *dev_port;
+
+		for (i = sw->dev_offset; i < dev_cnt; i++) {
+			struct phy_priv *phydata;
+
+			dev_port = sw->netport[i];
+			if (!dev_port) {
+				phydata = &sw->phydata[i];
+				dev_port = phydata->port;
+			}
+			if (media_connected == dev_port->linked->state &&
+			    dev_port->linked->phy) {
+
+				/* Indicate a linked port is found .*/
+				if (!linked)
+					linked = dev_port->linked;
+				if (sw->overrides & DELAY_UPDATE_LINK) {
+					struct ksz_port_cfg *cfg;
+					uint p;
+
+					p = dev_port->linked->phy_id - 1;
+					cfg = get_port_cfg(sw, p);
+					if (cfg->stp_state[0] !=
+					    STP_STATE_FORWARDING)
+						continue;
+				}
+				sw_port->linked = dev_port->linked;
+				linked = NULL;
+				break;
+			}
+		}
+
+		/* Linked port not set before because it is not ready. */
+		if (linked)
+			sw_port->linked = linked;
+	}
+
 	info = port->linked;
 	phydev = port->phydev;
 	phydev->link = (info->state == media_connected);
 	phydev->speed = info->tx_rate / TX_RATE_UNIT;
 	phydev->duplex = (info->duplex == 2);
 	dev = port->netdev;
-	if (dev) {
+	if (dev && netif_running(dev)) {
+		int phy_link = phydev->link;
+
+		/* Not using PHY provided by the switch driver. */
+		if (dev->phydev && dev->phydev != phydev &&
+		    phy_is_internal(dev->phydev)) {
+			dev->phydev->link = phydev->link;
+			dev->phydev->speed = phydev->speed;
+			dev->phydev->duplex = phydev->duplex;
+		}
 		link = netif_carrier_ok(dev);
 		if (sw->overrides & DELAY_UPDATE_LINK) {
 			p = info->phy_id - 1;
@@ -15835,17 +15926,17 @@ static void link_update_work(struct work_struct *work)
 			port_not_ready =
 				cfg->stp_state[0] != STP_STATE_FORWARDING;
 		}
-		if (phydev->link && port_not_ready)
-			link = phydev->link;
-		if (link != phydev->link) {
-			if (phydev->link)
+		if (phy_link && port_not_ready)
+			phy_link = 0;
+		if (link != phy_link) {
+			if (phy_link)
 				netif_carrier_on(dev);
 			else
 				netif_carrier_off(dev);
 			if (netif_msg_link(sw))
 				pr_info("%s link %s"NL,
 					dev->name,
-					phydev->link ? "on" : "off");
+					phy_link ? "on" : "off");
 		}
 	}
 
@@ -15942,7 +16033,7 @@ static void link_update_work(struct work_struct *work)
 				cfg->stp_state[0] != STP_STATE_FORWARDING;
 		}
 		if (phy_link && port_not_ready)
-			link = phy_link;
+			phy_link = 0;
 		if (link != phy_link) {
 			if (netif_msg_link(sw))
 				pr_info("%s link %s"NL,
@@ -15961,7 +16052,7 @@ static void link_update_work(struct work_struct *work)
 		link = netif_carrier_ok(dev);
 		if (phy_link && port_not_ready)
 			link = phy_link;
-		if (link != phy_link) {
+		if (link != phy_link && netif_running(dev)) {
 			if (phy_link)
 				netif_carrier_on(dev);
 			else
@@ -16503,6 +16594,8 @@ dbg_msg("%s d:%d c:%d"NL, __func__, *dev_cnt, sw->eth_cnt);
 static void sw_leave_dev(struct ksz_sw *sw)
 {
 	int dev_count = sw->dev_count + sw->dev_offset;
+	struct sw_priv *ks = sw->dev;
+	struct phy_priv *phydata;
 	int i;
 
 #ifdef CONFIG_KSZ_STP
@@ -16517,8 +16610,14 @@ static void sw_leave_dev(struct ksz_sw *sw)
 		sw->netdev[i] = NULL;
 		sw->netport[i] = NULL;
 	}
+
+	/* Reset port pointer as it is pointed to one from device. */
+	for (i = 0; i <= sw->port_cnt; i++) {
+		phydata = &sw->phydata[i];
+		phydata->port = &ks->ports[i];
+	}
 	sw->eth_cnt = 0;
-	sw->dev_count = 0;
+	sw->dev_count = 1;
 	sw->dev_offset = 0;
 	sw->phy_offset = 0;
 }  /* sw_leave_dev */
@@ -16659,12 +16758,25 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	sw->netport[i] = port;
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
+	if (dev->phydev && phy_is_internal(dev->phydev)) {
+		u32 supported;
+	
+		if (sw->features & GIGABIT_SUPPORT)
+			supported = PHY_GBIT_FEATURES |
+				SUPPORTED_Pause | SUPPORTED_Asym_Pause;
+		else
+			supported = PHY_BASIC_FEATURES |
+				SUPPORTED_Pause;
+		dev->phydev->supported = supported;
+		dev->phydev->advertising = supported;
+		dev->phydev->mdio.addr = phy_id;
+	}
 	if (sw->dev_count > 1 && i && !(sw->features & DIFF_MAC_ADDR)) {
 		if (memcmp(dev->dev_addr, sw->netdev[0]->dev_addr, ETH_ALEN))
 			sw->features |= DIFF_MAC_ADDR;
 	}
 
-	INIT_WORK(&port->link_update, link_update_work);
+	INIT_DELAYED_WORK(&port->link_update, link_update_work);
 	features = sw->features;
 	if (sw->features & SW_VLAN_DEV)
 		features = map->proto;
@@ -16683,7 +16795,8 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	 */
 	if (sw->features & (SW_VLAN_DEV | HSR_HW))
 		header = 2;
-	dev->hard_header_len += header;
+	if (dev->hard_header_len <= 14)
+		dev->hard_header_len += header;
 dbg_msg("%s %d:%d phy:%d l:%x"NL, __func__, port->first_port, port->port_cnt, phy_id,
 port->live_ports);
 
@@ -16819,7 +16932,6 @@ static struct ksz_sw_net_ops sw_net_ops = {
 	.match_pkt		= sw_match_pkt,
 	.parent_rx		= sw_parent_rx,
 	.port_vlan_rx		= sw_port_vlan_rx,
-	.drop_icmp		= sw_drop_icmp,
 	.final_skb		= sw_final_skb,
 	.drv_rx			= sw_drv_rx,
 	.set_multi		= sw_set_multi,
@@ -17226,9 +17338,9 @@ static void sw_stop_interrupt(struct sw_priv *ks)
 
 static void sw_init_phy_priv(struct sw_priv *ks)
 {
+	struct ksz_sw *sw = &ks->sw;
 	struct phy_priv *phydata;
 	struct ksz_port *port;
-	struct ksz_sw *sw = &ks->sw;
 	uint n;
 	uint p;
 
@@ -17252,7 +17364,7 @@ static void sw_init_phy_priv(struct sw_priv *ks)
 		port->linked = get_port_info(sw, p);
 dbg_msg(" %s %d=p:%d; f:%d c:%d i:%d"NL, __func__, n, p,
 port->first_port, port->port_cnt, port->linked->phy_id);
-		INIT_WORK(&port->link_update, link_update_work);
+		INIT_DELAYED_WORK(&port->link_update, link_update_work);
 		sw->phy_map[n].priv = phydata;
 	}
 }  /* sw_init_phy_priv */
@@ -17267,13 +17379,55 @@ static void sw_init_phydev(struct ksz_sw *sw, struct phy_device *phydev)
 	phydev->pause = 1;
 }  /* sw_init_phydev */
 
+static int sw_device_present;
+
+static int ksz_platform_init(struct sw_priv *ks)
+{
+	struct platform_device *pdev;
+	struct ksz_sw *sw = &ks->sw;
+	struct device *dev;
+	char buf[80];
+	int i;
+
+	/* Check the switch id is not already used. */
+	i = sw->id;
+	snprintf(buf, sizeof(buf), "Switch MII bus.%u", i);
+	dev = bus_find_device_by_name(&platform_bus_type, NULL, buf);
+	while (dev) {
+		i++;
+		if (i >= MAX_SW_DEVICES)
+			return -ENODEV;
+		snprintf(buf, sizeof(buf), "Switch MII bus.%u", i);
+		dev = bus_find_device_by_name(&platform_bus_type, NULL, buf);
+	}
+	if (i != ks->sw.id) {
+		sw_device_present = i;
+		sw->id = i;
+		sw->change_id = true;
+	}
+
+	pdev = platform_device_register_simple("Switch MII bus", sw->id,
+		NULL, 0);
+	if (!pdev)
+		return -ENOMEM;
+	ks->pdev = pdev;
+	return 0;
+}  /* ksz_platform_init */
+
+static void ksz_platform_exit(struct sw_priv *ks)
+{
+	if (ks->pdev)
+		platform_device_unregister(ks->pdev);
+	ks->pdev = NULL;
+}  /* ksz_platform_exit */
+
 #ifndef CONFIG_KSZ_NO_MDIO_BUS
 #define KSZ989X_SW_ID		0x9897
 #define KSZ889X_SW_ID		0x8897
 #define PHY_ID_KSZ989X_SW	((KSZ9897_ID_HI << 16) | KSZ989X_SW_ID)
 #define PHY_ID_KSZ889X_SW	((KSZ9897_ID_HI << 16) | KSZ889X_SW_ID)
 
-static char *kszsw_phy_driver_names[] = {
+static char *kszsw_phy_driver_names[LAST_SW_CHIP] = {
 	"Microchip KSZ9897 Switch",
 	"Microchip KSZ9567 Switch",
 	"Microchip KSZ9477 Switch",
@@ -17284,6 +17438,7 @@ static char *kszsw_phy_driver_names[] = {
 	"Microchip KSZ9893 Switch",
 	"Microchip KSZ9563 Switch",
 	"Microchip KSZ8563 Switch",
+	"Microchip LAN9646 Switch",
 };
 
 static int kszphy_config_init(struct phy_device *phydev)
@@ -17495,15 +17650,23 @@ static int driver_installed;
 static int ksz_mii_init(struct sw_priv *ks)
 {
 	struct platform_device *pdev;
-	struct mii_bus *bus;
 	struct phy_device *phydev;
+	struct mii_bus *bus;
+	struct device *dev;
+	char buf[80];
 	int err;
 	int i;
 
-	pdev = platform_device_register_simple("Switch MII bus", ks->sw.id,
-		NULL, 0);
-	if (!pdev)
-		return -ENOMEM;
+	/* Check the MDIO bus is not already created. */
+	i = ks->sw.id;
+	snprintf(buf, sizeof(buf), PHY_ID_FMT, "sw.%u", i);
+	dev = bus_find_device_by_name(&mdio_bus_type, NULL, buf);
+	if (dev)
+		return -ENODEV;
+	if (ks->sw.change_id)
+		driver_installed = true;
+
+	pdev = ks->pdev;
 
 	bus = mdiobus_alloc();
 	if (bus == NULL) {
@@ -17552,7 +17715,6 @@ static int ksz_mii_init(struct sw_priv *ks)
 	}
 
 	ks->bus = bus;
-	ks->pdev = pdev;
 	phydev = mdiobus_get_phy(bus, 0);
 	ks->phydev = phydev;
 	sw_init_phydev(&ks->sw, phydev);
@@ -17560,7 +17722,7 @@ static int ksz_mii_init(struct sw_priv *ks)
 	return 0;
 
 mii_init_free_mii_bus:
-	if (driver_installed) {
+	if (driver_installed && sw_device_present == 0) {
 		phy_drivers_unregister(kszsw_phy_driver,
 				       ARRAY_SIZE(kszsw_phy_driver));
 		driver_installed = false;
@@ -17568,7 +17730,6 @@ mii_init_free_mii_bus:
 	mdiobus_free(bus);
 
 mii_init_reg:
-	platform_device_unregister(pdev);
 
 	return err;
 }  /* ksz_mii_init */
@@ -17577,7 +17738,6 @@ static void ksz_mii_exit(struct sw_priv *ks)
 {
 	int i;
 	struct phy_device *phydev;
-	struct platform_device *pdev = ks->pdev;
 	struct mii_bus *bus = ks->bus;
 
 	for (i = 0; i < PHY_MAX_ADDR; i++) {
@@ -17586,17 +17746,16 @@ static void ksz_mii_exit(struct sw_priv *ks)
 			struct ksz_port *port;
 
 			port = &ks->ports[i];
-			flush_work(&port->link_update);
+			cancel_delayed_work_sync(&port->link_update);
 		}
 	}
 	mdiobus_unregister(bus);
-	if (driver_installed) {
+	if (driver_installed && sw_device_present == 1) {
 		phy_drivers_unregister(kszsw_phy_driver,
 				       ARRAY_SIZE(kszsw_phy_driver));
 		driver_installed = false;
 	}
 	mdiobus_free(bus);
-	platform_device_unregister(pdev);
 }  /* ksz_mii_exit */
 #endif
 
@@ -17653,6 +17812,11 @@ static void ksz9897_mib_read_work(struct work_struct *work)
 	uint n;
 	uint p;
 	int cnt = 0;
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw))
+		return;
+#endif
 
 	/* Find out how many ports are connected. */
 	for (n = 1; n <= sw->mib_port_cnt; n++) {
@@ -17725,8 +17889,7 @@ static void ksz9897_mib_read_work(struct work_struct *work)
 				hw_priv->counter[p].read = 2;
 				wake_up_interruptible(
 					&hw_priv->counter[p].counter);
-				if (p != sw->HOST_PORT)
-					determine_rate(sw, mib);
+				determine_rate(sw, mib);
 				info = get_port_info(sw, p);
 
 				/* No interrupt when cable is removed. */
@@ -17760,13 +17923,16 @@ static void link_read_work(struct work_struct *work)
 	struct sw_priv *hw_priv =
 		container_of(dwork, struct sw_priv, link_read);
 	struct ksz_sw *sw = &hw_priv->sw;
-	struct ksz_port_info *linked = NULL;
 	struct ksz_port *sw_port = NULL;
 	struct ksz_port *port = NULL;
-	int i;
-	int changes = 0;
-	int s = 1;
 	int dev_cnt = sw->dev_count + sw->dev_offset;
+	int s = 1;
+	int i;
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw))
+		return;
+#endif
 
 	if (1 == sw->dev_count || 1 == sw->dev_offset)
 		s = 0;
@@ -17796,7 +17962,7 @@ static void link_read_work(struct work_struct *work)
 		phydata = &sw->phydata[n];
 		if (!port)
 			port = phydata->port;
-		changes |= port_get_link_speed(port);
+		port_get_link_speed(port);
 		if (sw_port)
 			sw_port->live_ports |= port->live_ports;
 
@@ -17811,13 +17977,10 @@ static void link_read_work(struct work_struct *work)
 	sw->phy_intr = 0;
 	sw->ops->release(sw);
 
-	if (!sw_port || (media_connected == sw_port->linked->state))
-		changes = 0;
-
-	/* Not to read PHY registers unnecessarily if no link change. */
-	if (!changes)
-		return;
-
+	/* Need to invoke link_update_work before sw_port->linked is updated
+	 * as link_update_work can be called before link_read_work is
+	 * finished if the delay is not long enough.
+	 */
 	for (i = sw->dev_offset; i < dev_cnt; i++) {
 		struct phy_priv *phydata;
 
@@ -17826,30 +17989,12 @@ static void link_read_work(struct work_struct *work)
 			phydata = &sw->phydata[i];
 			port = phydata->port;
 		}
-		if (media_connected == port->linked->state &&
-		    port->linked->phy) {
-
-			/* Indicate a linked port is found .*/
-			if (!linked)
-				linked = port->linked;
-			if (sw->overrides & DELAY_UPDATE_LINK) {
-				struct ksz_port_cfg *cfg;
-				uint p;
-
-				p = port->linked->phy_id - 1;
-				cfg = get_port_cfg(sw, p);
-				if (cfg->stp_state[0] != STP_STATE_FORWARDING)
-					continue;
-			}
-			sw_port->linked = port->linked;
-			linked = NULL;
-			break;
-		}
+		if (port->link_ports)
+			schedule_delayed_work(&port->link_update, 0);
 	}
-
-	/* Linked port not set before because it is not ready. */
-	if (linked)
-		sw_port->linked = linked;
+	port = sw->phydata[sw->mib_port_cnt + 1].port;
+	if (port->link_ports)
+		schedule_delayed_work(&port->link_update, 0);
 }  /* link_read_work */
 
 /*
@@ -17868,7 +18013,6 @@ static void ksz9897_mib_monitor(unsigned long ptr)
 static void ksz9897_dev_monitor(unsigned long ptr)
 {
 	struct sw_priv *hw_priv = (struct sw_priv *) ptr;
-	bool check_link;
 
 #ifndef CONFIG_KSZ_NO_MDIO_BUS
 	struct phy_device *phydev;
@@ -17884,12 +18028,12 @@ static void ksz9897_dev_monitor(unsigned long ptr)
 			priv->state = phydev->state;
 			if (PHY_UP == phydev->state ||
 			    PHY_RESUMING == phydev->state)
-				schedule_work(&priv->port->link_update);
+				schedule_delayed_work(&priv->port->link_update,
+						      0);
 		}
 	}
 #endif
-	check_link = !(hw_priv->intr_working & 2);
-	if (check_link)
+	if (!(hw_priv->intr_working & 2))
 		schedule_delayed_work(&hw_priv->link_read, 0);
 
 	ksz_update_timer(&hw_priv->monitor_timer_info);
@@ -17900,8 +18044,6 @@ static int sw_host_port;
 static int sysfs_sw;
 static int ports;
 
-
-static int sw_device_present;
 
 static int ksz_probe_prep(struct sw_priv *ks, void *dev)
 {
@@ -17949,7 +18091,7 @@ static int ksz_probe_prep(struct sw_priv *ks, void *dev)
 	if (dev) {
 		sw->netdev[0] = dev;
 		sw->features |= IBA_SUPPORT;
-		sw->info->iba.use_iba = 2;
+		sw->info->iba.use_iba = IBA_USE_CODE_PREPARE;
 	}
 #endif
 
@@ -17974,6 +18116,7 @@ enum {
 	KSZ9896_SKU,
 	KSZ9893_SKU,
 	KSZ8565_SKU,
+	LAN9646_SKU,
 
 	KSZ9477_5_SKU,
 	KSZ9477_3_SKU,
@@ -17987,6 +18130,7 @@ static struct ksz_port_mapping port_mappings[] = {
 	{ KSZ9896_SKU,   6, INTF_RGMII, { 1, 2, 3, 4, 5, 6, 0, 0 }},
 	{ KSZ9893_SKU,   3, INTF_RGMII, { 1, 2, 3, 0, 0, 0, 0, 0 }},
 	{ KSZ8565_SKU,   5, INTF_RGMII, { 1, 2, 3, 4, 7, 0, 0, 0 }},
+	{ LAN9646_SKU,   6, INTF_SGMII, { 1, 2, 3, 4, 6, 7, 0, 0 }},
 
 	{ KSZ9477_5_SKU, 5, INTF_SGMII, { 1, 2, 3, 4, 6, 0, 0, 0 }},
 	{ KSZ9477_3_SKU, 3, INTF_SGMII, { 4, 7, 6, 0, 0, 0, 0, 0 }},
@@ -18127,7 +18271,6 @@ dbg_msg(" %d= %d %d"NL, n, info->log_p, info->intf);
 #endif
 	sw->PORT_MASK = ports;
 	sw->PORT_INTR_MASK = ports;
-dbg_msg("mask: %x %x %x"NL, ports, sw->HOST_MASK, sw->PORT_MASK);
 	sw->mib_port_cnt = i;
 
 	if (sw->mib_port_cnt + 1 < sw->port_cnt)
@@ -18349,19 +18492,35 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 			}
 		}
 	}
+
+#ifdef CONFIG_OF
 	if (ks->of_dev && ks->of_dev->of_node) {
 		int score;
 		char name[80];
 
 		if (!of_modalias_node(ks->of_dev->of_node, name, sizeof(name)))
 			dbg_msg(" compatible: %s"NL, name);
-		score = of_device_is_compatible(ks->of_dev->of_node,
-						"microchip,ksz8565");
-		if (score > 0 && sw->chip_id == KSZ8567_SW_CHIP) {
-			sku = KSZ8565_SKU;
-			sw->chip_id = KSZ8565_SW_CHIP;
-		}
+		do {
+			score = of_device_is_compatible(ks->of_dev->of_node,
+							"microchip,ksz8565");
+			if (score > 0 && sw->chip_id == KSZ8567_SW_CHIP) {
+				sku = KSZ8565_SKU;
+				sw->chip_id = KSZ8565_SW_CHIP;
+				break;
+			}
+			score = of_device_is_compatible(ks->of_dev->of_node,
+							"microchip,lan9646");
+			if (score > 0 && sw->chip_id == KSZ9477_SW_CHIP) {
+				sku = LAN9646_SKU;
+				sw->chip_id = LAN9646_SW_CHIP;
+				sw->features &=
+					~(PTP_HW | AVB_SUPPORT |
+					  REDUNDANCY_SUPPORT);
+				break;
+			}
+		} while (0);
 	}
+#endif
 
 	/* This specifies the maximum physical port count of the switch. */
 	sw->port_cnt = port_count;
@@ -18391,7 +18550,7 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 	/* No specific ports are specified. */
 	if (!ports)
 		ports = (1 << port_count) - 1;
-dbg_msg("ports: %x"NL, ports);
+dbg_msg("init ports: %x"NL, ports);
 
 	sw->dev_count = 1;
 
@@ -18461,6 +18620,7 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 		 * is done.
 		 */
 		info = get_port_info(sw, pi);
+		info->tx_rate = 10 * TX_RATE_UNIT;
 		info->link = 0xFF;
 		info->state = media_disconnected;
 		info->get_link_speed = phy_port_get_speed;
@@ -18617,6 +18777,10 @@ dbg_msg("xmii: %04x %02x %02x; %u %u"NL, orig, *data_lo, *data_hi,
 info->tx_rate / TX_RATE_UNIT, info->duplex);
 	}
 	sw->ops->release(sw);
+
+	ret = ksz_platform_init(ks);
+	if (ret)
+		goto err_platform;
 
 	sw_init_phy_priv(ks);
 
@@ -18801,7 +18965,7 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 #endif
 
 #ifdef CONFIG_KSZ_IBA_ONLY
-	if (2 == sw->info->iba.use_iba)
+	if (IBA_USE_CODE_PREPARE == sw->info->iba.use_iba)
 		sw->info->iba.ready = true;
 #endif
 
@@ -18841,6 +19005,9 @@ err_drv:
 #endif
 
 err_mii:
+	ksz_platform_exit(ks);
+
+err_platform:
 
 #ifdef CONFIG_KSZ_IBA
 	ksz_iba_exit(&sw->info->iba);
@@ -18901,12 +19068,14 @@ static int ksz_remove(struct sw_priv *ks)
 		sw_stop_interrupt(ks);
 	}
 
-#ifndef CONFIG_KSZ_NO_MDIO_BUS
-	ksz_mii_exit(ks);
-#endif
 	ksz_stop_timer(&ks->monitor_timer_info);
 	ksz_stop_timer(&ks->mib_timer_info);
 	flush_work(&ks->mib_read);
+	cancel_delayed_work_sync(&ks->link_read);
+#ifndef CONFIG_KSZ_NO_MDIO_BUS
+	ksz_mii_exit(ks);
+#endif
+	ksz_platform_exit(ks);
 
 #ifdef KSZSW_REGS_SIZE
 	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);
@@ -18920,11 +19089,6 @@ static int ksz_remove(struct sw_priv *ks)
 	exit_sw_sysfs(sw, &ks->sysfs, ks->dev);
 #endif
 	sw->ops->exit(sw);
-	cancel_delayed_work_sync(&ks->link_read);
-
-#ifndef CONFIG_KSZ_IBA_ONLY
-	delete_debugfs(ks);
-#endif
 
 #ifdef CONFIG_KSZ_STP
 	ksz_stp_exit(&sw->info->rstp);
@@ -18940,12 +19104,18 @@ static int ksz_remove(struct sw_priv *ks)
 #ifdef CONFIG_KSZ_IBA
 	ksz_iba_exit(&sw->info->iba);
 #endif
+#ifndef CONFIG_KSZ_IBA_ONLY
+	delete_debugfs(ks);
+#endif
+
 	kfree(sw->info);
 #ifndef CONFIG_KSZ_IBA_ONLY
 	kfree(ks->hw_dev);
 #endif
 	kfree(ks);
 
+	if (sw_device_present)
+		sw_device_present--;
 	return 0;
 }  /* ksz_remove */
 

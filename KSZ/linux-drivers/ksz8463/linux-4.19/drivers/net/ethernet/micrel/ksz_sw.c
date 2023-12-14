@@ -3706,7 +3706,6 @@ static int port_get_link_speed(struct ksz_port *port)
 #endif
 	if (change) {
 		port->link_ports |= change;
-		schedule_work(&port->link_update);
 	}
 	return change;
 }
@@ -6635,63 +6634,29 @@ static int sw_match_pkt(struct ksz_sw *sw, struct net_device **dev,
 }  /* sw_match_pkt */
 
 static struct net_device *sw_parent_rx(struct ksz_sw *sw,
-	struct net_device *dev, struct sk_buff *skb, int *forward,
-	struct net_device **parent_dev, struct sk_buff **parent_skb)
+				       struct net_device *dev, int *forward)
 {
 	if (sw->dev_offset && dev != sw->netdev[0]) {
-		*parent_dev = sw->netdev[0];
 		if (!*forward)
-			*forward = FWD_MAIN_DEV | FWD_STP_DEV;
-		if ((*forward & (FWD_MAIN_DEV | FWD_STP_DEV)) ==
-		    (FWD_MAIN_DEV | FWD_STP_DEV))
-			*parent_skb = skb_clone(skb, GFP_ATOMIC);
-		else if (!(*forward & FWD_STP_DEV))
-			dev = *parent_dev;
+			*forward = FWD_MAIN_DEV;
+		if (!(*forward & FWD_STP_DEV))
+			dev = sw->netdev[0];
 		else
 			*forward &= ~FWD_VLAN_DEV;
 	}
 	return dev;
 }  /* sw_parent_rx */
 
-static int sw_port_vlan_rx(struct ksz_sw *sw, struct net_device *dev,
-	struct net_device *parent_dev, struct sk_buff *skb, int forward,
-	int tag, void *ptr, void (*rx_tstamp)(void *ptr, struct sk_buff *skb))
+static int sw_port_vlan_rx(struct sk_buff *skb, int forward, int tag)
 {
-	struct sk_buff *vlan_skb;
-	struct net_device *vlan_dev = dev;
-
 	/* Add VLAN tag manually. */
-	if (!(forward & FWD_VLAN_DEV))
+	if (!(forward & FWD_VLAN_DEV) || !tag)
 		return false;
 
-	if (!tag || !(sw->features & VLAN_PORT))
-		return false;
 	tag += VLAN_PORT_START;
 
 	/* Only forward to one network device. */
-	if (!(forward & FWD_MAIN_DEV)) {
-		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
-		return true;
-	}
-	vlan_skb = skb_clone(skb, GFP_ATOMIC);
-	if (!vlan_skb)
-		return false;
-	skb_reset_mac_header(vlan_skb);
-	__vlan_hwaccel_put_tag(vlan_skb, htons(ETH_P_8021Q), tag);
-#ifdef CONFIG_1588_PTP
-	do {
-		struct ptp_info *ptp = ptr;
-
-		if (rx_tstamp && (ptp->rx_en & 1))
-			rx_tstamp(ptp, vlan_skb);
-	} while (0);
-#endif
-	if (parent_dev && dev != parent_dev) {
-		vlan_dev = parent_dev;
-		vlan_skb->dev = vlan_dev;
-	}
-	vlan_skb->protocol = eth_type_trans(vlan_skb, vlan_dev);
-	netif_rx(vlan_skb);
+	__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
 	return true;
 }  /* sw_port_vlan_rx */
 
@@ -6975,6 +6940,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		}
 	} while (0);
 #endif
+
 #ifdef CONFIG_1588_PTP
 	if (ptp) {
 		int blocked;
@@ -7018,12 +6984,12 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			return NULL;
 		consume_skb(org_skb);
 	}
+	skb_set_tail_pointer(skb, skb->len);
 	if (padlen) {
 		u8 *pad = skb_put(skb, padlen);
 
 		memset(pad, 0, padlen);
 	}
-	skb_set_tail_pointer(skb, skb->len);
 	len = skb->len;
 
 	if (!dest) {
@@ -7279,9 +7245,6 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 	uint p;
 	struct ksz_port_info *info;
 
-	/* Update in case it is changed. */
-	if (dev->phydev)
-		port->phydev = dev->phydev;
 	for (i = 0, n = port->first_port; i < port->port_cnt; i++, n++) {
 		p = get_phy_port(sw, n);
 		info = get_port_info(sw, p);
@@ -7348,6 +7311,8 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 	else
 		port_set_link_speed(port);
 	port_get_link_speed(port);
+	if (port->link_ports)
+		schedule_delayed_work(&port->link_update, 0);
 	sw->ops->release(sw);
 
 #ifdef CONFIG_KSZ_DLR
@@ -7428,16 +7393,7 @@ static void sw_open(struct ksz_sw *sw)
 #ifdef CONFIG_KSZ_DLR
 	prep_dlr(&sw->info->dlr, sw->main_dev, sw->main_dev->dev_addr);
 #endif
-#ifdef CONFIG_1588_PTP_
-	if (sw->features & PTP_HW) {
-		int i;
-		struct ptp_info *ptp = &sw->ptp_hw;
 
-		for (i = 0; i < MAX_PTP_PORT; i++)
-			ptp->linked[i] = (sw->port_info[i].state ==
-				media_connected);
-	}
-#endif
 	/* Timer may already be started by the SPI device. */
 	if (!sw->monitor_timer_info->max)
 		ksz_start_timer(sw->monitor_timer_info,
@@ -8106,12 +8062,13 @@ static void sw_exit_dev(struct ksz_sw *sw)
 
 static void link_update_work(struct work_struct *work)
 {
+	struct delayed_work *dwork = to_delayed_work(work);
 	struct ksz_port *port =
-		container_of(work, struct ksz_port, link_update);
+		container_of(dwork, struct ksz_port, link_update);
 	struct ksz_sw *sw = port->sw;
-	struct net_device *dev;
-	struct phy_device *phydev;
 	struct ksz_port_info *info;
+	struct phy_device *phydev;
+	struct net_device *dev;
 	uint i;
 	uint p;
 	int link;
@@ -8131,13 +8088,44 @@ static void link_update_work(struct work_struct *work)
 		phydev->duplex = (info->duplex == 2);
 	}
 
+	if (sw->dev_offset && sw->netport[0]) {
+		int dev_cnt = sw->dev_count + sw->dev_offset;
+		struct ksz_port *sw_port = sw->netport[0];
+		struct ksz_port *dev_port;
+
+		for (i = sw->dev_offset; i < dev_cnt; i++) {
+			struct phy_priv *phydata;
+
+			dev_port = sw->netport[i];
+			if (!dev_port) {
+				phydata = &sw->phydata[i];
+				dev_port = phydata->port;
+			}
+			if (media_connected == dev_port->linked->state &&
+			    dev_port->linked->phy) {
+
+				/* Indicate a linked port is found .*/
+				sw_port->linked = dev_port->linked;
+				break;
+			}
+		}
+	}
+
 	info = port->linked;
 	phydev = port->phydev;
 	phydev->link = (info->state == media_connected);
 	phydev->speed = info->tx_rate / TX_RATE_UNIT;
 	phydev->duplex = (info->duplex == 2);
 	dev = port->netdev;
-	if (dev) {
+	if (dev && netif_running(dev)) {
+
+		/* Not using PHY provided by the switch driver. */
+		if (dev->phydev && dev->phydev != phydev &&
+		    phy_is_internal(dev->phydev)) {
+			dev->phydev->link = phydev->link;
+			dev->phydev->speed = phydev->speed;
+			dev->phydev->duplex = phydev->duplex;
+		}
 		link = netif_carrier_ok(dev);
 		if (link != phydev->link) {
 			if (phydev->link)
@@ -8337,18 +8325,26 @@ static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
 
 static void sw_leave_dev(struct ksz_sw *sw)
 {
+	struct sw_priv *ks = sw->dev;
+	struct phy_priv *phydata;
 	int i;
 
 #ifdef CONFIG_KSZ_STP
 	if (sw->features & STP_SUPPORT)
 		leave_stp(&sw->info->rstp);
 #endif
-	for (i = 0; i < sw->dev_count; i++) {
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
 		sw->netdev[i] = NULL;
 		sw->netport[i] = NULL;
 	}
+
+	/* Reset port pointer as it is pointed to one from device. */
+	for (i = 0; i <= sw->port_cnt; i++) {
+		phydata = &sw->phydata[i];
+		phydata->port = &ks->ports[i];
+	}
 	sw->eth_cnt = 0;
-	sw->dev_count = 0;
+	sw->dev_count = 1;
 	sw->dev_offset = 0;
 	sw->phy_offset = 0;
 }  /* sw_leave_dev */
@@ -8453,7 +8449,7 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
 
-	INIT_WORK(&port->link_update, link_update_work);
+	INIT_DELAYED_WORK(&port->link_update, link_update_work);
 
 	if (sw->features & VLAN_PORT)
 		dev->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
@@ -8830,7 +8826,7 @@ static void sw_init_phy_priv(struct sw_priv *ks)
 		port->linked = get_port_info(sw, p);
 dbg_msg(" %s %d=p:%d; f:%d c:%d i:%d\n", __func__, n, p,
 port->first_port, port->port_cnt, port->linked->phy_id);
-		INIT_WORK(&port->link_update, link_update_work);
+		INIT_DELAYED_WORK(&port->link_update, link_update_work);
 		sw->phy_map[n].priv = phydata;
 	}
 }  /* sw_init_phy_priv */
@@ -9344,7 +9340,7 @@ static void ksz_mii_exit(struct sw_priv *ks)
 			struct ksz_port *port;
 
 			port = &ks->ports[i];
-			flush_work(&port->link_update);
+			cancel_delayed_work_sync(&port->link_update);
 		}
 	}
 	mdiobus_unregister(bus);
@@ -9479,12 +9475,12 @@ static void link_read_work(struct work_struct *work)
 	struct ksz_port *port = NULL;
 	struct ksz_port *sw_port = NULL;
 	int i;
-	int changes = 0;
 	int s = 1;
 	int dev_cnt = sw->dev_count + sw->dev_offset;
 
 	if (1 == sw->dev_count || 1 == sw->dev_offset)
 		s = 0;
+
 	/* Check main device when child devices are used. */
 	if (sw->dev_offset)
 		sw_port = sw->netport[0];
@@ -9497,7 +9493,7 @@ static void link_read_work(struct work_struct *work)
 		phydata = &sw->phydata[n];
 		if (!port)
 			port = phydata->port;
-		changes |= port_get_link_speed(port);
+		port_get_link_speed(port);
 
 		/* Copy all port information for user access. */
 		if (port != phydata->port)
@@ -9505,23 +9501,10 @@ static void link_read_work(struct work_struct *work)
 	}
 	sw->ops->release(sw);
 
-	/* Not to read PHY registers unnecessarily if no link change. */
-	if (!changes)
-		return;
-
-#ifdef CONFIG_1588_PTP_
-	if (sw->features & PTP_HW) {
-		struct ptp_info *ptp = &sw->ptp_hw;
-
-		for (i = 0; i < ptp->ports; i++)
-			ptp->linked[i] = (sw->port_info[i].state ==
-				media_connected);
-	}
-#endif
-	/* Change linked port for main device if it is not connected. */
-	if (!sw_port || (media_connected == sw_port->linked->state))
-		return;
-
+	/* Need to invoke link_update_work before sw_port->linked is updated
+	 * as link_update_work can be called before link_read_work is
+	 * finished if the delay is not long enough.
+	 */
 	for (i = sw->dev_offset; i < dev_cnt; i++) {
 		struct phy_priv *phydata;
 
@@ -9530,10 +9513,8 @@ static void link_read_work(struct work_struct *work)
 			phydata = &sw->phydata[i];
 			port = phydata->port;
 		}
-		if (media_connected == port->linked->state) {
-			sw_port->linked = port->linked;
-			break;
-		}
+		if (port->link_ports)
+			schedule_delayed_work(&port->link_update, 0);
 	}
 }  /* link_read_work */
 
@@ -9570,7 +9551,8 @@ static void ksz_dev_monitor(struct timer_list *t)
 			priv->state = phydev->state;
 			if (PHY_UP == phydev->state ||
 			    PHY_RESUMING == phydev->state)
-				schedule_work(&priv->port->link_update);
+				schedule_delayed_work(&priv->port->link_update,
+						      0);
 		}
 	}
 	if (!hw_priv->intr_working)
@@ -9851,13 +9833,13 @@ static void ksz_remove_first(struct sw_priv *ks)
 		ptp->ops->exit(ptp);
 	}
 #endif
-#ifndef NO_PHYDEV
-	ksz_mii_exit(ks);
-#endif
 	ksz_stop_timer(&ks->monitor_timer_info);
 	ksz_stop_timer(&ks->mib_timer_info);
 	flush_work(&ks->mib_read);
 	cancel_delayed_work_sync(&ks->link_read);
+#ifndef NO_PHYDEV
+	ksz_mii_exit(ks);
+#endif
 
 #ifdef KSZSW_REGS_SIZE
 	sysfs_remove_bin_file(&ks->dev->kobj, &kszsw_registers_attr);

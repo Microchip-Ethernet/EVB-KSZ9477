@@ -46,6 +46,13 @@ static void proc_hsr_cfg_work(struct work_struct *work)
 		container_of(work, struct hsr_cfg_work, work);
 	struct ksz_sw *sw = cfg_work->sw;
 
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw)) {
+		kfree(cfg_work);
+		return;
+	}
+#endif
+
 	sw->ops->cfg_mac(sw, 0, cfg_work->addr, cfg_work->member,
 		false, false, 0);
 	if (cfg_work->vlan) {
@@ -685,6 +692,11 @@ static void hsr_chk_ring(struct work_struct *work)
 	int no_drop_win = false;
 	u16 start_seq[2];
 	u16 exp_seq[2];
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(info->sw_dev))
+		return;
+#endif
 
 	memset(start_seq, 0, sizeof(start_seq));
 	memset(exp_seq, 0, sizeof(exp_seq));
@@ -1833,6 +1845,11 @@ static void hsr_tx_proc(struct work_struct *work)
 	struct ksz_hsr_info *info = container_of(work, struct ksz_hsr_info,
 						 tx_proc);
 
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(info->sw_dev))
+		return;
+#endif
+
 	last = skb_queue_empty(&info->txq);
 	while (!last) {
 		skb = skb_dequeue(&info->txq);
@@ -2438,9 +2455,20 @@ static void stop_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
 
 static void ksz_hsr_exit(struct ksz_hsr_info *info)
 {
+	struct sk_buff *skb;
+	bool last;
+
+	flush_work(&info->tx_proc);
 #ifdef CONFIG_HAVE_HSR_HW
 	cancel_delayed_work_sync(&info->chk_ring);
 #endif
+	last = skb_queue_empty(&info->txq);
+	while (!last) {
+		skb = skb_dequeue(&info->txq);
+		if (skb)
+			kfree_skb(skb);
+		last = skb_queue_empty(&info->txq);
+	}
 }  /* ksz_hsr_exit */
 
 static void ksz_hsr_init(struct ksz_hsr_info *info, struct ksz_sw *sw)

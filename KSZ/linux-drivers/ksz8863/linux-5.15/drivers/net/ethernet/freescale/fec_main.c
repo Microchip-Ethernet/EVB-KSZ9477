@@ -375,14 +375,11 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	int forward = 0;
 	int tag = 0;
 	void *ptr = NULL;
-	void (*rx_tstamp)(void *ptr, struct sk_buff *skb) = NULL;
 #endif
 #ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp = &sw->ptp_hw;
 	int ptp_tag = 0;
 #endif
-	struct net_device *parent_dev = NULL;
-	struct sk_buff *parent_skb = NULL;
 
 	dev = sw->net_ops->rx_dev(sw, data, &len, &tag, &rx_port);
 	if (!dev) {
@@ -430,8 +427,6 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 			dev_kfree_skb_any(skb);
 			return NULL;
 		}
-		if (ptp_tag)
-			rx_tstamp = ptp->ops->get_rx_tstamp;
 	}
 #endif
 
@@ -447,16 +442,14 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	/* No VLAN port forwarding; need to send to parent. */
 	if ((forward & FWD_VLAN_DEV) && !tag)
 		forward &= ~FWD_VLAN_DEV;
-	dev = sw->net_ops->parent_rx(sw, dev, skb, &forward, &parent_dev,
-		&parent_skb);
+	dev = sw->net_ops->parent_rx(sw, dev, &forward);
 
 	/* dev may change. */
 	if (dev != skb->dev) {
 		skb->dev = dev;
 	}
 
-	sw->net_ops->port_vlan_rx(sw, dev, parent_dev, skb,
-		forward, tag, ptr, rx_tstamp);
+	sw->net_ops->port_vlan_rx(skb, forward, tag);
 #endif
 	return dev;
 }  /* sw_rx_proc */
@@ -3572,9 +3565,15 @@ static int fec_enet_ioctl(struct net_device *ndev, struct ifreq *rq, int cmd)
 			u16 ports;
 
 			ports = 0;
-			for (i = 0, p = fep->port.first_port;
-			     i < fep->port.port_cnt; i++, p++)
-				ports |= (1 << p);
+			if (fep->port.port_cnt > 1) {
+				p = fep->port.first_port + fep->port.port_cnt -
+					1;
+				ports = (1 << p);
+			} else {
+				for (i = 0, p = fep->port.first_port - 1;
+				     i < fep->port.port_cnt; i++, p++)
+					ports |= (1 << p);
+			}
 			ptp = &sw->ptp_hw;
 			result = ptp->ops->hwtstamp_ioctl(ptp, rq, ports);
 		}
@@ -3900,7 +3899,7 @@ static void hw_set_promisc(struct fec_enet_private *fep, int promisc)
 
 static void dev_set_multicast(struct fec_enet_private *fep, int multicast)
 {
-	if (multicast != fep->multi) {
+	if ((!multicast && fep->multi) || (multicast && !fep->multi)) {
 		struct fec_enet_private *hfep = fep->hw_priv;
 		u8 hw_multi = hfep->hw_multi;
 
@@ -4282,7 +4281,7 @@ static void fec_enet_sw_exit(struct fec_enet_private *fep)
 		if (!dev)
 			continue;
 		fep = netdev_priv(dev);
-		flush_work(&fep->port.link_update);
+		cancel_delayed_work_sync(&fep->port.link_update);
 		unregister_netdev(dev);
 		if (dev->phydev->mdio.bus)
 			phy_detach(dev->phydev);
@@ -5443,7 +5442,7 @@ fec_drv_sw_remove(struct net_device *ndev, struct fec_enet_private *fep)
 	}
 #endif
 	if (do_exit) {
-		flush_work(&fep->port.link_update);
+		cancel_delayed_work_sync(&fep->port.link_update);
 		fec_enet_sw_exit(fep);
 	}
 #ifdef CONFIG_KSZ_SMI

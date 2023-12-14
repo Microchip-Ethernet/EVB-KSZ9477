@@ -5742,6 +5742,8 @@ static void ksz_dlr_exit(struct ksz_dlr_info *dlr)
 	ksz_stop_timer(&dlr->neigh_chk_timer_info);
 	ksz_stop_timer(&dlr->signon_timer_info);
 	ksz_stop_timer(&dlr->test_timer_info);
+	flush_work(&dlr->delay_proc);
+	flush_work(&dlr->neigh_chk_proc);
 	cancel_delayed_work_sync(&dlr->announce_tx);
 }  /* ksz_dlr_exit */
 

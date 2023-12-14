@@ -57,9 +57,10 @@
 			};
 
 			spi0: spi@f0004000 {
-				cs-gpios = <&pioD 13 0>, <0>, <0>, <&pioD 16 0>;
+				pinctrl-names = "default", "cs";
+				pinctrl-1 = <&pinctrl_spi0_cs>;
+				cs-gpios = <&pioD 13 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioD 16 GPIO_ACTIVE_LOW>;
 				status = "okay";
-				id = <0>;
 
 				ksz9563: ksz9563@0 {
 					compatible = "microchip,ksz9563";
@@ -90,6 +91,7 @@
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -98,7 +100,7 @@
 					compatible = "microchip,ksz9896";
 					reg = <0>;
 
-					spi-max-frequency = <32000000>;
+					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
 					interrupt-parent = <&pioB>;
@@ -135,6 +137,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -143,7 +146,7 @@
 					compatible = "microchip,ksz8565";
 					reg = <0>;
 
-					spi-max-frequency = <32000000>;
+					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
 					interrupt-parent = <&pioB>;
@@ -176,6 +179,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -184,7 +188,7 @@
 					compatible = "microchip,ksz8794";
 					reg = <0>;
 
-					spi-max-frequency = <30000000>;
+					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
 					status = "disabled";
@@ -211,6 +215,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -246,6 +251,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -277,6 +283,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -359,6 +366,7 @@
 				fixed-link {
 					speed = <1000>;
 					full-duplex;
+					pause;
 				};
 			};
 
@@ -392,9 +400,10 @@
 			};
 
 			spi1: spi@f8008000 {
-				cs-gpios = <&pioC 25 0>, <0>, <0>, <&pioC 28 0>;
+				pinctrl-names = "default", "cs";
+				pinctrl-1 = <&pinctrl_spi1_cs>;
+				cs-gpios = <&pioC 25 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioC 28 GPIO_ACTIVE_LOW>;
 				status = "okay";
-				id = <1>;
 
 				ksz8863: ksz8863@3 {
 					compatible = "microchip,ksz8863";
@@ -423,6 +432,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -476,6 +486,7 @@
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -491,6 +502,7 @@
 				fixed-link {
 					speed = <100>;
 					full-duplex;
+					pause;
 				};
 			};
 
@@ -537,12 +549,24 @@
 							 AT91_PIOE 4 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
 					};
 
-					pinctrl_d2_led: d2_led_default {
-						atmel,pins = <AT91_PIOE 23 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					pinctrl_gpio_leds: gpio_leds_default {
+						atmel,pins =
+							<AT91_PIOE 23 AT91_PERIPH_GPIO AT91_PINCTRL_NONE
+							 AT91_PIOE 24 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
 					};
 
-					pinctrl_d3_led: d3_led_default {
-						atmel,pins = <AT91_PIOE 24 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					pinctrl_spi0_cs: spi0_cs_default {
+						atmel,pins =
+							<AT91_PIOD 13 AT91_PERIPH_GPIO AT91_PINCTRL_NONE
+							 AT91_PIOD 16 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					};
+
+					pinctrl_spi1_cs: spi1_cs_default {
+						atmel,pins = <AT91_PIOC 25 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+					};
+
+					pinctrl_vcc_mmc0_reg_gpio: vcc_mmc0_reg_gpio_default {
+						atmel,pins = <AT91_PIOE 2 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
 					};
 
 					pinctrl_ksz_irq: ksz_irq {
@@ -563,8 +587,8 @@
 		usb1: ohci@600000 {
 			num-ports = <3>;
 			atmel,vbus-gpio = <0
-					   &pioE 3 GPIO_ACTIVE_LOW
-					   &pioE 4 GPIO_ACTIVE_LOW
+					   &pioE 3 GPIO_ACTIVE_HIGH
+					   &pioE 4 GPIO_ACTIVE_HIGH
 					  >;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usb_default>;
@@ -640,6 +664,8 @@
 
 	vcc_mmc0_reg: fixedregulator_mmc0 {
 		compatible = "regulator-fixed";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_vcc_mmc0_reg_gpio>;
 		gpio = <&pioE 2 GPIO_ACTIVE_LOW>;
 		regulator-name = "mmc0-card-supply";
 		regulator-min-microvolt = <3300000>;
@@ -664,7 +690,7 @@
 	leds {
 		compatible = "gpio-leds";
 		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_d2_led &pinctrl_d3_led>;
+		pinctrl-0 = <&pinctrl_gpio_leds>;
 		status = "okay";
 
 		d2 {

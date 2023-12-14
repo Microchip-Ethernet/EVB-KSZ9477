@@ -662,7 +662,7 @@ struct fec_enet_private {
 	spinlock_t		tx_lock;
 	struct ksz_port		port;
 	int			phy_addr;
-	u32			multi:1;
+	u32			multi:2;
 	u32			promisc:1;
 	u8			opened;
 	u8			hw_multi;

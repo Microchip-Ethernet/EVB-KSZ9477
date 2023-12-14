@@ -1,0 +1,507 @@
+.TH PHC2SYS 8 "April 2018" "linuxptp"
+.SH NAME
+phc2sys \- synchronize two or more clocks
+
+.SH SYNOPSIS
+.B phc2sys \-a
+[
+.B \-r
+] [
+.B \-r
+] [
+.BI \-f " config-file"
+] [ options ] [
+.I long-options
+]
+.br
+.B phc2sys
+[
+.BI \-f " config-file"
+] [
+.BI \-d " pps-device"
+] [
+.BI \-s " device"
+] [
+.BI \-c " device"
+] [
+.BI \-O " offset"
+] [
+.BI \-w
+] [ options ] [
+.I long-options
+]
+.I .\|.\|.
+
+
+.SH DESCRIPTION
+.B phc2sys
+is a program which synchronizes two or more clocks in the system. Typically,
+it is used to synchronize the system clock to a PTP hardware clock (PHC),
+which itself is synchronized by the
+.BR ptp4l (8)
+program.
+
+With the
+.B \-a
+option, the clocks to synchronize are fetched from the running
+.B ptp4l
+daemon and the direction of synchronization automatically follows changes of
+the PTP port states.
+
+Manual configuration is also possible. When using manual configuration, two
+synchronization modes are supported, one uses a pulse per second (PPS)
+signal provided by the source clock and the other mode reads time from the
+source clock directly. Some clocks can be used in both modes, the mode which
+will synchronize the slave clock with better accuracy depends on hardware
+and driver implementation.
+
+.SH OPTIONS
+.TP
+.BI \-a
+Read the clocks to synchronize from running
+.B ptp4l
+and follow changes in the port states, adjusting the synchronization
+direction automatically. The system clock (CLOCK_REALTIME) is not
+synchronized, unless the
+.B \-r
+option is also specified.
+.TP
+.BI \-r
+Only valid together with the
+.B \-a
+option. Instructs
+.B phc2sys
+to also synchronize the system clock (CLOCK_REALTIME). By default, the
+system clock is not considered as a possible time source. If you want the
+system clock to be eligible to become a time source, specify the
+.B \-r
+option twice.
+.TP
+.BI \-f " config"
+Read configuration from the specified file. No configuration file is read by
+default.
+.TP
+.BI \-d " pps-device"
+Specify the PPS device of the master clock (e.g. /dev/pps0). With this option
+the PPS synchronization mode is used instead of the direct mode. As the PPS
+signal does not specify time and only marks start of a second, the slave clock
+should be already close to the correct time before
+.B phc2sys
+is started or the
+.B \-s
+option should be used too. With the
+.B \-s
+option the PPS signal of the master clock is enabled automatically, otherwise
+it has to be enabled before
+.B phc2sys
+is started (e.g. by running \f(CWecho 1 > /sys/class/ptp/ptp0/pps_enable\fP).
+This option can be used only with the system clock as the slave clock. Not
+compatible with the
+.B \-a
+option.
+.TP
+.BI \-s " device"
+Specify the master clock by device (e.g. /dev/ptp0) or interface (e.g. eth0) or
+by name (e.g. CLOCK_REALTIME for the system clock). When this option is used
+together with the
+.B \-d
+option, the master clock is used only to correct the offset by whole number of
+seconds, which cannot be fixed with PPS alone. Not compatible with the
+.B \-a
+option. This option does not support bonded interface (e.g. bond0, team0). If
+.B ptp4l
+has a port on an active-backup bond or team interface, the
+.B \-a
+option can be used to track the active interface.
+.TP
+.BI \-i " interface"
+Performs the exact same function as
+.B \-s
+for compatibility reasons. Previously enabled specifying master clock by network
+interface. However, this can now be done using
+.B \-s
+and this option is no longer necessary. As such it has been deprecated, and
+should no longer be used.
+.TP
+.BI \-c " device"
+Specify the slave clock by device (e.g. /dev/ptp1) or interface (e.g. eth1) or
+by  name. The default is CLOCK_REALTIME (the system clock). Not compatible
+with the
+.B \-a
+option.
+.TP
+.BI \-E " servo"
+Specify which clock servo should be used. Valid values are pi for a PI
+controller, linreg for an adaptive controller using linear regression, and
+ntpshm for the NTP SHM reference clock to allow another process to synchronize
+the local clock.
+The default is pi.
+.TP
+.BI \-P " kp"
+Specify the proportional constant of the PI controller. The default is 0.7.
+.TP
+.BI \-I " ki"
+Specify the integral constant of the PI controller. The default is 0.3.
+.TP
+.BI \-S " step"
+Specify the step threshold of the servo. It is the maximum offset that
+the servo corrects by changing the clock frequency instead of stepping the
+clock. The clock is stepped on start regardless of the option if the offset is
+larger than 20 microseconds (unless the
+.BI \-F
+option is used). It's specified in seconds. The value of 0.0 disables stepping
+after the start. The default is 0.0.
+.TP
+.BI \-F " step"
+Specify the step threshold applied only on the first update. It is the maximum
+offset that is corrected by changing the clock frequency. It's specified in
+seconds. The value of 0.0 disables stepping on start. The default is 0.00002
+(20 microseconds).
+.TP
+.BI \-R " update-rate"
+Specify the slave clock update rate when running in the direct synchronization
+mode. The default is 1 per second.
+.TP
+.BI \-N " phc-num"
+Specify the number of master clock readings per one slave clock update. Only
+the fastest reading is used to update the slave clock, this is useful to
+minimize the error caused by random delays in scheduling and bus utilization.
+The default is 5.
+.TP
+.BI \-O " offset"
+Specify the offset between the slave and master times in seconds. Not
+compatible with the
+.B \-a
+option.  See
+.SM
+.B TIME SCALE USAGE
+below.
+.TP
+.BI \-L " freq-limit"
+The maximum allowed frequency offset between uncorrected clock and the system
+monotonic clock in parts per billion (ppb). This is used as a sanity check of
+the synchronized clock. When a larger offset is measured, a warning message
+will be printed and the servo will be reset. When set to 0, the sanity check is
+disabled. The default is 200000000 (20%).
+.TP
+.BI \-M " segment"
+The number of the SHM segment used by ntpshm servo.
+The default is 0.
+.TP
+.BI \-u " summary-updates"
+Specify the number of clock updates included in summary statistics. The
+statistics include offset root mean square (RMS), maximum absolute offset,
+frequency offset mean and standard deviation, and mean of the delay in clock
+readings and standard deviation. The units are nanoseconds and parts per
+billion (ppb). If zero, the individual samples are printed instead of the
+statistics. The messages are printed at the LOG_INFO level.
+The default is 0 (disabled).
+.TP
+.B \-w
+Wait until ptp4l is in a synchronized state. If the
+.B \-O
+option is not used, also keep the offset between the slave and master
+times updated according to the currentUtcOffset value obtained from ptp4l and
+the direction of the clock synchronization. Not compatible with the
+.B \-a
+option.
+.TP
+.BI \-n " domain-number"
+Specify the domain number used by ptp4l. The default is 0.
+.TP
+.B \-x
+When a leap second is announced, don't apply it in the kernel by stepping the
+clock, but let the servo correct the one-second offset slowly by changing the
+clock frequency (unless the
+.B \-S
+option is used).
+.TP
+.BI \-z " uds-address"
+Specifies the address of the server's UNIX domain socket.
+The default is /var/run/ptp4l.
+.TP
+.BI \-l " print-level"
+Set the maximum syslog level of messages which should be printed or sent to
+the system logger. The default is 6 (LOG_INFO).
+.TP
+.BI \-t " message-tag"
+Specify the tag which is added to all messages printed to the standard output
+or system log. The default is an empty string.
+.TP
+.B \-m
+Print messages to the standard output.
+.TP
+.B \-q
+Don't send messages to the system logger.
+.TP
+.BI \-h
+Display a help message.
+.TP
+.B \-v
+Prints the software version and exits.
+
+.SH LONG OPTIONS
+
+Each and every configuration file option (see below in section
+.BR FILE\ OPTIONS)
+may also appear
+as a "long" style command line argument.  For example, the transportSpecific
+option may be set using either of these two forms:
+
+.RS
+\f(CW\-\-transportSpecific 1   \-\-transportSpecific=1\fP
+.RE
+
+Option values given on the command line override values in the global
+section of the configuration file (which, in turn overrides default
+values).
+
+.SH CONFIGURATION FILE
+
+The configuration file is divided into sections. Each section starts with a
+line containing its name enclosed in brackets and it follows with settings.
+Each setting is placed on a separate line, it contains the name of the
+option and the value separated by whitespace characters. Empty lines and lines
+starting with # are ignored.
+
+The global section (indicated as
+.BR [global] )
+sets the program options. This is the only used option.
+
+.SH FILE OPTIONS
+
+.TP
+.B domainNumber
+Specify the domain number used by phc2sys. The default is 0. Same as option
+.B \-n
+(see above).
+
+.TP
+.B kernel_leap
+When a leap second is announced, let the kernel apply it by stepping the
+clock instead of correcting the one-second offset with servo, which would
+correct the one-second offset slowly by changing the clock frequency
+(unless the step_threshold option is set to correct such offset by
+stepping). Relevant only with software time stamping. The default is 1
+(enabled). Same as option
+.B \-x
+(see above).
+
+The maximum logging level of messages which should be printed.
+The default is 6 (LOG_INFO). Same as option
+.B \-l
+(see above).
+
+.TP
+.B logging_level
+The maximum logging level of messages which should be printed.
+The default is 6 (LOG_INFO). Same as option
+.B \-l
+(see above).
+
+.TP
+.B message_tag
+The tag which is added to all messages printed to the standard output
+or system log. The default is an empty string (which cannot be set in
+the configuration file as the option requires an argument).
+Same as option
+.B \-t
+(see above).
+
+.TP
+.B sanity_freq_limit
+The maximum allowed frequency offset between uncorrected clock and the
+system monotonic clock in parts per billion (ppb). This is used as a
+sanity check of the synchronized clock. When a larger offset is measured,
+a warning message will be printed and the servo will be reset. When set
+to 0, the sanity check is disabled. The default is 200000000 (20%).
+Same as option
+.B \-L
+(see above).
+
+.TP
+.B clock_servo
+The servo which is used to synchronize the local clock. Valid values
+are "pi" for a PI controller, "linreg" for an adaptive controller using
+linear regression, "ntpshm" for the NTP SHM reference clock to allow
+another process to synchronize the local clock (the SHM segment number
+is set to the domain number), and "nullf" for a servo that always dials
+frequency offset zero (for use in SyncE nodes). The default is "pi."
+Same as option
+.B \-E
+(see above).
+
+.TP
+.B transportSpecific
+The transport specific field. Must be in the range 0 to 255.
+The default is 0.
+
+.TP
+.B use_syslog
+Print messages to the system log if enabled.  The default is 1 (enabled).
+Related to option
+.B \-q
+(see above).
+
+.TP
+.B verbose
+Print messages to the standard output if enabled.  The default is 0 (disabled).
+Related to option
+.B \-m
+(see above).
+
+.TP
+.B pi_proportional_const
+Specifies the proportional constant of the PI controller.
+Same as option
+.B \-P
+(see above).
+
+.TP
+.B pi_integral_const
+Specifies the integral constant of the PI controller.
+Same as option
+.B \-I
+(see above).
+
+.TP
+.B step_threshold
+Specifies the step threshold of the servo. It is the maximum offset that
+the servo corrects by changing the clock frequency instead of stepping
+the clock. The clock is stepped on start regardless of the option if the
+offset is larger than 20 microseconds (unless the -F option is used).
+It's  specified  in seconds. The value of 0.0 disables stepping after
+the start. The default is 0.0.
+Same as option
+.B \-S
+(see above).
+
+.TP
+.B first_step_threshold
+Specify the step threshold applied only on the first update. It is the
+maximum offset that is corrected by adjusting clock. It's specified in
+seconds. The value of 0.0 disables stepping on start. The default is
+0.00002 (20 microseconds).
+Same as option
+.B \-F
+(see above).
+
+.TP
+.B ntpshm_segment
+The number of the SHM segment used by ntpshm servo.  The default is 0.
+Same as option
+.B \-M
+(see above).
+
+.TP
+.B uds_address
+Specifies the address of the server's UNIX domain socket. The default
+is /var/run/ptp4
+Same as option
+.B \-z
+(see above).
+
+.SH TIME SCALE USAGE
+
+.B Ptp4l
+uses either PTP time scale or UTC (Coordinated Universal Time) time
+scale.  PTP time scale is continuous and shifted against UTC by a few tens of
+seconds as PTP time scale does not apply leap seconds.
+
+In hardware time stamping mode,
+.B ptp4l
+announces use of PTP time scale and PHC
+is used for the stamps.  That means PHC must follow PTP time scale while system
+clock follows UTC.  Time offset between these two is maintained by
+.BR phc2sys .
+
+.B Phc2sys
+acquires the offset value either by reading it from ptp4l when
+.B \-a
+or
+.B \-w
+is in effect or from command line when
+.B \-O
+is supplied.  Failure to maintain the correct offset can result in local system
+clock being off some seconds to domain master system clock when in slave mode,
+or incorect PTP time announced to the network in case the host is the domain
+master.
+
+.SH EXAMPLES
+
+Synchronize time automatically according to the current
+.B ptp4l
+state, synchronize the system clock to the remote master.
+
+.RS
+\f(CWphc2sys \-a \-r\fP
+.RE
+
+Same as above, but when the host becomes the domain master, synchronize time
+in the domain to its system clock.
+
+.RS
+\f(CWphc2sys \-a \-rr\fP
+.RE
+
+Same as above, in an IEEE 802.1AS domain.
+
+.RS
+\f(CWphc2sys \-a \-rr --transportSpecific=1\fP
+.RE
+
+The host is a domain master, PTP clock is synchronized to system clock and the
+time offset is obtained from
+.BR ptp4l .
+.B Phc2sys
+waits for
+.B ptp4l
+to get at least one port in master or slave mode before starting the
+synchronization.
+
+.RS
+\f(CWphc2sys \-c /dev/ptp0 \-s CLOCK_REALTIME \-w\fP
+.RE
+
+Same as above, time offset is provided on command line and
+.B phc2sys
+does not wait for
+.BR ptp4l .
+
+.RS
+\f(CWphc2sys \-c /dev/ptp0 \-s CLOCK_REALTIME \-O 35\fP
+.RE
+
+The host is in slave mode, system clock is synchronized from PTP clock,
+.B phc2sys
+waits for
+.B ptp4l
+and the offset is set automatically.
+
+.RS
+\f(CWphc2sys \-s /dev/ptp0 \-w\fP
+.RE
+
+Same as above, PTP clock id is read from the network interface, the offset is
+provided on command line
+.B phc2sys
+does not wait.
+
+.RS
+\f(CWphc2sys \-s eth0 \-O \-35\fP
+.RE
+
+.SH WARNING
+
+Be cautious when the same configuration file is used for both ptp4l and phc2sys.
+Keep in mind, that values specified in the configuration file take precedence
+over their default values. If a certain option, which is common to ptp4l and
+phc2sys, is specified to a non-default value in the configuration file
+(p.e., for ptp4l), then this non-default value applies also for phc2sys. This
+might be not what is expected.
+
+It is recommended to use seperate configuration files for ptp4l and
+phc2sys in order to avoid any unexpected behavior.
+
+.SH SEE ALSO
+.BR ptp4l (8)

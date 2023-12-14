@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8462 HLI Ethernet driver
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -1054,8 +1054,9 @@ static void update_link(struct net_device *dev, struct ks_net *priv,
 
 static void ksz8462_link_update_work(struct work_struct *work)
 {
+	struct delayed_work *dwork = to_delayed_work(work);
 	struct ksz_port *port =
-		container_of(work, struct ksz_port, link_update);
+		container_of(dwork, struct ksz_port, link_update);
 	struct net_device *dev;
 	struct ksz_sw *sw = port->sw;
 
@@ -1791,20 +1792,16 @@ static int det_rcv_cnt(struct ksz_hw *hw, u8 *data, int len)
 static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 	u16 sts, u32 len)
 {
-	struct net_device *parent_dev = NULL;
-	struct sk_buff *parent_skb = NULL;
 	struct net_device *dev = hw_priv->dev;
 	struct ks_net *priv;
 	struct ksz_hw *hw = &hw_priv->hw;
 	struct ksz_sw *sw = hw_priv->sw;
 	unsigned long flags;
-	int extra_skb;
 	int forward = 0;
 	int tcp = hw->rx_tcp;
 	int rx_port = 0;
 	int tag = 0;
 	void *ptr = NULL;
-	void (*rx_tstamp)(void *ptr, struct sk_buff *skb) = NULL;
 #ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp = &sw->ptp_hw;
 	int ptp_tag = 0;
@@ -1865,14 +1862,10 @@ static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 			dev_kfree_skb_irq(skb);
 			return 0;
 		}
-		if (ptp_tag)
-			rx_tstamp = ptp->ops->get_rx_tstamp;
 	}
 #endif
 	if (sw_is_switch(sw))
-		dev = sw->net_ops->parent_rx(sw, dev, skb, &forward,
-			&parent_dev, &parent_skb);
-	extra_skb = (parent_skb != NULL);
+		dev = sw->net_ops->parent_rx(sw, dev, &forward);
 
 	/* Update receive statistics. */
 	priv = netdev_priv(dev);
@@ -1880,8 +1873,7 @@ static int rx_proc(struct dev_info *hw_priv, struct sk_buff *skb,
 	dev->stats.rx_bytes += len;
 
 	if (sw_is_switch(sw))
-		extra_skb |= sw->net_ops->port_vlan_rx(sw, dev, parent_dev,
-			skb, forward, tag, ptr, rx_tstamp);
+		sw->net_ops->port_vlan_rx(skb, forward, tag);
 	if (!hw_priv->use_napi)
 		tcp = det_rcv_cnt(hw, skb->data, len);
 	skb->protocol = eth_type_trans(skb, dev);
@@ -3729,7 +3721,8 @@ static int ks846x_probe(struct platform_device *pdev)
 
 		priv->phy_addr = sw->net_ops->setup_dev(sw, netdev, dev_name,
 			&priv->port, i, port_count, mib_port_count);
-		INIT_WORK(&priv->port.link_update, ksz8462_link_update_work);
+		INIT_DELAYED_WORK(&priv->port.link_update,
+				  ksz8462_link_update_work);
 
 		netdev->mem_start = (unsigned long) hw->hw_addr;
 		netdev->mem_end = netdev->mem_start + 0x20 - 1;

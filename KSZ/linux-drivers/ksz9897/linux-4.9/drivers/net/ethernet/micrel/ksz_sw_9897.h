@@ -201,10 +201,6 @@ struct ksz_acl_table {
 	u16 cnt;
 	u8 tcp_flag_mask;
 	u8 tcp_flag;
-#if 0
-	u8 ip6_addr[16];
-	u8 ip6_mask[16];
-#endif
 	u32 mode:2;
 	u32 enable:2;
 	u32 src:1;
@@ -570,13 +566,8 @@ struct ksz_sw_net_ops {
 		int (*get_multi)(void *ptr), struct sk_buff *skb,
 		u8 h_promiscuous);
 	struct net_device *(*parent_rx)(struct ksz_sw *sw,
-		struct net_device *dev, struct sk_buff *skb, int *forward,
-		struct net_device **parent_dev, struct sk_buff **parent_skb);
-	int (*port_vlan_rx)(struct ksz_sw *sw, struct net_device *dev,
-		struct net_device *parent_dev, struct sk_buff *skb,
-		int forward, int tag, void *ptr,
-		void (*rx_tstamp)(void *ptr, struct sk_buff *skb));
-	int (*drop_icmp)(struct sk_buff *skb, int extra_skb);
+		struct net_device *dev, int *forward);
+	int (*port_vlan_rx)(struct sk_buff *skb, int forward, int tag);
 	struct sk_buff *(*final_skb)(struct ksz_sw *sw, struct sk_buff *skb,
 		struct net_device *dev, struct ksz_port *port);
 	int (*drv_rx)(struct ksz_sw *sw, struct sk_buff *skb, uint port);
@@ -923,6 +914,7 @@ struct ksz_sw {
 	int chip_id;
 	int dev_count;
 	int id;
+	bool change_id;
 	u32 vlan_id;
 	u16 vid;
 	u16 alu_index;
@@ -938,8 +930,6 @@ struct ksz_sw {
 	int revision;
 	uint features;
 	uint overrides;
-
-	struct napi_struct *napi;
 
 	int multi_dev;
 	int stp;
@@ -1002,7 +992,7 @@ struct ksz_port {
 	struct net_device *netdev;
 	struct phy_device *phydev;
 	struct ksz_sw *sw;
-	struct work_struct link_update;
+	struct delayed_work link_update;
 };
 
 static inline void sw_update_csum(struct ksz_sw *sw)
@@ -1037,6 +1027,26 @@ static inline void set_tx_tag_queue(struct ksz_sw *sw,
 	q &= 3;
 	tag->ports &= ~(3 << sw->TAIL_TAG_SHIFT);
 	tag->ports |= (q << sw->TAIL_TAG_SHIFT);
+}
+
+static inline bool using_hsr(struct ksz_sw *sw)
+{
+	return (sw->features & HSR_HW);
+}
+
+static inline bool using_tail_tag(struct ksz_sw *sw)
+{
+	return (sw->overrides & TAIL_TAGGING);
+}
+
+static inline bool iba_stopped(void *ptr)
+{
+	struct ksz_sw *sw = ptr;
+
+	if ((sw->info->iba.use_iba & IBA_USE_CODE_MASK) >=
+	    IBA_USE_CODE_HARD_RESET)
+		return true;
+	return false;
 }
 
 struct lan_attributes {

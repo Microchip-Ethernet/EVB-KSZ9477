@@ -824,6 +824,10 @@ struct macb_queue {
 	struct work_struct	tx_error_task;
 };
 
+#ifdef CONFIG_KSZ_SWITCH
+#include "../micrel/ksz_mac.h"
+#endif
+
 struct macb {
 	void __iomem		*regs;
 	bool			native_io;
@@ -887,26 +891,8 @@ struct macb {
 
 	u32			wol;
 
-#ifdef HAVE_KSZ_SWITCH
-	struct platform_device	*sw_pdev;
-	struct macb		*hw_priv;
-	struct phy_device	dummy_phy;
-	struct ksz_port		port;
-	struct mii_if_info	mii_if;
-	int			phy_addr;
-	u8			state;
-	u32			ready:1;
-	u32			multi:1;
-	u32			promisc:1;
-	u8			opened;
-	u8			hw_multi;
-	u8			hw_promisc;
-	void			*parent;
-	struct delayed_work	promisc_reset;
-	struct ksz_sw_sysfs	sysfs;
-#ifdef CONFIG_1588_PTP
-	struct ksz_ptp_sysfs	ptp_sysfs;
-#endif
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_mac		sw_mac;
 #endif
 };
 

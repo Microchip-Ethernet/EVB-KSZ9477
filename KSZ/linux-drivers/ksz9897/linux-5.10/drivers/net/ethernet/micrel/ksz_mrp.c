@@ -1,7 +1,7 @@
 /**
  * Microchip MRP driver code
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2014-2015 Micrel, Inc.
@@ -609,6 +609,11 @@ static void mrp_cfg_vlan_work(struct work_struct *work)
 	bool last;
 	struct sk_buff *skb;
 	struct mrp_info *mrp = container_of(work, struct mrp_info, cfg_vlan);
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(mrp->parent))
+		return;
+#endif
 
 	last = skb_queue_empty(&mrp->vlanq);
 	while (!last) {
@@ -5546,6 +5551,11 @@ static void mrp_cfg_mac_work(struct work_struct *work)
 	struct sk_buff *skb;
 	struct mrp_info *mrp = container_of(work, struct mrp_info, cfg_mac);
 
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(mrp->parent))
+		return;
+#endif
+
 	last = skb_queue_empty(&mrp->macq);
 	while (!last) {
 		skb = skb_dequeue(&mrp->macq);
@@ -5592,6 +5602,11 @@ static void mrp_rx_proc(struct work_struct *work)
 	struct mrp_applicant **data;
 	struct mrp_applicant *app;
 	struct mrp_info *mrp = container_of(work, struct mrp_info, rx_proc);
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(mrp->parent))
+		return;
+#endif
 
 	last = skb_queue_empty(&mrp->rxq);
 	while (!last) {
@@ -5725,6 +5740,11 @@ static void proc_mrp_work(struct work_struct *work)
 	struct mrp_info *mrp =
 		container_of(info, struct mrp_info, hw_access);
 	struct mrp_work *cmd;
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(mrp->parent))
+		return;
+#endif
 
 	cmd = &info->works[info->head];
 	while (cmd->used) {
@@ -6054,8 +6074,8 @@ static int mrp_dev_req(struct mrp_info *mrp, char *arg)
 			result = proc_mrp_hw_access(mrp,
 				maincmd, subcmd, 0,
 				data, 0, &output, NULL, true);
+			fallthrough;
 
-		/* fall through */
 		case DEV_INFO_QUIT:
 			break;
 		default:
@@ -8369,8 +8389,8 @@ static int sysfs_mrp_port_write(struct ksz_sw *sw, int proc_num, uint n,
 			num = (info->speed * 1000) - 1;
 		num *= 100;
 		num /= info->speed;
+		fallthrough;
 
-	/* fallthrough */
 	case PROC_SET_TC_ADMIN_IDLE_SLOPE:
 		if (num >= 0 && num < 100000) {
 			mrp_set_slope(mrp, port, index, info, num);
@@ -8643,6 +8663,13 @@ static void mrp_exit(struct mrp_info *mrp)
 	bool last;
 	struct sk_buff *skb;
 
+#ifdef CONFIG_KSZ_MSRP
+	flush_work(&mrp->cfg_mac);
+#endif
+#ifdef CONFIG_KSZ_MRP
+	flush_work(&mrp->cfg_vlan);
+	flush_work(&mrp->rx_proc);
+#endif
 	last = skb_queue_empty(&mrp->rxq);
 	while (!last) {
 		skb = skb_dequeue(&mrp->rxq);

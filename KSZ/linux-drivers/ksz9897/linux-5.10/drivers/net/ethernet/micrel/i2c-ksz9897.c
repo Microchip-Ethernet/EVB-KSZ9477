@@ -107,8 +107,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Apr 23, 2023"
-#define SW_DRV_VERSION			"1.2.7"
+#define SW_DRV_RELDATE			"Nov 17, 2023"
+#define SW_DRV_VERSION			"1.2.8"
 
 /* -------------------------------------------------------------------------- */
 
@@ -564,6 +564,8 @@ static const struct of_device_id ksz9897_dt_ids[] = {
 	{ .compatible = "microchip,ksz8565" },
 	{ .compatible = "microchip,ksz9893" },
 	{ .compatible = "microchip,ksz9563" },
+	{ .compatible = "microchip,ksz8563" },
+	{ .compatible = "microchip,lan9646" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, ksz9897_dt_ids);
@@ -629,11 +631,7 @@ static int __init ksz9897_init(void)
 	return ret;
 }
 
-static void
-#ifndef CONFIG_KSZ_SWITCH_EMBEDDED
-__exit
-#endif
-ksz9897_exit(void)
+static void __exit ksz9897_exit(void)
 {
 	i2c_del_driver(&ksz9897_driver);
 #ifdef DEBUG_MSG

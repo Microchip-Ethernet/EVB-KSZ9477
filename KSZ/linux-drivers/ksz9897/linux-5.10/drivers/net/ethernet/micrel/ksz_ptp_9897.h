@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common header
  *
- * Copyright (c) 2015-2022 Microchip Technology Inc.
+ * Copyright (c) 2015-2023 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -682,6 +682,38 @@ struct ptp_msg_info {
 	struct ptp_msg_info *next;
 };
 
+#define MMEDIAN_LEN  10
+
+struct mmedian_data {
+	s64 delays;
+	int order;
+};
+
+struct mmedian {
+	struct mmedian_data data[MMEDIAN_LEN];
+	int index;
+	int cnt;
+	int len;
+};
+
+struct ptp_filter {
+	struct mmedian median;
+	u8 delay_valid;
+	s64 delay;
+};
+
+struct ptp_peer_delay_ts {
+	struct ptp_filter filter;
+	s64 corr;
+	s64 t1;
+	s64 t2;
+	s64 t3;
+	s64 t4;
+	u16 fup_seqid;
+	u16 req_seqid;
+	u16 resp_seqid;
+};
+
 struct ptp_info;
 
 struct ptp_work {
@@ -876,6 +908,7 @@ struct ptp_info {
 	u16 tx_latency[MAX_PTP_PORT][3];
 	short asym_delay[MAX_PTP_PORT][3];
 	u32 peer_delay[MAX_PTP_PORT];
+	struct ptp_peer_delay_ts peer_delay_info[MAX_PTP_PORT];
 
 	spinlock_t rx_msg_lock;
 	spinlock_t tx_msg_lock;
@@ -892,6 +925,7 @@ struct ptp_info {
 	int tx_msg_parsed;
 	u32 tx_ports;
 	int cap;
+	int def_forward;
 	int forward;
 	int op_mode;
 	int op_state;
@@ -977,6 +1011,15 @@ struct ptp_info {
 	uint features;
 	uint overrides;
 
+	u32 need_sync_tx_ts:1;
+	u32 need_resp_tx_ts:1;
+	u32 need_1_step_resp_help:1;
+	u32 need_2_step_resp_help:1;
+	u32 need_1_step_clock_oper:1;
+	u32 need_peer_delay_set_help:1;
+	u32 have_first_drift_set:1;
+	u32 use_own_api:1;
+
 	u32 clk_add:1;
 	u32 clk_change:1;
 	u32 cascade:1;
@@ -985,6 +1028,8 @@ struct ptp_info {
 
 	struct work_struct adj_clk;
 	struct work_struct set_latency;
+	struct work_struct set_p2p;
+	struct work_struct set_peer_delay;
 
 	const struct ptp_ops *ops;
 	const struct ptp_reg_ops *reg;

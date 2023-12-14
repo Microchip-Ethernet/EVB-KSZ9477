@@ -37,6 +37,7 @@ config HAVE_KSZ9897
 
 config I2C_KSZ9897
 	tristate "I2C driver for Microchip KSZ9897 switch"
+	depends on I2C
 	select KSZ_SWITCH
 	select HAVE_KSZ9897
 	---help---
@@ -44,6 +45,7 @@ config I2C_KSZ9897
 
 config SPI_KSZ9897
 	tristate "SPI driver for Microchip KSZ9897 switch"
+	depends on SPI
 	select KSZ_SWITCH
 	select HAVE_KSZ9897
 	---help---

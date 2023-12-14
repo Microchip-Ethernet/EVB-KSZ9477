@@ -374,14 +374,11 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	int forward = 0;
 	int tag = 0;
 	void *ptr = NULL;
-	void (*rx_tstamp)(void *ptr, struct sk_buff *skb) = NULL;
 #endif
 #ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp = &sw->ptp_hw;
 	int ptp_tag = 0;
 #endif
-	struct net_device *parent_dev = NULL;
-	struct sk_buff *parent_skb = NULL;
 
 	dev = sw->net_ops->rx_dev(sw, data, &len, &tag, &rx_port);
 	if (!dev) {
@@ -428,8 +425,6 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 			dev_kfree_skb_any(skb);
 			return NULL;
 		}
-		if (ptp_tag)
-			rx_tstamp = ptp->ops->get_rx_tstamp;
 	}
 #endif
 
@@ -445,16 +440,14 @@ static struct net_device *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
 	/* No VLAN port forwarding; need to send to parent. */
 	if ((forward & FWD_VLAN_DEV) && !tag)
 		forward &= ~FWD_VLAN_DEV;
-	dev = sw->net_ops->parent_rx(sw, dev, skb, &forward, &parent_dev,
-		&parent_skb);
+	dev = sw->net_ops->parent_rx(sw, dev, &forward);
 
 	/* dev may change. */
 	if (dev != skb->dev) {
 		skb->dev = dev;
 	}
 
-	sw->net_ops->port_vlan_rx(sw, dev, parent_dev, skb,
-		forward, tag, ptr, rx_tstamp);
+	sw->net_ops->port_vlan_rx(skb, forward, tag);
 #endif
 	return dev;
 }  /* sw_rx_proc */
@@ -807,14 +800,14 @@ fec_enet_txq_submit_frag_skb(struct fec_enet_priv_tx_q *txq,
 		/* Handle the last BD specially */
 		if (frag == nr_frags - 1) {
 			status |= (BD_ENET_TX_INTR | BD_ENET_TX_LAST);
-#ifndef CONFIG_1588_PTP
 			if (fep->bufdesc_ex) {
 				estatus |= BD_ENET_TX_INT;
+#ifndef CONFIG_1588_PTP
 				if (unlikely(skb_shinfo(skb)->tx_flags &
 					SKBTX_HW_TSTAMP && fep->hwts_tx_en))
 					estatus |= BD_ENET_TX_TS;
-			}
 #endif
+			}
 		}
 
 		if (fep->bufdesc_ex) {
@@ -973,14 +966,14 @@ static int fec_enet_txq_submit_skb(struct fec_enet_priv_tx_q *txq,
 		}
 	} else {
 		status |= (BD_ENET_TX_INTR | BD_ENET_TX_LAST);
-#ifndef CONFIG_1588_PTP
 		if (fep->bufdesc_ex) {
 			estatus = BD_ENET_TX_INT;
+#ifndef CONFIG_1588_PTP
 			if (unlikely(skb_shinfo(skb)->tx_flags &
 				SKBTX_HW_TSTAMP && fep->hwts_tx_en))
 				estatus |= BD_ENET_TX_TS;
-		}
 #endif
+		}
 	}
 	bdp->cbd_bufaddr = cpu_to_fec32(addr);
 	bdp->cbd_datlen = cpu_to_fec16(buflen);
@@ -1088,10 +1081,8 @@ fec_enet_txq_put_data_tso(struct fec_enet_priv_tx_q *txq, struct sk_buff *skb,
 		status |= (BD_ENET_TX_LAST | BD_ENET_TX_TC);
 	if (is_last) {
 		status |= BD_ENET_TX_INTR;
-#ifndef CONFIG_1588_PTP
 		if (fep->bufdesc_ex)
 			ebdp->cbd_esc |= cpu_to_fec32(BD_ENET_TX_INT);
-#endif
 	}
 
 	bdp->cbd_sc = cpu_to_fec16(status);
@@ -1930,8 +1921,8 @@ fec_enet_rx_queue(struct net_device *ndev, int budget, u16 queue_id)
 	bool	need_swap = fep->quirks & FEC_QUIRK_SWAP_FRAME;
 
 #ifdef CONFIG_KSZ_SWITCH
-	struct ksz_sw *sw = fep->port.sw;
 	struct net_device *orig_dev = ndev;
+	struct ksz_sw *sw = fep->port.sw;
 #endif
 
 #ifdef CONFIG_M532x
@@ -3369,9 +3360,15 @@ static int fec_enet_ioctl(struct net_device *ndev, struct ifreq *rq, int cmd)
 			u16 ports;
 
 			ports = 0;
-			for (i = 0, p = fep->port.first_port;
-			     i < fep->port.port_cnt; i++, p++)
-				ports |= (1 << p);
+			if (fep->port.port_cnt > 1) {
+				p = fep->port.first_port + fep->port.port_cnt -
+					1;
+				ports = (1 << p);
+			} else {
+				for (i = 0, p = fep->port.first_port - 1;
+				     i < fep->port.port_cnt; i++, p++)
+					ports |= (1 << p);
+			}
 			ptp = &sw->ptp_hw;
 			result = ptp->ops->hwtstamp_ioctl(ptp, rq, ports);
 		}
@@ -3591,12 +3588,10 @@ fec_enet_alloc_txq_buffers(struct net_device *ndev, unsigned int queue)
 		bdp->cbd_sc = cpu_to_fec16(0);
 		bdp->cbd_bufaddr = cpu_to_fec32(0);
 
-#ifndef CONFIG_1588_PTP
 		if (fep->bufdesc_ex) {
 			struct bufdesc_ex *ebdp = (struct bufdesc_ex *)bdp;
 			ebdp->cbd_esc = cpu_to_fec32(BD_ENET_TX_INT);
 		}
-#endif
 
 		bdp = fec_enet_get_nextdesc(bdp, &txq->bd);
 	}
@@ -3674,7 +3669,7 @@ static void hw_set_promisc(struct fec_enet_private *fep, int promisc)
 
 static void dev_set_multicast(struct fec_enet_private *fep, int multicast)
 {
-	if (multicast != fep->multi) {
+	if ((!multicast && fep->multi) || (multicast && !fep->multi)) {
 		struct fec_enet_private *hfep = fep->hw_priv;
 		u8 hw_multi = hfep->hw_multi;
 
@@ -3817,6 +3812,7 @@ static int fec_enet_sw_init(struct fec_enet_private *fep)
 #endif
 	prep_sw_dev(sw, fep, 0, port_count, mib_port_count, dev_label);
 
+#if !defined(CONFIG_KSZ_IBA_ONLY)
 	/* Only the main one needs to set adjust_link for configuration. */
 	if (fep->netdev->phydev->mdio.bus &&
 	    !fep->netdev->phydev->adjust_link) {
@@ -3826,6 +3822,7 @@ static int fec_enet_sw_init(struct fec_enet_private *fep)
 		fep->speed = 0;
 		fep->full_duplex = 0;
 	}
+#endif
 
 	INIT_DELAYED_WORK(&hw_priv->promisc_reset, promisc_reset_work);
 
@@ -4047,7 +4044,7 @@ static void fec_enet_sw_exit(struct fec_enet_private *fep)
 		if (!dev)
 			continue;
 		fep = netdev_priv(dev);
-		flush_work(&fep->port.link_update);
+		cancel_delayed_work_sync(&fep->port.link_update);
 		unregister_netdev(dev);
 		if (dev->phydev->mdio.bus)
 			phy_detach(dev->phydev);
@@ -5135,7 +5132,7 @@ fec_drv_sw_remove(struct net_device *ndev, struct fec_enet_private *fep)
 	}
 #endif
 	if (do_exit) {
-		flush_work(&fep->port.link_update);
+		cancel_delayed_work_sync(&fep->port.link_update);
 		fec_enet_sw_exit(fep);
 	}
 #ifdef CONFIG_KSZ_SMI

@@ -57,7 +57,7 @@
 			};
 
 			spi0: spi@f0004000 {
-				cs-gpios = <&pioD 13 0>, <0>, <0>, <&pioD 16 0>;
+				cs-gpios = <&pioD 13 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioD 16 GPIO_ACTIVE_LOW>;
 				status = "okay";
 				id = <0>;
 
@@ -90,6 +90,7 @@
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -98,7 +99,7 @@
 					compatible = "microchip,ksz9896";
 					reg = <0>;
 
-					spi-max-frequency = <32000000>;
+					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
 					interrupt-parent = <&pioB>;
@@ -135,6 +136,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -143,7 +145,7 @@
 					compatible = "microchip,ksz8565";
 					reg = <0>;
 
-					spi-max-frequency = <32000000>;
+					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
 					interrupt-parent = <&pioB>;
@@ -176,6 +178,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -184,7 +187,7 @@
 					compatible = "microchip,ksz8794";
 					reg = <0>;
 
-					spi-max-frequency = <30000000>;
+					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
 					status = "disabled";
@@ -211,6 +214,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -246,6 +250,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -277,6 +282,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -359,6 +365,7 @@
 				fixed-link {
 					speed = <1000>;
 					full-duplex;
+					pause;
 				};
 			};
 
@@ -392,7 +399,7 @@
 			};
 
 			spi1: spi@f8008000 {
-				cs-gpios = <&pioC 25 0>, <0>, <0>, <&pioC 28 0>;
+				cs-gpios = <&pioC 25 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioC 28 GPIO_ACTIVE_LOW>;
 				status = "okay";
 				id = <1>;
 
@@ -423,6 +430,7 @@
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -476,6 +484,7 @@
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -491,6 +500,7 @@
 				fixed-link {
 					speed = <100>;
 					full-duplex;
+					pause;
 				};
 			};
 
@@ -550,8 +560,8 @@
 		usb1: ohci@600000 {
 			num-ports = <3>;
 			atmel,vbus-gpio = <0
-					   &pioE 3 GPIO_ACTIVE_LOW
-					   &pioE 4 GPIO_ACTIVE_LOW
+					   &pioE 3 GPIO_ACTIVE_HIGH
+					   &pioE 4 GPIO_ACTIVE_HIGH
 					  >;
 			status = "okay";
 		};

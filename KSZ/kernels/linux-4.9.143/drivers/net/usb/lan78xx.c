@@ -63,6 +63,7 @@
 
 #define LAN78XX_USB_VENDOR_ID		(0x0424)
 #define LAN7800_USB_PRODUCT_ID		(0x7800)
+#define LAN7801_USB_PRODUCT_ID		(0x7801)
 #define LAN7850_USB_PRODUCT_ID		(0x7850)
 #define LAN78XX_EEPROM_MAGIC		(0x78A5)
 #define LAN78XX_OTP_MAGIC		(0x78F3)
@@ -297,6 +298,28 @@ struct statstage {
 	struct lan78xx_statstage64	curr_stat;
 };
 
+#ifdef CONFIG_KSZ_SWITCH
+
+/* It is expected that IBA_KSZ9897 is chosen for this MAC driver. */
+#if 0
+#ifndef CONFIG_HAVE_KSZ9897
+#define CONFIG_HAVE_KSZ9897
+#endif
+#ifndef CONFIG_KSZ_IBA
+#define CONFIG_KSZ_IBA
+#endif
+#ifndef CONFIG_IBA_KSZ9897
+#define CONFIG_IBA_KSZ9897
+#endif
+#ifndef CONFIG_KSZ_SWITCH_EMBEDDED
+#define CONFIG_KSZ_SWITCH_EMBEDDED
+#endif
+#endif
+
+#include <linux/platform_device.h>
+#include "../ethernet/micrel/ksz_mac_pre.c"
+#endif
+
 struct lan78xx_net {
 	struct net_device	*net;
 	struct usb_device	*udev;
@@ -352,7 +375,71 @@ struct lan78xx_net {
 
 	int			delta;
 	struct statstage	stats;
+	bool			off;
+
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_mac		sw_mac;
+#endif
 };
+
+#ifdef CONFIG_KSZ_SWITCH
+static struct ksz_mac *get_ksz_mac(void *ptr)
+{
+	struct lan78xx_net *dev = ptr;
+
+	return &dev->sw_mac;
+}
+
+static struct ksz_mac *get_netdev_priv(struct net_device *net)
+{
+	return get_ksz_mac(netdev_priv(net));
+}
+
+static void sw_reset_mac_mib(struct ksz_mac *priv)
+{
+	struct lan78xx_net *dev = priv->dev;
+
+	/* Need command to really clear hardware MIB counters. */
+	mutex_lock(&dev->stats.access_lock);
+	memset(&dev->stats.curr_stat, 0, sizeof(dev->stats.curr_stat));
+	mutex_unlock(&dev->stats.access_lock);
+}
+
+static void setup_ksz_mac(struct lan78xx_net *dev, struct net_device *net)
+{
+	dev->sw_mac.dev = dev;
+	dev->sw_mac.net = net;
+	dev->sw_mac.hw_priv = &dev->sw_mac;
+}
+
+static inline struct ksz_sw *get_sw(struct lan78xx_net *dev)
+{
+	return dev->sw_mac.port.sw;
+}
+
+static inline struct lan78xx_net *get_hw_dev(struct lan78xx_net *dev)
+{
+	return dev->sw_mac.hw_priv->dev;
+}
+
+static inline bool is_virt_dev(struct lan78xx_net *dev)
+{
+	struct ksz_mac *priv = get_ksz_mac(dev);
+
+	if (priv->hw_priv && priv != priv->hw_priv)
+		return true;
+	return false;
+}
+
+#ifndef CONFIG_KSZ_SWITCH_EMBEDDED
+#define USE_SPEED_LINK
+#define USE_MIB
+#endif
+
+#define KSZ_USE_MSGLEVEL
+#define KSZ_USE_IOCTL
+#include "../ethernet/micrel/ksz_mac.c"
+#endif
 
 /* use ethtool to change the level for any given device */
 static int msg_level = -1;
@@ -374,7 +461,7 @@ static int lan78xx_read_reg(struct lan78xx_net *dev, u32 index, u32 *data)
 	if (likely(ret >= 0)) {
 		le32_to_cpus(buf);
 		*data = *buf;
-	} else {
+	} else if (!dev->off) {
 		netdev_warn(dev->net,
 			    "Failed to read register index 0x%08x. ret = %d",
 			    index, ret);
@@ -400,7 +487,7 @@ static int lan78xx_write_reg(struct lan78xx_net *dev, u32 index, u32 data)
 			      USB_VENDOR_REQUEST_WRITE_REGISTER,
 			      USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
 			      0, index, buf, 4, USB_CTRL_SET_TIMEOUT);
-	if (unlikely(ret < 0)) {
+	if (unlikely(ret < 0) && !dev->off) {
 		netdev_warn(dev->net,
 			    "Failed to write register index 0x%08x. ret = %d",
 			    index, ret);
@@ -993,12 +1080,50 @@ static void lan78xx_deferred_multicast_write(struct work_struct *param)
 	ret = lan78xx_write_reg(dev, RFE_CTL, pdata->rfe_ctl);
 }
 
+#ifdef CONFIG_KSZ_SWITCH
+static void hw_set_multicast(void *hw_priv, int multicast)
+{
+	struct lan78xx_net *dev = hw_priv;
+	struct lan78xx_priv *pdata = (struct lan78xx_priv *)(dev->data[0]);
+
+	if (multicast) {
+		pdata->rfe_ctl |= RFE_CTL_MCAST_EN_;
+	} else {
+		if (!dev->sw_mac.hw_promisc)
+			pdata->rfe_ctl &= ~RFE_CTL_MCAST_EN_;
+	}
+
+	schedule_work(&pdata->set_multicast);
+}  /* hw_set_multicast */
+
+static void hw_set_promisc(void *hw_priv, int promisc)
+{
+	struct lan78xx_net *dev = hw_priv;
+	struct lan78xx_priv *pdata = (struct lan78xx_priv *)(dev->data[0]);
+
+	if (promisc) {
+		pdata->rfe_ctl |= RFE_CTL_MCAST_EN_ | RFE_CTL_UCAST_EN_;
+	} else {
+		pdata->rfe_ctl &= ~(RFE_CTL_MCAST_EN_ | RFE_CTL_UCAST_EN_);
+		if (dev->sw_mac.hw_multi)
+			pdata->rfe_ctl |= RFE_CTL_MCAST_EN_;
+	}
+
+	schedule_work(&pdata->set_multicast);
+}  /* hw_set_promisc */
+#endif
+
 static void lan78xx_set_multicast(struct net_device *netdev)
 {
 	struct lan78xx_net *dev = netdev_priv(netdev);
 	struct lan78xx_priv *pdata = (struct lan78xx_priv *)(dev->data[0]);
 	unsigned long flags;
 	int i;
+
+#ifdef CONFIG_KSZ_SWITCH
+	if (sw_set_rx_mode(netdev))
+		return;
+#endif
 
 	spin_lock_irqsave(&pdata->rfe_ctl_lock, flags);
 
@@ -1221,6 +1346,10 @@ static int lan78xx_ethtool_get_eeprom(struct net_device *netdev,
 {
 	struct lan78xx_net *dev = netdev_priv(netdev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	dev = get_hw_dev(dev);
+#endif
+
 	ee->magic = LAN78XX_EEPROM_MAGIC;
 
 	return lan78xx_read_raw_eeprom(dev, ee->offset, ee->len, data);
@@ -1230,6 +1359,10 @@ static int lan78xx_ethtool_set_eeprom(struct net_device *netdev,
 				      struct ethtool_eeprom *ee, u8 *data)
 {
 	struct lan78xx_net *dev = netdev_priv(netdev);
+
+#ifdef CONFIG_KSZ_SWITCH
+	dev = get_hw_dev(dev);
+#endif
 
 	/* Allow entire eeprom update only */
 	if ((ee->magic == LAN78XX_EEPROM_MAGIC) &&
@@ -1266,6 +1399,10 @@ static void lan78xx_get_stats(struct net_device *netdev,
 {
 	struct lan78xx_net *dev = netdev_priv(netdev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	dev = get_hw_dev(dev);
+#endif
+
 	lan78xx_update_stats(dev);
 
 	mutex_lock(&dev->stats.access_lock);
@@ -1280,6 +1417,17 @@ static void lan78xx_get_wol(struct net_device *netdev,
 	int ret;
 	u32 buf;
 	struct lan78xx_priv *pdata = (struct lan78xx_priv *)(dev->data[0]);
+
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	/* Not implemented yet. */
+	if (sw_is_switch(sw)) {
+		wol->supported = 0;
+		wol->wolopts = 0;
+		return;
+	}
+#endif
 
 	if (usb_autopm_get_interface(dev->intf) < 0)
 			return;
@@ -1308,6 +1456,15 @@ static int lan78xx_set_wol(struct net_device *netdev,
 	struct lan78xx_priv *pdata = (struct lan78xx_priv *)(dev->data[0]);
 	int ret;
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	/* Not implemented yet. */
+	if (sw_is_switch(sw)) {
+		return 0;
+	}
+#endif
+
 	ret = usb_autopm_get_interface(dev->intf);
 	if (ret < 0)
 		return ret;
@@ -1332,6 +1489,18 @@ static int lan78xx_get_eee(struct net_device *net, struct ethtool_eee *edata)
 	struct phy_device *phydev = net->phydev;
 	int ret;
 	u32 buf;
+
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		edata->eee_enabled = false;
+		edata->eee_active = false;
+		edata->tx_lpi_enabled = false;
+		edata->tx_lpi_timer = 0;
+		return 0;
+	}
+#endif
 
 	ret = usb_autopm_get_interface(dev->intf);
 	if (ret < 0)
@@ -1370,6 +1539,14 @@ static int lan78xx_set_eee(struct net_device *net, struct ethtool_eee *edata)
 	int ret;
 	u32 buf;
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		return 0;
+	}
+#endif
+
 	ret = usb_autopm_get_interface(dev->intf);
 	if (ret < 0)
 		return ret;
@@ -1396,6 +1573,14 @@ static int lan78xx_set_eee(struct net_device *net, struct ethtool_eee *edata)
 
 static u32 lan78xx_get_link(struct net_device *net)
 {
+#ifdef CONFIG_KSZ_SWITCH
+	struct lan78xx_net *dev = netdev_priv(net);
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		return netif_carrier_ok(net);
+	}
+#endif
 	phy_read_status(net->phydev);
 
 	return net->phydev->link;
@@ -1403,6 +1588,14 @@ static u32 lan78xx_get_link(struct net_device *net)
 
 static int lan78xx_nway_reset(struct net_device *net)
 {
+#ifdef CONFIG_KSZ_SWITCH
+	struct lan78xx_net *dev = netdev_priv(net);
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		return 0;
+	}
+#endif
 	return phy_start_aneg(net->phydev);
 }
 
@@ -1420,6 +1613,13 @@ static u32 lan78xx_get_msglevel(struct net_device *net)
 {
 	struct lan78xx_net *dev = netdev_priv(net);
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		dev->msg_enable = dev->sw_mac.msg_enable;
+	}
+#endif
 	return dev->msg_enable;
 }
 
@@ -1427,6 +1627,9 @@ static void lan78xx_set_msglevel(struct net_device *net, u32 level)
 {
 	struct lan78xx_net *dev = netdev_priv(net);
 
+#ifdef CONFIG_KSZ_SWITCH
+	sw_set_msglevel(net, &dev->sw_mac, level);
+#endif
 	dev->msg_enable = level;
 }
 
@@ -1486,6 +1689,15 @@ static int lan78xx_get_settings(struct net_device *net, struct ethtool_cmd *cmd)
 	int ret;
 	int buf;
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		ret = phy_ethtool_gset(phydev, cmd);
+		return ret;
+	}
+#endif
+
 	ret = usb_autopm_get_interface(dev->intf);
 	if (ret < 0)
 		return ret;
@@ -1518,6 +1730,15 @@ static int lan78xx_set_settings(struct net_device *net, struct ethtool_cmd *cmd)
 	int ret = 0;
 	int temp;
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		ret = phy_ethtool_sset(phydev, cmd);
+		return ret;
+	}
+#endif
+
 	ret = usb_autopm_get_interface(dev->intf);
 	if (ret < 0)
 		return ret;
@@ -1549,6 +1770,15 @@ static void lan78xx_get_pause(struct net_device *net,
 	struct phy_device *phydev = net->phydev;
 	struct ethtool_cmd ecmd = { .cmd = ETHTOOL_GSET };
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		phy_ethtool_gset(phydev, &ecmd);
+		return;
+	}
+#endif
+
 	phy_ethtool_gset(phydev, &ecmd);
 
 	pause->autoneg = dev->fc_autoneg;
@@ -1567,6 +1797,15 @@ static int lan78xx_set_pause(struct net_device *net,
 	struct phy_device *phydev = net->phydev;
 	struct ethtool_cmd ecmd = { .cmd = ETHTOOL_GSET };
 	int ret;
+
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw)) {
+		ret = phy_ethtool_gset(phydev, &ecmd);
+		return ret;
+	}
+#endif
 
 	phy_ethtool_gset(phydev, &ecmd);
 
@@ -1622,6 +1861,14 @@ static const struct ethtool_ops lan78xx_ethtool_ops = {
 
 static int lan78xx_ioctl(struct net_device *netdev, struct ifreq *rq, int cmd)
 {
+#ifdef CONFIG_KSZ_SWITCH
+	int result;
+
+	result = sw_ioctl(netdev, rq, cmd);
+	if (result != -EOPNOTSUPP)
+		return result;
+#endif
+
 	if (!netif_running(netdev))
 		return -EINVAL;
 
@@ -1773,6 +2020,9 @@ static int lan78xx_mdio_init(struct lan78xx_net *dev)
 		/* set to internal PHY id */
 		dev->mdiobus->phy_mask = ~(1 << 1);
 		break;
+	case ID_REV_CHIP_ID_7801_:
+		dev->mdiobus->phy_mask = ~((1 << 1) - 1);
+		break;
 	}
 
 	ret = mdiobus_register(dev->mdiobus);
@@ -1798,6 +2048,13 @@ static void lan78xx_link_status_change(struct net_device *net)
 {
 	struct phy_device *phydev = net->phydev;
 	int ret, temp;
+
+#ifdef CONFIG_KSZ_SWITCH
+	struct lan78xx_net *dev = netdev_priv(net);
+
+	if (phydev->link)
+		dev->sw_mac.ready = true;
+#endif
 
 	/* At forced 100 F/H mode, chip may fail to set mode correctly
 	 * when cable is switched between long(~50+m) and short one.
@@ -1826,11 +2083,32 @@ static void lan78xx_link_status_change(struct net_device *net)
 	}
 }
 
+static struct fixed_phy_status fphy_status = {
+	.link = 1,
+	.speed = SPEED_1000,
+	.duplex = DUPLEX_FULL,
+	.pause = 1,
+};
+
 static int lan78xx_phy_init(struct lan78xx_net *dev)
 {
 	int ret;
 	u32 mii_adv;
 	struct phy_device *phydev = dev->net->phydev;
+
+	if (dev->chipid == ID_REV_CHIP_ID_7801_) {
+#ifdef CONFIG_KSZ_SWITCH
+		phydev = dev->sw_mac.saved_phy;
+#endif
+		if (phydev)
+			goto phyinit;
+		phydev = fixed_phy_register(PHY_POLL, &fphy_status, 0, NULL);
+#ifdef CONFIG_KSZ_SWITCH
+		dev->sw_mac.saved_phy = phydev;
+#endif
+		if (phydev)
+			goto phyinit;
+	}
 
 	phydev = phy_find_first(dev->mdiobus);
 	if (!phydev) {
@@ -1848,6 +2126,7 @@ static int lan78xx_phy_init(struct lan78xx_net *dev)
 
 	phydev->irq = PHY_IGNORE_INTERRUPT;
 
+phyinit:
 	ret = phy_connect_direct(dev->net, phydev,
 				 lan78xx_link_status_change,
 				 PHY_INTERFACE_MODE_GMII);
@@ -1971,11 +2250,24 @@ static int lan78xx_change_mtu(struct net_device *netdev, int new_mtu)
 	if ((ll_mtu % dev->maxpacket) == 0)
 		return -EDOM;
 
+#ifdef CONFIG_KSZ_SWITCH
+	do {
+		int mtu = new_mtu + ETH_HLEN;
+
+		mtu += sw_extra_mtu;
+		ret = lan78xx_set_rx_max_frame_length(dev, mtu);
+	} while (0);
+#else
 	ret = lan78xx_set_rx_max_frame_length(dev, new_mtu + ETH_HLEN);
+#endif
 
 	netdev->mtu = new_mtu;
 
 	dev->hard_mtu = netdev->mtu + netdev->hard_header_len;
+
+#ifdef CONFIG_KSZ_SWITCH
+	dev->hard_mtu += sw_extra_mtu;
+#endif
 	if (dev->rx_urb_size == old_hard_mtu) {
 		dev->rx_urb_size = dev->hard_mtu;
 		if (dev->rx_urb_size > old_rx_urb_size) {
@@ -2004,6 +2296,11 @@ static int lan78xx_set_mac_addr(struct net_device *netdev, void *p)
 
 	ether_addr_copy(netdev->dev_addr, addr->sa_data);
 
+#ifdef CONFIG_KSZ_SWITCH
+	if (sw_mac_set_addr(netdev, &dev->sw_mac))
+		return 0;
+#endif
+
 	addr_lo = netdev->dev_addr[0] |
 		  netdev->dev_addr[1] << 8 |
 		  netdev->dev_addr[2] << 16 |
@@ -2025,6 +2322,11 @@ static int lan78xx_set_features(struct net_device *netdev,
 	struct lan78xx_priv *pdata = (struct lan78xx_priv *)(dev->data[0]);
 	unsigned long flags;
 	int ret;
+
+#ifdef CONFIG_KSZ_SWITCH
+	if (is_virt_dev(dev))
+		return 0;
+#endif
 
 	spin_lock_irqsave(&pdata->rfe_ctl_lock, flags);
 
@@ -2066,6 +2368,15 @@ static int lan78xx_vlan_rx_add_vid(struct net_device *netdev,
 	u16 vid_bit_index;
 	u16 vid_dword_index;
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (is_virt_dev(dev))
+		return 0;
+	if (sw_is_switch(sw))
+		sw->net_ops->add_vid(sw, vid);
+#endif
+
 	vid_dword_index = (vid >> 5) & 0x7F;
 	vid_bit_index = vid & 0x1F;
 
@@ -2084,6 +2395,18 @@ static int lan78xx_vlan_rx_kill_vid(struct net_device *netdev,
 	struct lan78xx_priv *pdata = (struct lan78xx_priv *)(dev->data[0]);
 	u16 vid_bit_index;
 	u16 vid_dword_index;
+
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (is_virt_dev(dev))
+		return 0;
+	if (sw_is_switch(sw))
+		sw->net_ops->kill_vid(sw, vid);
+#endif
+	/* Driver is being removed. */
+	if (!pdata)
+		return 0;
 
 	vid_dword_index = (vid >> 5) & 0x7F;
 	vid_bit_index = vid & 0x1F;
@@ -2172,8 +2495,11 @@ static int lan78xx_reset(struct lan78xx_net *dev)
 	/* Init LTM */
 	lan78xx_init_ltm(dev);
 
-	dev->net->hard_header_len += TX_OVERHEAD;
 	dev->hard_mtu = dev->net->mtu + dev->net->hard_header_len;
+
+#ifdef CONFIG_KSZ_SWITCH
+	dev->hard_mtu += sw_extra_mtu;
+#endif
 
 	if (dev->udev->speed == USB_SPEED_SUPER) {
 		buf = DEFAULT_BURST_CAP_SIZE / SS_USB_PKT_SIZE;
@@ -2198,6 +2524,16 @@ static int lan78xx_reset(struct lan78xx_net *dev)
 	ret = lan78xx_read_reg(dev, HW_CFG, &buf);
 	buf |= HW_CFG_MEF_;
 	ret = lan78xx_write_reg(dev, HW_CFG, buf);
+
+	if (dev->chipid == ID_REV_CHIP_ID_7801_) {
+		ret = lan78xx_write_reg(dev, MAC_RGMII_ID,
+					MAC_RGMII_ID_TXC_DELAY_EN_);
+		ret = lan78xx_write_reg(dev, RGMII_TX_BYP_DLL, 0x3D00);
+		ret = lan78xx_read_reg(dev, HW_CFG, &buf);
+		buf |= HW_CFG_CLK125_EN_;
+		buf |= HW_CFG_REFCLK25_EN_;
+		ret = lan78xx_write_reg(dev, HW_CFG, buf);
+	}
 
 	ret = lan78xx_read_reg(dev, USB_CFG0, &buf);
 	buf |= USB_CFG_BCE_;
@@ -2224,6 +2560,10 @@ static int lan78xx_reset(struct lan78xx_net *dev)
 
 	lan78xx_set_multicast(dev->net);
 
+#ifdef CONFIG_KSZ_SWITCH
+	/* This resets the KSZ9897 switch. */
+#endif
+
 	/* reset PHY */
 	ret = lan78xx_read_reg(dev, PMT_CTL, &buf);
 	buf |= PMT_CTL_PHY_RST_;
@@ -2240,6 +2580,10 @@ static int lan78xx_reset(struct lan78xx_net *dev)
 	} while ((buf & PMT_CTL_PHY_RST_) || !(buf & PMT_CTL_READY_));
 
 	ret = lan78xx_read_reg(dev, MAC_CR, &buf);
+
+	if (dev->chipid == ID_REV_CHIP_ID_7801_)
+		buf &= ~MAC_CR_GMII_EN_;
+
 	buf |= MAC_CR_AUTO_DUPLEX_ | MAC_CR_AUTO_SPEED_;
 	ret = lan78xx_write_reg(dev, MAC_CR, buf);
 
@@ -2256,7 +2600,16 @@ static int lan78xx_reset(struct lan78xx_net *dev)
 	buf |= FCT_TX_CTL_EN_;
 	ret = lan78xx_write_reg(dev, FCT_TX_CTL, buf);
 
+#ifdef CONFIG_KSZ_SWITCH
+	do {
+		int mtu = dev->net->mtu + ETH_HLEN;
+
+		mtu += sw_extra_mtu;
+		ret = lan78xx_set_rx_max_frame_length(dev, mtu);
+	} while (0);
+#else
 	ret = lan78xx_set_rx_max_frame_length(dev, dev->net->mtu + ETH_HLEN);
+#endif
 
 	ret = lan78xx_read_reg(dev, MAC_RX, &buf);
 	buf |= MAC_RX_RXEN_;
@@ -2300,6 +2653,19 @@ static int lan78xx_open(struct net_device *net)
 	struct lan78xx_net *dev = netdev_priv(net);
 	int ret;
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_mac *priv = &dev->sw_mac;
+	struct ksz_sw *sw = priv->port.sw;
+	int rx_mode = 0;
+
+	if (sw_mac_open_first(net, priv, &rx_mode)) {
+		netif_start_queue(net);
+		ret = 0;
+		goto skip_hw;
+	}
+	dev = get_hw_dev(dev);
+#endif
+
 	ret = usb_autopm_get_interface(dev->intf);
 	if (ret < 0)
 		goto out;
@@ -2328,7 +2694,27 @@ static int lan78xx_open(struct net_device *net)
 
 	netif_start_queue(net);
 
+#ifdef CONFIG_KSZ_SWITCH
+	if (sw_is_switch(sw)) {
+		sw_mac_open_next(sw, priv->hw_priv, rx_mode);
+
+skip_hw:
+		if (sw_mac_open_final(sw, net, priv->hw_priv, priv))
+			return 0;
+	}
+#endif
+
 	dev->link_on = false;
+
+#ifdef CONFIG_KSZ_SWITCH
+#ifdef CONFIG_KSZ_IBA_ONLY
+	if (!sw_is_switch(sw))
+		create_sw_dev(net, &dev->sw_mac);
+#endif
+	/* Switch not connected. */
+	if (!dev->sw_mac.port.sw)
+#endif
+	netif_carrier_on(net);
 
 	lan78xx_defer_kevent(dev, EVENT_LINK_RESET);
 done:
@@ -2367,6 +2753,31 @@ static void lan78xx_terminate_urbs(struct lan78xx_net *dev)
 static int lan78xx_stop(struct net_device *net)
 {
 	struct lan78xx_net		*dev = netdev_priv(net);
+
+#ifdef CONFIG_KSZ_SWITCH
+	iba = 0;
+
+#ifdef CONFIG_KSZ_IBA
+	iba = IBA_USE_CODE_HARD_RESET;
+#endif
+	if (sw_mac_close(net, &dev->sw_mac, iba)) {
+		bool stop_queue = true;
+
+		/* Do not shut off queue for main device. */
+#ifdef CONFIG_KSZ_IBA_ONLY
+		do {
+			struct ksz_mac *hw_priv = dev->sw_mac.hw_priv;
+
+			if (hw_priv->net == net)
+				stop_queue = false;
+		} while (0);
+#endif
+		if (stop_queue)
+			netif_stop_queue(net);
+		return 0;
+	}
+	dev = get_hw_dev(dev);
+#endif
 
 	if (timer_pending(&dev->stat_monitor))
 		del_timer_sync(&dev->stat_monitor);
@@ -2480,8 +2891,16 @@ static void tx_complete(struct urb *urb)
 	struct lan78xx_net *dev = entry->dev;
 
 	if (urb->status == 0) {
+#ifdef CONFIG_KSZ_SWITCH
+		struct net_device *net = skb->dev;
+
+		/* Use original network device. */
+		net->stats.tx_packets += entry->num_of_packet;
+		net->stats.tx_bytes += entry->length;
+#else
 		dev->net->stats.tx_packets += entry->num_of_packet;
 		dev->net->stats.tx_bytes += entry->length;
+#endif
 	} else {
 		dev->net->stats.tx_errors++;
 
@@ -2499,6 +2918,14 @@ static void tx_complete(struct urb *urb)
 		case -ETIME:
 		case -EILSEQ:
 			netif_stop_queue(dev->net);
+
+#ifdef CONFIG_KSZ_SWITCH
+			do {
+				struct ksz_sw *sw = get_sw(dev);
+
+				stop_dev_queues(sw, dev->net);
+			} while (0);
+#endif
 			break;
 		default:
 			netif_dbg(dev, tx_err, dev->net,
@@ -2527,6 +2954,24 @@ lan78xx_start_xmit(struct sk_buff *skb, struct net_device *net)
 	struct lan78xx_net *dev = netdev_priv(net);
 	struct sk_buff *skb2 = NULL;
 
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_mac *priv = get_ksz_mac(dev);
+	struct lan78xx_net *ndev = dev;
+	unsigned long flags;
+
+	/* May be called from switch driver. */
+	if (netif_queue_stopped(net))
+		return NETDEV_TX_BUSY;
+	skb = sw_mac_tx_pre(skb, priv, 1);
+	skb = sw_mac_tx(net, skb, priv);
+	if (!skb) {
+		return NETDEV_TX_OK;
+	}
+
+	/* dev may change. */
+	dev = priv->hw_priv->dev;
+	spin_lock_irqsave(&priv->tx_lock, flags);
+#endif
 	if (skb) {
 		skb_tx_timestamp(skb);
 		skb2 = lan78xx_tx_prep(dev, skb, GFP_ATOMIC);
@@ -2539,12 +2984,32 @@ lan78xx_start_xmit(struct sk_buff *skb, struct net_device *net)
 		if ((dev->udev->speed < USB_SPEED_SUPER) &&
 		    (skb_queue_len(&dev->txq_pend) > 10))
 			netif_stop_queue(net);
+
+#ifdef CONFIG_KSZ_SWITCH
+		if (netif_queue_stopped(net)) {
+			struct ksz_sw *sw = get_sw(dev);
+
+			stop_dev_queues(sw, net);
+		}
+#endif
 	} else {
+#ifdef CONFIG_KSZ_SWITCH
+		struct lan78xx_net *saved = dev;
+
+		dev = ndev;
+#endif
 		netif_dbg(dev, tx_err, dev->net,
 			  "lan78xx_tx_prep return NULL\n");
 		dev->net->stats.tx_errors++;
 		dev->net->stats.tx_dropped++;
+#ifdef CONFIG_KSZ_SWITCH
+		dev = saved;
+#endif
 	}
+
+#ifdef CONFIG_KSZ_SWITCH
+	spin_unlock_irqrestore(&priv->tx_lock, flags);
+#endif
 
 	tasklet_schedule(&dev->bh);
 
@@ -2627,6 +3092,7 @@ static int lan78xx_bind(struct lan78xx_net *dev, struct usb_interface *intf)
 	}
 
 	pdata->dev = dev;
+	dev->off = false;
 
 	spin_lock_init(&pdata->rfe_ctl_lock);
 	mutex_init(&pdata->dataport_mutex);
@@ -2646,10 +3112,16 @@ static int lan78xx_bind(struct lan78xx_net *dev, struct usb_interface *intf)
 	if (DEFAULT_RX_CSUM_ENABLE)
 		dev->net->features |= NETIF_F_RXCSUM;
 
+#ifdef CONFIG_KSZ_SWITCH
+	dev->net->features |= NETIF_F_SG;
+#else
 	if (DEFAULT_TSO_CSUM_ENABLE)
 		dev->net->features |= NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_SG;
+#endif
 
 	dev->net->hw_features = dev->net->features;
+
+	dev->net->hard_header_len += TX_OVERHEAD;
 
 	/* Init all registers */
 	ret = lan78xx_reset(dev);
@@ -2681,6 +3153,15 @@ static void lan78xx_rx_csum_offload(struct lan78xx_net *dev,
 				    struct sk_buff *skb,
 				    u32 rx_cmd_a, u32 rx_cmd_b)
 {
+#ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(dev);
+
+	if (sw_is_switch(sw) && using_tail_tag(sw)) {
+		skb->ip_summed = CHECKSUM_NONE;
+		return;
+	}
+#endif
+
 	if (!(dev->net->features & NETIF_F_RXCSUM) ||
 	    unlikely(rx_cmd_a & RX_CMD_A_ICSM_)) {
 		skb->ip_summed = CHECKSUM_NONE;
@@ -2698,6 +3179,29 @@ static void lan78xx_skb_return(struct lan78xx_net *dev, struct sk_buff *skb)
 		skb_queue_tail(&dev->rxq_pause, skb);
 		return;
 	}
+
+#ifdef CONFIG_KSZ_SWITCH
+	do {
+		struct ksz_sw *sw = get_sw(dev);
+
+		if (sw_is_switch(sw)) {
+			struct lan78xx_net *priv;
+			int rxlen = 0;
+
+			priv = sw_rx_proc(sw, skb, &rxlen);
+			if (!priv) {
+				if (rxlen) {
+					dev->net->stats.rx_packets++;
+					dev->net->stats.rx_bytes += rxlen;
+				}
+				return;
+			}
+
+			/* Use private structure in network device. */
+			dev = priv;
+		}
+	} while (0);
+#endif
 
 	dev->net->stats.rx_packets++;
 	dev->net->stats.rx_bytes += skb->len;
@@ -2834,7 +3338,11 @@ static int rx_submit(struct lan78xx_net *dev, struct urb *urb, gfp_t flags)
 	spin_lock_irqsave(&dev->rxq.lock, lockflags);
 
 	if (netif_device_present(dev->net) &&
+#ifdef CONFIG_KSZ_SWITCH
+	    (netif_running(dev->net) || dev->sw_mac.opened) &&
+#else
 	    netif_running(dev->net) &&
+#endif
 	    !test_bit(EVENT_RX_HALT, &dev->flags) &&
 	    !test_bit(EVENT_DEV_ASLEEP, &dev->flags)) {
 		ret = usb_submit_urb(urb, GFP_ATOMIC);
@@ -2928,7 +3436,11 @@ static void rx_complete(struct urb *urb)
 	state = defer_bh(dev, skb, &dev->rxq, state);
 
 	if (urb) {
+#ifdef CONFIG_KSZ_SWITCH
+		if ((netif_running(dev->net) || dev->sw_mac.opened) &&
+#else
 		if (netif_running(dev->net) &&
+#endif
 		    !test_bit(EVENT_RX_HALT, &dev->flags) &&
 		    state != unlink_start) {
 			rx_submit(dev, urb, GFP_ATOMIC);
@@ -2986,6 +3498,10 @@ static void lan78xx_tx_bh(struct lan78xx_net *dev)
 	for (count = pos = 0; count < pkt_cnt; count++) {
 		skb2 = skb_dequeue(tqp);
 		if (skb2) {
+#ifdef CONFIG_KSZ_SWITCH
+			/* Set network device to keep track of transmit stat. */
+			skb->dev = skb2->dev;
+#endif
 			length += (skb2->len - TX_OVERHEAD);
 			memcpy(skb->data + pos, skb2->data, skb2->len);
 			pos += roundup(skb2->len, sizeof(u32));
@@ -3026,6 +3542,14 @@ gso_skb:
 		usb_anchor_urb(urb, &dev->deferred);
 		/* no use to process more packets */
 		netif_stop_queue(dev->net);
+
+#ifdef CONFIG_KSZ_SWITCH
+		do {
+			struct ksz_sw *sw = get_sw(dev);
+
+			stop_dev_queues(sw, dev->net);
+		} while (0);
+#endif
 		usb_put_urb(urb);
 		spin_unlock_irqrestore(&dev->txq.lock, flags);
 		netdev_dbg(dev->net, "Delaying transmission for resumption\n");
@@ -3040,9 +3564,25 @@ gso_skb:
 		lan78xx_queue_skb(&dev->txq, skb, tx_start);
 		if (skb_queue_len(&dev->txq) >= dev->tx_qlen)
 			netif_stop_queue(dev->net);
+
+#ifdef CONFIG_KSZ_SWITCH
+		if (netif_queue_stopped(dev->net)) {
+			struct ksz_sw *sw = get_sw(dev);
+
+			stop_dev_queues(sw, dev->net);
+		}
+#endif
 		break;
 	case -EPIPE:
 		netif_stop_queue(dev->net);
+
+#ifdef CONFIG_KSZ_SWITCH
+		do {
+			struct ksz_sw *sw = get_sw(dev);
+
+			stop_dev_queues(sw, dev->net);
+		} while (0);
+#endif
 		lan78xx_defer_kevent(dev, EVENT_TX_HALT);
 		usb_autopm_put_interface_async(dev->intf);
 		break;
@@ -3085,6 +3625,15 @@ static void lan78xx_rx_bh(struct lan78xx_net *dev)
 		if (skb_queue_len(&dev->rxq) < dev->rx_qlen)
 			tasklet_schedule(&dev->bh);
 	}
+
+#ifdef CONFIG_KSZ_SWITCH
+	if (skb_queue_len(&dev->txq) < dev->tx_qlen &&
+	    netif_queue_stopped(dev->net)) {
+		struct ksz_sw *sw = get_sw(dev);
+
+		wake_dev_queues(sw, dev->net);
+	}
+#endif
 	if (skb_queue_len(&dev->txq) < dev->tx_qlen)
 		netif_wake_queue(dev->net);
 }
@@ -3116,7 +3665,12 @@ static void lan78xx_bh(unsigned long param)
 		}
 	}
 
+#ifdef CONFIG_KSZ_SWITCH
+	if (netif_device_present(dev->net) &&
+	    (netif_running(dev->net) || dev->sw_mac.opened)) {
+#else
 	if (netif_device_present(dev->net) && netif_running(dev->net)) {
+#endif
 		/* reset update timer delta */
 		if (timer_pending(&dev->stat_monitor) && (dev->delta != 1)) {
 			dev->delta = 1;
@@ -3157,6 +3711,15 @@ fail_pipe:
 					   status);
 		} else {
 			clear_bit(EVENT_TX_HALT, &dev->flags);
+
+#ifdef CONFIG_KSZ_SWITCH
+			if (status != -ESHUTDOWN &&
+			    netif_queue_stopped(dev->net)) {
+				struct ksz_sw *sw = get_sw(dev);
+
+				wake_dev_queues(sw, dev->net);
+			}
+#endif
 			if (status != -ESHUTDOWN)
 				netif_wake_queue(dev->net);
 		}
@@ -3237,7 +3800,11 @@ static void intr_complete(struct urb *urb)
 		break;
 	}
 
+#ifdef CONFIG_KSZ_SWITCH
+	if (!netif_running(dev->net) && !dev->sw_mac.opened)
+#else
 	if (!netif_running(dev->net))
+#endif
 		return;
 
 	memset(urb->transfer_buffer, 0, urb->transfer_buffer_length);
@@ -3258,11 +3825,23 @@ static void lan78xx_disconnect(struct usb_interface *intf)
 	if (!dev)
 		return;
 
+	dev->off = true;
+
+#ifdef CONFIG_KSZ_SWITCH
+	sw_mac_remove(dev->net, &dev->sw_mac);
+#endif
+
 	udev = interface_to_usbdev(intf);
 
 	net = dev->net;
 	unregister_netdev(net);
 
+#ifdef CONFIG_KSZ_SWITCH
+	if (dev->sw_mac.saved_phy) {
+		fixed_phy_unregister(dev->sw_mac.saved_phy);
+		dev->sw_mac.saved_phy = NULL;
+	}
+#endif
 	cancel_delayed_work_sync(&dev->wq);
 
 	usb_scuttle_anchored_urbs(&dev->deferred);
@@ -3280,6 +3859,12 @@ static void lan78xx_tx_timeout(struct net_device *net)
 {
 	struct lan78xx_net *dev = netdev_priv(net);
 
+#ifdef CONFIG_KSZ_SWITCH
+	/* Something is wrong to reach this condition. */
+	if (is_virt_dev(dev)) {
+		return;
+	}
+#endif
 	unlink_urbs(dev, &dev->txq);
 	tasklet_schedule(&dev->bh);
 }
@@ -3307,6 +3892,131 @@ static void lan78xx_stat_monitor(unsigned long param)
 
 	lan78xx_defer_kevent(dev, EVENT_STAT_UPDATE);
 }
+
+#ifdef CONFIG_KSZ_SWITCH
+static int sw_mac_init(struct net_device *net, struct ksz_mac *priv)
+{
+	struct ksz_sw *sw;
+	int err;
+	int i;
+	int port_count;
+	int dev_count;
+	int mib_port_count;
+	char dev_label[IFNAMSIZ];
+	struct lan78xx_net *dev, *hw_dev;
+	struct ksz_mac *hw_priv;
+	struct net_device *main_net;
+	struct usb_interface *intf;
+	netdev_features_t features;
+
+	hw_dev = priv->dev;
+	sw = priv->port.sw;
+
+	/* This is the main private structure holding hardware information. */
+	hw_priv = priv;
+	hw_priv->net = net;
+	hw_priv->parent = sw->dev;
+	main_net = net;
+	intf = hw_dev->intf;
+
+	prep_sw_first(sw, &port_count, &mib_port_count, &dev_count, dev_label);
+	sw->msg_enable = hw_dev->msg_enable;
+
+	/* Hardware checksum cannot handle tail tag. */
+	if (dev_count > 1) {
+		main_net->features &= ~(NETIF_F_HW_CSUM | NETIF_F_RXCSUM);
+		main_net->hw_features = main_net->features;
+	}
+
+	features = main_net->features;
+
+	/* Save the base device name. */
+	strlcpy(dev_label, hw_priv->net->name, IFNAMSIZ);
+
+	spin_lock_init(&priv->tx_lock);
+	prep_sw_dev(sw, priv, 0, port_count, mib_port_count, dev_label,
+		    PHY_INTERFACE_MODE_RGMII_TXID);
+
+	INIT_DELAYED_WORK(&hw_priv->promisc_reset, promisc_reset_work);
+
+#ifdef CONFIG_KSZ_IBA_ONLY
+	INIT_WORK(&hw_priv->rmv_dev, rmv_dev_work);
+#endif
+
+	for (i = 1; i < dev_count; i++) {
+		net = alloc_etherdev(sizeof(struct lan78xx_net));
+		if (!net)
+			break;
+
+		dev = netdev_priv(net);
+		dev->intf = intf;
+		dev->net = net;
+		dev->msg_enable = hw_dev->msg_enable;
+
+		priv = &dev->sw_mac;
+		priv->hw_priv = hw_priv;
+		priv->dev = dev;
+		priv->net = net;
+
+		net->phydev = &priv->dummy_phy;
+		net->phydev->duplex = 1;
+		net->phydev->speed = SPEED_1000;
+		net->phydev->pause = 1;
+		net->phydev->autoneg = 1;
+		net->phydev->is_internal = true;
+
+		spin_lock_init(&priv->tx_lock);
+
+		net->netdev_ops = &lan78xx_netdev_ops;
+		net->watchdog_timeo = TX_TIMEOUT_JIFFIES;
+		net->ethtool_ops = &lan78xx_ethtool_ops;
+		memcpy(net->dev_addr, main_net->dev_addr, ETH_ALEN);
+
+		net->hard_header_len = main_net->hard_header_len;
+		net->hw_features = main_net->hw_features;
+		net->features = features;
+
+		SET_NETDEV_DEV(net, &intf->dev);
+
+		prep_sw_dev(sw, priv, i, port_count, mib_port_count, dev_label,
+			    PHY_INTERFACE_MODE_RGMII_TXID);
+		if (net->phydev->mdio.bus)
+			net->phydev->adjust_link = sw_adjust_link;
+		else
+			net->phydev->mdio.addr = priv->phy_addr;
+
+		err = register_netdev(net);
+		if (err) {
+			free_netdev(net);
+			break;
+		}
+
+		netif_carrier_off(net);
+	}
+
+#ifndef CONFIG_KSZ_IBA_ONLY
+	/*
+	 * Adding sysfs support is optional for network device.  It is more
+	 * convenient to locate eth0 more or less than spi<bus>.<select>,
+	 * especially when the bus number is auto assigned which results in a
+	 * very big number.
+	 */
+	err = init_sw_sysfs(sw, &hw_priv->sysfs, &main_net->dev);
+
+#ifdef CONFIG_1588_PTP
+	if (sw->features & PTP_HW)
+		err = init_ptp_sysfs(&hw_priv->ptp_sysfs, &main_net->dev);
+#endif
+#ifdef CONFIG_KSZ_DLR
+	if (sw->features & DLR_HW)
+		err = init_dlr_sysfs(&main_net->dev);
+#endif
+	sw_device_seen++;
+#endif
+
+	return 0;
+}
+#endif
 
 static int lan78xx_probe(struct usb_interface *intf,
 			 const struct usb_device_id *id)
@@ -3401,6 +4111,17 @@ static int lan78xx_probe(struct usb_interface *intf,
 	/* driver requires remote-wakeup capability during autosuspend. */
 	intf->needs_remote_wakeup = 1;
 
+#ifdef CONFIG_KSZ_SWITCH
+	/* Point to real private structure holding hardware information. */
+	setup_ksz_mac(dev, netdev);
+
+	sw_mac_init_pre();
+
+#ifndef CONFIG_KSZ_IBA_ONLY
+	ret = sw_mac_chk(&dev->sw_mac);
+#endif
+#endif
+
 	ret = register_netdev(netdev);
 	if (ret != 0) {
 		netif_err(dev, probe, netdev, "couldn't register the device\n");
@@ -3416,6 +4137,15 @@ static int lan78xx_probe(struct usb_interface *intf,
 	  */
 	pm_runtime_set_autosuspend_delay(&udev->dev,
 					 DEFAULT_AUTOSUSPEND_DELAY);
+
+#ifdef CONFIG_KSZ_SWITCH
+	dev->sw_mac.saved_phy = netdev->phydev;
+
+#ifndef CONFIG_KSZ_IBA_ONLY
+	if (dev->sw_mac.port.sw)
+		sw_mac_init(netdev, &dev->sw_mac);
+#endif
+#endif
 
 	return 0;
 
@@ -3775,6 +4505,10 @@ static const struct usb_device_id products[] = {
 	{
 	/* LAN7800 USB Gigabit Ethernet Device */
 	USB_DEVICE(LAN78XX_USB_VENDOR_ID, LAN7800_USB_PRODUCT_ID),
+	},
+	{
+	/* LAN7801 USB Gigabit Ethernet Device */
+	USB_DEVICE(LAN78XX_USB_VENDOR_ID, LAN7801_USB_PRODUCT_ID),
 	},
 	{
 	/* LAN7850 USB Gigabit Ethernet Device */

@@ -1,0 +1,8 @@
+config BR2_PACKAGE_KSZ_LINUXPTP_4_0_0
+	bool "Linux PTP 4.0.0"
+	default y
+	select BR2_PACKAGE_KSZ_PTP_SCRIPTS
+	help
+	  The Linux PTP daemon (ptp4l) implements the Precision Time protocol
+	  (PTP) as defined by the IEEE-1588-2002.
+

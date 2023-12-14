@@ -1,4 +1,6 @@
 source "package/microchip/ksz_linuxptp/Config.in"
+source "package/microchip/ksz_linuxptp-3.1.1/Config.in"
+source "package/microchip/ksz_linuxptp-4.0.0/Config.in"
 source "package/microchip/ksz_ptp_scripts/Config.in"
 source "package/microchip/ksz_regs_bin/Config.in"
 source "package/microchip/ksz_ptp_cli/Config.in"

@@ -292,7 +292,9 @@ static void *iba_cmd_data(struct ksz_iba_info *info, u32 cmd, u32 size,
 				if (((info->cfg >> shift) & mask) !=
 				    (info->data[0] & mask)) {
 #ifndef CONFIG_KSZ_IBA_ONLY
-					info->use_iba |= 0x60;
+					info->use_iba |=
+						IBA_USE_CODE_NO_WAIT |
+						IBA_USE_CODE_TURN_OFF;
 #else
 					/* Do not allow changing IBA port. */
 					info->data[0] = info->cfg;
@@ -820,15 +822,16 @@ static void iba_to_spi(struct ksz_sw *sw, struct ksz_iba_info *info)
 {
 	bool restart = true;
 
-	if (info->use_iba & 0x20) {
-		info->use_iba &= ~0x60;
+	if (info->use_iba & IBA_USE_CODE_TURN_OFF) {
+		info->use_iba &=
+			~(IBA_USE_CODE_NO_WAIT | IBA_USE_CODE_TURN_OFF);
 		restart = false;
 		printk(KERN_ALERT "stop using IBA"NL);
 	}
-	if (2 <= info->use_iba) {
-if (info->use_iba != 5)
+	if (IBA_USE_CODE_PREPARE <= info->use_iba) {
+if (info->use_iba != IBA_USE_CODE_LOST)
 dbg_msg(" iba stops: %x"NL, info->use_iba);
-		info->use_iba = 5;
+		info->use_iba = IBA_USE_CODE_LOST;
 		return;
 	}
 
@@ -856,7 +859,13 @@ static void iba_dbg_states(struct ksz_iba_info *info)
 	int iba_test_override = (sw->overrides & IBA_TEST);
 	int use_iba = info->use_iba;
 
-	if (2 <= info->use_iba)
+#ifdef CONFIG_KSZ_IBA_ONLY
+	/* Network communication no longer works. */
+	if ((info->use_iba & IBA_USE_CODE_MASK) >= IBA_USE_CODE_HARD_RESET)
+		return;
+#endif
+
+	if (IBA_USE_CODE_PREPARE <= info->use_iba)
 		return;
 #if 0
 iba_test_override = 1;
@@ -918,9 +927,6 @@ static int iba_reqs(struct ksz_iba_info *info, void **in, void *out, void *obj,
 	u16 code = IBA_CODE_NORMAL;
 	void *(*prepare)(struct ksz_iba_info *info, void *in, void *obj);
 
-	if (5 == info->use_iba) {
-		return 0;
-	}
 	do {
 		struct ksz_sw *sw = info->sw_dev;
 
@@ -945,11 +951,11 @@ static int iba_reqs(struct ksz_iba_info *info, void **in, void *out, void *obj,
 		iba_dbg_states(info);
 
 		/* Not testing if IBA is okay. */
-		if (!(info->use_iba & 0x80))
+		if (!(info->use_iba & IBA_USE_CODE_TESTING))
 			iba_to_spi(info->sw_dev, info);
 		return 0;
 	}
-	if (info->use_iba & 0x40)
+	if (info->use_iba & IBA_USE_CODE_NO_WAIT)
 		wait = 1;
 	else
 	wait = wait_for_completion_timeout(&info->done, info->delay_ticks);
@@ -962,11 +968,11 @@ dbg_msg(" first fail: %02x %04x %04x"NL, info->respid, last_ok_reg,
 		iba_dbg_states(info);
 
 		/* Not testing if IBA is okay. */
-		if (!(info->use_iba & 0x80))
+		if (!(info->use_iba & IBA_USE_CODE_TESTING))
 			iba_to_spi(info->sw_dev, info);
 		return 0;
 	}
-	if (info->use_iba & 0x20)
+	if (info->use_iba & IBA_USE_CODE_TURN_OFF)
 		iba_to_spi(info->sw_dev, info);
 
 	rc = 1;
@@ -997,8 +1003,9 @@ static int iba_req(struct ksz_iba_info *info, void *in, void *out, void *obj,
 	void *data_in[1];
 	int i = 0;
 
-#ifdef CONFIG_LAN78XX_KSZ9897_IBA
-	if (usb_disconnected)
+#ifdef CONFIG_KSZ_IBA_ONLY
+	/* Network communication no longer works. */
+	if ((info->use_iba & IBA_USE_CODE_MASK) >= IBA_USE_CODE_HARD_RESET)
 		return 0;
 #endif
 
@@ -1024,10 +1031,10 @@ static u32 iba_r(struct ksz_iba_info *info, unsigned reg, u32 size)
 	int rc;
 	static int iba_r_enter;
 
-	if (5 == info->use_iba) {
+	if (IBA_USE_CODE_LOST == info->use_iba) {
 		return 0;
 	}
-	if (4 == info->use_iba)
+	if (IBA_USE_CODE_HARD_RESET == info->use_iba)
 		printk(KERN_WARNING " %s %x"NL, __func__, reg);
 #if 1
 if (info->respid != info->seqid || iba_r_enter) {
@@ -1113,17 +1120,17 @@ static void iba_w(struct ksz_iba_info *info, unsigned reg, unsigned val,
 	u32 data[3];
 	int rc;
 
-	if (5 == info->use_iba) {
+	if (IBA_USE_CODE_LOST == info->use_iba) {
 		return;
 	}
-	if (4 == info->use_iba)
+	if (IBA_USE_CODE_HARD_RESET == info->use_iba)
 		printk(KERN_WARNING " %s %x"NL, __func__, reg);
 	data[0] = size;
 	data[1] = reg;
 	data[2] = val;
 	rc = iba_req(info, data, NULL, NULL, iba_w_pre, NULL);
 	if (!rc)
-dbg_msg("w %x %x"NL, reg, size);
+dbg_msg("w %x %x %x"NL, reg, size, info->use_iba);
 }  /* iba_w */
 
 /**
@@ -1318,6 +1325,12 @@ static int iba_burst(struct ksz_iba_info *info, u32 addr, size_t cnt,
 	u32 size = IBA_CMD_32;
 	void *data = buf;
 
+#ifdef CONFIG_KSZ_IBA_ONLY
+	/* Network communication no longer works. */
+	if ((info->use_iba & IBA_USE_CODE_MASK) >= IBA_USE_CODE_HARD_RESET)
+		return 0;
+#endif
+
 	memset(info->data, 0, sizeof(u32) * IBA_BURST_CNT_MAX);
 	if (cnt > 4) {
 		mult = cnt / 4;
@@ -1332,7 +1345,9 @@ static int iba_burst(struct ksz_iba_info *info, u32 addr, size_t cnt,
 			    ((ptr[loc] & VALID_IBA_VAL) !=
 			    (info->cfg & VALID_IBA_VAL))) {
 #ifndef CONFIG_KSZ_IBA_ONLY
-				info->use_iba |= 0x60;
+				info->use_iba |=
+					IBA_USE_CODE_NO_WAIT |
+					IBA_USE_CODE_TURN_OFF;
 #else
 				/* Do not allow changing IBA port. */
 				ptr[loc] = info->cfg;
@@ -1383,7 +1398,7 @@ dbg_iba_test = 1;
 		iba_to_spi(info->sw_dev, info);
 		return 0;
 	}
-	if (info->use_iba & 0x40)
+	if (info->use_iba & IBA_USE_CODE_NO_WAIT)
 		wait = 1;
 	else
 	wait = wait_for_completion_timeout(&info->done, info->delay_ticks);
@@ -1393,7 +1408,7 @@ dbg_msg("burst to"NL);
 		iba_to_spi(info->sw_dev, info);
 		return 0;
 	}
-	if (info->use_iba & 0x20)
+	if (info->use_iba & IBA_USE_CODE_TURN_OFF)
 		iba_to_spi(info->sw_dev, info);
 
 	rc = post(info, data, NULL);

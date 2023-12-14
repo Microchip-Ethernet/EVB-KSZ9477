@@ -610,6 +610,11 @@ static void mrp_cfg_vlan_work(struct work_struct *work)
 	struct sk_buff *skb;
 	struct mrp_info *mrp = container_of(work, struct mrp_info, cfg_vlan);
 
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(mrp->parent))
+		return;
+#endif
+
 	last = skb_queue_empty(&mrp->vlanq);
 	while (!last) {
 		skb = skb_dequeue(&mrp->vlanq);
@@ -5546,6 +5551,11 @@ static void mrp_cfg_mac_work(struct work_struct *work)
 	struct sk_buff *skb;
 	struct mrp_info *mrp = container_of(work, struct mrp_info, cfg_mac);
 
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(mrp->parent))
+		return;
+#endif
+
 	last = skb_queue_empty(&mrp->macq);
 	while (!last) {
 		skb = skb_dequeue(&mrp->macq);
@@ -5592,6 +5602,11 @@ static void mrp_rx_proc(struct work_struct *work)
 	struct mrp_applicant **data;
 	struct mrp_applicant *app;
 	struct mrp_info *mrp = container_of(work, struct mrp_info, rx_proc);
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(mrp->parent))
+		return;
+#endif
 
 	last = skb_queue_empty(&mrp->rxq);
 	while (!last) {
@@ -5725,6 +5740,11 @@ static void proc_mrp_work(struct work_struct *work)
 	struct mrp_info *mrp =
 		container_of(info, struct mrp_info, hw_access);
 	struct mrp_work *cmd;
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(mrp->parent))
+		return;
+#endif
 
 	cmd = &info->works[info->head];
 	while (cmd->used) {
@@ -8643,6 +8663,13 @@ static void mrp_exit(struct mrp_info *mrp)
 	bool last;
 	struct sk_buff *skb;
 
+#ifdef CONFIG_KSZ_MSRP
+	flush_work(&mrp->cfg_mac);
+#endif
+#ifdef CONFIG_KSZ_MRP
+	flush_work(&mrp->cfg_vlan);
+	flush_work(&mrp->rx_proc);
+#endif
 	last = skb_queue_empty(&mrp->rxq);
 	while (!last) {
 		skb = skb_dequeue(&mrp->rxq);

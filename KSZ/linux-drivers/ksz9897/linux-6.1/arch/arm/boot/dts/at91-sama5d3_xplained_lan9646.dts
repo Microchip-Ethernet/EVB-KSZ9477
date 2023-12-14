@@ -83,8 +83,8 @@
 				pinctrl-0 = <&pinctrl_i2c0_pu>;
 				status = "okay";
 
-				i2c_ksz9477: ksz9477@5f {
-					compatible = "microchip,ksz9477";
+				i2c_ksz9646: ksz9646@5f {
+					compatible = "microchip,lan9646";
 					reg = <0x5f>;
 
 					interrupt-parent = <&pioB>;
@@ -114,11 +114,6 @@
 							phy-handle = <&swphy_3>;
 						};
 						port@4 {
-							reg = <4>;
-							label = "lan5";
-							phy-handle = <&swphy_4>;
-						};
-						port@5 {
 							reg = <5>;
 							label = "cpu";
 							ethernet = <&macb0>;
@@ -130,9 +125,9 @@
 								pause;
 							};
 						};
-						port@6 {
+						port@5 {
 							reg = <6>;
-							label = "lan6";
+							label = "lan5";
 						};
 					};
 					mdio {
@@ -155,11 +150,6 @@
 						};
 						swphy_3: ethernet-phy@3 {
 							reg = <3>;
-							eee-broken-100tx;
-							eee-broken-1000t;
-						};
-						swphy_4: ethernet-phy@4 {
-							reg = <4>;
 							eee-broken-100tx;
 							eee-broken-1000t;
 						};
@@ -261,8 +251,8 @@
 				cs-gpios = <&pioC 25 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioC 28 GPIO_ACTIVE_LOW>;
 				status = "okay";
 
-				ksz9477: ksz9477@0 {
-					compatible = "microchip,ksz9477";
+				lan9646: lan9646@0 {
+					compatible = "microchip,lan9646";
 					reg = <0>;
 
 					/* Bus clock is 132 MHz. */
@@ -296,11 +286,6 @@
 							phy-handle = <&swphy3>;
 						};
 						port@4 {
-							reg = <4>;
-							label = "lan5";
-							phy-handle = <&swphy4>;
-						};
-						port@5 {
 							reg = <5>;
 							label = "cpu";
 							ethernet = <&macb0>;
@@ -312,9 +297,9 @@
 								pause;
 							};
 						};
-						port@6 {
+						port@5 {
 							reg = <6>;
-							label = "lan6";
+							label = "lan5";
 							mode = <1>;
 						};
 					};
@@ -338,11 +323,6 @@
 						};
 						swphy3: ethernet-phy@3 {
 							reg = <3>;
-							eee-broken-100tx;
-							eee-broken-1000t;
-						};
-						swphy4: ethernet-phy@4 {
-							reg = <4>;
 							eee-broken-100tx;
 							eee-broken-1000t;
 						};

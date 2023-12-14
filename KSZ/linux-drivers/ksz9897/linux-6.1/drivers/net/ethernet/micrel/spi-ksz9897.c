@@ -113,8 +113,8 @@
 
 #define KS9897MLI_DEV0			"ksz9897"
 
-#define SW_DRV_RELDATE			"Apr 23, 2023"
-#define SW_DRV_VERSION			"1.2.7"
+#define SW_DRV_RELDATE			"Nov 17, 2023"
+#define SW_DRV_VERSION			"1.2.8"
 
 /* -------------------------------------------------------------------------- */
 
@@ -625,6 +625,8 @@ static const struct spi_device_id ksz9897_spi_ids[] = {
 	{ .name = "ksz8565" },
 	{ .name = "ksz9893" },
 	{ .name = "ksz9563" },
+	{ .name = "ksz8563" },
+	{ .name = "lan9646" },
 	{},
 };
 MODULE_DEVICE_TABLE(spi, ksz9897_spi_ids);
@@ -638,6 +640,8 @@ static const struct of_device_id ksz9897_dt_ids[] = {
 	{ .compatible = "microchip,ksz8565" },
 	{ .compatible = "microchip,ksz9893" },
 	{ .compatible = "microchip,ksz9563" },
+	{ .compatible = "microchip,ksz8563" },
+	{ .compatible = "microchip,lan9646" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, ksz9897_dt_ids);

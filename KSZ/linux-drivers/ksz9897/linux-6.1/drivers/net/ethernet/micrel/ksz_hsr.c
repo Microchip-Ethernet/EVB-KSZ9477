@@ -30,8 +30,6 @@
 #define REDBOX_NOT_REPLACE_MAC_ADDR
 #endif
 
-static int dbg_hsr;
-
 struct hsr_cfg_work {
 	struct work_struct work;
 	struct ksz_sw *sw;
@@ -45,6 +43,13 @@ static void proc_hsr_cfg_work(struct work_struct *work)
 	struct hsr_cfg_work *cfg_work =
 		container_of(work, struct hsr_cfg_work, work);
 	struct ksz_sw *sw = cfg_work->sw;
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(sw)) {
+		kfree(cfg_work);
+		return;
+	}
+#endif
 
 	sw->ops->cfg_mac(sw, 0, cfg_work->addr, cfg_work->member,
 		false, false, 0);
@@ -69,7 +74,7 @@ static void proc_hsr_cfg(struct ksz_hsr_info *info, u8 *addr, u16 member)
 	cfg_work->sw = info->sw_dev;
 	memcpy(cfg_work->addr, addr, ETH_ALEN);
 	cfg_work->member = member;
-	if (info->redbox_dev)
+	if (info->redbox)
 		cfg_work->vlan = info->redbox_vlan;
 	schedule_work(&cfg_work->work);
 }  /* proc_hsr_cfg */
@@ -550,10 +555,7 @@ void hsr_register_frame_in(struct hsr_node *node, struct hsr_port *port,
 	if (seq_nr_before(sequence_nr, node->seq_out[port->type]))
 	{
 		unsigned long diff = jiffies - node->time_in[port->type];
-#if 0
-dbg_msg("%s %d %04x %04x %lu\n", __func__, port->type,
-sequence_nr, node->seq_out[port->type], diff);
-#endif
+
 		if (diff <= msecs_to_jiffies(HSR_ENTRY_FORGET_TIME))
 			return;
 	}
@@ -590,15 +592,7 @@ int hsr_register_frame_out(struct hsr_port *port, struct hsr_node *node,
 	if (seq_nr_before_or_eq(sequence_nr, node->seq_out[port->type]))
 	{
 		unsigned long diff = jiffies - node->time_out[port->type];
-#if 1
-#if 0
-if (port->type != HSR_PT_MASTER)
-#endif
-if (dbg_hsr < 10)
-dbg_msg("%s %x %d; %d %04x %04x %lu\n", __func__, (int)node, dbg_frame_out,
-port->type, sequence_nr,
-node->seq_out[port->type], diff);
-#endif
+
 		if (diff <= msecs_to_jiffies(HSR_ENTRY_FORGET_TIME))
 			return 1;
 	}
@@ -685,6 +679,11 @@ static void hsr_chk_ring(struct work_struct *work)
 	int no_drop_win = false;
 	u16 start_seq[2];
 	u16 exp_seq[2];
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(info->sw_dev))
+		return;
+#endif
 
 	memset(start_seq, 0, sizeof(start_seq));
 	memset(exp_seq, 0, sizeof(exp_seq));
@@ -999,7 +998,7 @@ static int hsr_xmit(struct ksz_hsr_info *info)
 	int len = info->len;
 
 	/* Do not send if network device is not ready. */
-	if (!netif_running(info->dev) || !netif_carrier_ok(info->dev))
+	if (!netif_running(info->dev) || !info->hsr_up)
 		return 0;
 
 	if (len < 60) {
@@ -1219,7 +1218,7 @@ static void hsr_announce(struct timer_list *t)
 		msecs_to_jiffies(HSR_LIFE_CHECK_INTERVAL);
 
 #ifdef CONFIG_KSZ_SWITCH
-	if (netif_running(master->dev) && netif_carrier_ok(master->dev))
+	if (netif_running(master->dev) && info->hsr_up)
 #endif
 		add_timer(&hsr->announce_timer);
 }
@@ -1399,26 +1398,14 @@ static void hsr_forward_do(struct hsr_frame_info *frame)
 #if 0
 		/* Deliver frames directly addressed to us to master only */
 		if (frame->is_local_exclusive)
-{
-#if 1
-dbg_msg("local only: %d\n", port->type);
-#endif
 			goto tx_drop;
-}
 #endif
 		dbg_frame_out = frame->is_supervision;
 
 		/* Don't send frame over port where it has been sent before */
 		if (hsr_register_frame_out(port, frame->node_src,
 					   frame->sequence_nr))
-		{
-#if 1
-dbg_msg("saw before: %d %04x %d\n", port->type, frame->sequence_nr,
-frame->is_supervision);
-#endif
-
 			goto tx_drop;
-		}
 		hsr_update_frame_out(other, frame->node_src,
 			frame->sequence_nr);
 
@@ -1456,40 +1443,18 @@ frame->is_supervision);
 
 		if (hsr_addr_is_self(port->hsr,
 		    eth_hdr(frame->skb_hsr)->h_source)) {
-if (dbg_hsr < 10)
-dbg_msg(" S ");
-++dbg_hsr;
 			goto rx_drop;
 		}
 
 		/* Don't deliver locally unless we should */
 		if (!frame->is_local_dest)
-{
-dbg_msg("not local: %d\n", port->type);
 			goto rx_drop;
-}
 		dbg_frame_out = 4;
 
 		/* Don't send frame over port where it has been sent before */
 		if (hsr_register_frame_out(port, frame->node_src,
 					   frame->sequence_nr))
-		{
-#if 1
-if (dbg_hsr < 10) {
-	if (hsr_addr_is_self(port->hsr, eth_hdr(frame->skb_hsr)->h_source))
-dbg_msg(" self ");
-dbg_msg("saw before: %d %d %04x %d\n", from->type, port->type, frame->sequence_nr,
-frame->is_supervision);
-}
-++dbg_hsr;
-#endif
-
 			goto rx_drop;
-		}
-if (hsr_addr_is_self(port->hsr, eth_hdr(frame->skb_hsr)->h_source)) {
-if (dbg_hsr < 10)
-dbg_msg(" S ");
-}
 		info = container_of(from->hsr, struct ksz_hsr_info, hsr);
 
 		hsr_update_frame_out(other, frame->node_src,
@@ -1516,7 +1481,7 @@ dbg_msg(" S ");
 		hsr_addr_subst_source(frame->node_src, skb);
 
 		/* No Redbox or Redbox is not up or no internal forwarding. */
-		if (!info->redbox_dev || !info->redbox_up || !info->redbox_fwd)
+		if (!info->redbox || !info->redbox_up || !info->redbox_fwd)
 			return;
 		do {
 			struct ksz_sw *sw = info->sw_dev;
@@ -1669,13 +1634,7 @@ int hsr_forward_skb(struct sk_buff *skb, struct hsr_port *port)
 
 	/* Frame is supervision or was dropped. */
 	if (!frame->skb_hsr && !frame->skb_std)
-{
-#if 0
-if (!frame->is_supervision)
-dbg_msg(" d ");
-#endif
 		return 0;
-}
 
 	/* Pass to upper layer or down. */
 	return 1;
@@ -1737,7 +1696,7 @@ static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 	int forward;
 	int ret = 2;
 
-	if (!info->redbox_dev)
+	if (!info->redbox)
 		return ret;
 
 	/* Stop processing if coming from HSR ports. */
@@ -1829,6 +1788,11 @@ static void hsr_tx_proc(struct work_struct *work)
 	struct sk_buff *skb;
 	struct ksz_hsr_info *info = container_of(work, struct ksz_hsr_info,
 						 tx_proc);
+
+#ifdef CONFIG_KSZ_IBA
+	if (iba_stopped(info->sw_dev))
+		return;
+#endif
 
 	last = skb_queue_empty(&info->txq);
 	while (!last) {
@@ -2047,7 +2011,7 @@ static void hsr_check_announce(struct ksz_hsr_info *info)
 
 	if (info->state < 0)
 		return;
-	state = netif_running(info->dev) && netif_carrier_ok(info->dev);
+	state = netif_running(info->dev) && info->hsr_up;
 	if (state != info->state) {
 dbg_msg("%s %d %d\n", __func__, info->state, state);
 		if (state) {
@@ -2421,22 +2385,30 @@ static void stop_hsr(struct ksz_hsr_info *info)
 
 static void start_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
 {
-	info->redbox_dev = dev;
 	info->redbox_up = netif_carrier_ok(dev);
 }
 
 static void stop_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
 {
-	if (info->redbox_dev == dev)
-		info->redbox_dev = NULL;
 	info->redbox_up = 0;
 }
 
 static void ksz_hsr_exit(struct ksz_hsr_info *info)
 {
+	struct sk_buff *skb;
+	bool last;
+
+	flush_work(&info->tx_proc);
 #ifdef CONFIG_HAVE_HSR_HW
 	cancel_delayed_work_sync(&info->chk_ring);
 #endif
+	last = skb_queue_empty(&info->txq);
+	while (!last) {
+		skb = skb_dequeue(&info->txq);
+		if (skb)
+			kfree_skb(skb);
+		last = skb_queue_empty(&info->txq);
+	}
 }  /* ksz_hsr_exit */
 
 static void ksz_hsr_init(struct ksz_hsr_info *info, struct ksz_sw *sw)

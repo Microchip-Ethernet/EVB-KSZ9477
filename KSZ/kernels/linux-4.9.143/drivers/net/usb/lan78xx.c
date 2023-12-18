@@ -2755,7 +2755,7 @@ static int lan78xx_stop(struct net_device *net)
 	struct lan78xx_net		*dev = netdev_priv(net);
 
 #ifdef CONFIG_KSZ_SWITCH
-	iba = 0;
+	int iba = 0;
 
 #ifdef CONFIG_KSZ_IBA
 	iba = IBA_USE_CODE_HARD_RESET;

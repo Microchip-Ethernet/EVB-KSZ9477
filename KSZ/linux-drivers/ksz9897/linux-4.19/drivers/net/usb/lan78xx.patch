@@ -1,6 +1,6 @@
 diff -Napur linux-4.19.207-orig/drivers/net/usb/lan78xx.c linux-4.19.207/drivers/net/usb/lan78xx.c
 --- linux-4.19.207-orig/drivers/net/usb/lan78xx.c	2021-09-22 02:48:14.000000000 -0700
-+++ linux-4.19.207/drivers/net/usb/lan78xx.c	2023-12-13 14:02:48.593512083 -0800
++++ linux-4.19.207/drivers/net/usb/lan78xx.c	2023-12-17 19:21:09.741176750 -0800
 @@ -371,6 +371,28 @@ struct irq_domain_data {
  	struct mutex		irq_lock;		/* for irq bus access */
  };
@@ -629,7 +629,7 @@ diff -Napur linux-4.19.207-orig/drivers/net/usb/lan78xx.c linux-4.19.207/drivers
  	struct lan78xx_net		*dev = netdev_priv(net);
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	iba = 0;
++	int iba = 0;
 +
 +#ifdef CONFIG_KSZ_IBA
 +	iba = IBA_USE_CODE_HARD_RESET;

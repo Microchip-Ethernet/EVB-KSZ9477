@@ -3624,8 +3624,10 @@ static void mrp_chk_rx_talker(struct mrp_info *mrp, u8 port,
 	stream_id = srp_find_stream_id(mrp, talker->id);
 
 	/* Stream should alway be found unless out of resource. */
-	if (!stream_id)
+	if (!stream_id) {
 		code_bits |= RFC_NO_RESOURCES_BIT;
+		goto get_talker_done;
+	}
 	if (memcmp(stream_id->dest, talker->dest, ETH_ALEN) &&
 	    (stream_id->MaxFrameSize != talker->MaxFrameSize ||
 	    stream_id->MaxIntervalFrames != talker->MaxIntervalFrames)) {

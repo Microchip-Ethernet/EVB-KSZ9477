@@ -17187,6 +17187,29 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	/* Cannot point to host port that uses fixed-link. */
 	if (phy_id)
 		port->dn = sw->devnode[phy_id - 1];
+	if (dev->phydev && phy_is_internal(dev->phydev)) {
+		__ETHTOOL_DECLARE_LINK_MODE_MASK(supported);
+	
+		linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Half_BIT,
+				 supported);
+		linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Full_BIT,
+				 supported);
+		linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Half_BIT,
+				 supported);
+		linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT,
+				 supported);
+		linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT,
+				 supported);
+		if (sw->features & GIGABIT_SUPPORT) {
+			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT,
+					 supported);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT,
+					 supported);
+		}
+		linkmode_copy(dev->phydev->supported, supported);
+		linkmode_copy(dev->phydev->advertising, supported);
+		dev->phydev->mdio.addr = phy_id;
+	}
 #if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	setup_phylink(port);
 #endif

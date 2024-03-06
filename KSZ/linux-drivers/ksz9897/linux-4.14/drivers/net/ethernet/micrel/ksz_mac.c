@@ -85,13 +85,17 @@ static struct ksz_sw *check_avail_switch(struct net_device *netdev, int id)
 	char bus_id[MII_BUS_ID_SIZE];
 	phy_interface_t phy_mode;
 	struct ksz_sw *sw = NULL;
+	struct device *d;
 
 	/* Check whether MII switch exists. */
 	phy_mode = PHY_INTERFACE_MODE_MII;
 	snprintf(bus_id, MII_BUS_ID_SIZE, "sw.%d", id);
 	snprintf(phy_id, MII_BUS_ID_SIZE, PHY_ID_FMT, bus_id, 0);
-	phydev = phy_attach(netdev, phy_id, phy_mode);
-	if (!IS_ERR(phydev)) {
+	d = bus_find_device_by_name(&mdio_bus_type, NULL, phy_id);
+	if (!d)
+		return NULL;
+	phydev = to_phy_device(d);
+	if (!phydev->attached_dev) {
 		struct phy_priv *phydata = phydev->priv;
 
 		sw = phydata->port->sw;
@@ -102,8 +106,8 @@ static struct ksz_sw *check_avail_switch(struct net_device *netdev, int id)
 		 */
 		if (sw)
 			phydev->interface = sw->interface;
-		phy_detach(phydev);
 	}
+	put_device(d);
 	return sw;
 }  /* check_avail_switch */
 

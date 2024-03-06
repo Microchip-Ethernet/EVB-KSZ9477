@@ -12,7 +12,7 @@
 +			freq = err;
 +			freq <<= 13;
 +			freq = div64_s64(freq, 125);
-+			tx->freq = (s32) freq;
++			tx->freq = freq;
 +		} while (0);
 +#endif
  		err = 0;

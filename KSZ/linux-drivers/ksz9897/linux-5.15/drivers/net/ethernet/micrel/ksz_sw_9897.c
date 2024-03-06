@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -18981,6 +18981,7 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 			sgmii = 1;
 	}
 	sw->sgmii_mode = sgmii;
+	setup_device_node(sw);
 
 #ifdef DEBUG_MSG
 	flush_work(&db.dbg_print);
@@ -19146,7 +19147,6 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 		goto err_platform;
 
 	sw_init_phy_priv(ks);
-	setup_device_node(sw);
 
 	ret = ksz_mii_init(ks);
 	if (ret)

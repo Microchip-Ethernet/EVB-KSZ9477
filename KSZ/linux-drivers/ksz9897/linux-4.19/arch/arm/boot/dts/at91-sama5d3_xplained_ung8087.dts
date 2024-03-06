@@ -1,13 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * at91-sama5d3_xplained.dts - Device Tree file for the SAMA5D3 Xplained board
  *
  *  Copyright (C) 2014 Atmel,
  *		  2014 Nicolas Ferre <nicolas.ferre@atmel.com>
- *
- * Licensed under GPLv2 or later.
  */
 /dts-v1/;
 #include "sama5d36.dtsi"
+#include <dt-bindings/input/input.h>
 
 / {
 	model = "SAMA5D3 Xplained";
@@ -57,15 +57,15 @@
 			};
 
 			spi0: spi@f0004000 {
-				cs-gpios = <&pioD 13 0>, <0>, <0>, <&pioD 16 0>;
+				cs-gpios = <&pioD 13 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioD 16 GPIO_ACTIVE_LOW>;
 				status = "okay";
+				id = <0>;
 
 				ksz9563: ksz9563@0 {
 					compatible = "microchip,ksz9563";
 					reg = <0>;
-					phy-mode = "rgmii-id";
 
-					spi-max-frequency = <33000000>;
+					spi-max-frequency = <44000000>;
 					spi-cpha;
 					spi-cpol;
 					interrupt-parent = <&pioB>;
@@ -86,17 +86,18 @@
 							reg = <2>;
 							label = "cpu";
 							ethernet = <&macb0>;
+							phy-mode = "rgmii-id";
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
 				};
-				ksz9896: ksz9896@0 {
+				ksz9896_rmii: ksz9896@0 {
 					compatible = "microchip,ksz9896";
 					reg = <0>;
-					phy-mode = "rmii";
 
 					spi-max-frequency = <33000000>;
 					spi-cpha;
@@ -131,17 +132,18 @@
 							reg = <5>;
 							label = "cpu";
 							ethernet = <&macb1>;
+							phy-mode = "rmii";
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
 				};
-				ksz8565: ksz8565@0 {
+				ksz8565_rmii: ksz8565@0 {
 					compatible = "microchip,ksz8565";
 					reg = <0>;
-					phy-mode = "rmii";
 
 					spi-max-frequency = <33000000>;
 					spi-cpha;
@@ -172,19 +174,20 @@
 							reg = <6>;
 							label = "cpu";
 							ethernet = <&macb1>;
+							phy-mode = "rmii";
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
 				};
-				ksz8794: ksz8794@0 {
+				ksz8794_rmii: ksz8794@0 {
 					compatible = "microchip,ksz8794";
 					reg = <0>;
-					phy-mode = "rmii";
 
-					spi-max-frequency = <30000000>;
+					spi-max-frequency = <33000000>;
 					spi-cpha;
 					spi-cpol;
 					status = "disabled";
@@ -207,17 +210,18 @@
 							reg = <4>;
 							label = "cpu";
 							ethernet = <&macb1>;
+							phy-mode = "rmii";
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
 				};
-				ksz8864: ksz8864@0 {
+				ksz8864_rmii: ksz8864@0 {
 					compatible = "microchip,ksz8864";
 					reg = <0>;
-					phy-mode = "rmii";
 
 					spi-max-frequency = <12000000>;
 					spi-cpha;
@@ -242,17 +246,18 @@
 							reg = <4>;
 							label = "cpu";
 							ethernet = <&macb1>;
+							phy-mode = "rmii";
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
 				};
-				ksz8863: ksz8863@0 {
+				ksz8863_rmii: ksz8863@0 {
 					compatible = "microchip,ksz8863";
 					reg = <0>;
-					phy-mode = "rmii";
 
 					spi-max-frequency = <12000000>;
 					spi-cpha;
@@ -273,9 +278,11 @@
 							reg = <2>;
 							label = "cpu";
 							ethernet = <&macb1>;
+							phy-mode = "rmii";
 							fixed-link {
 								speed = <100>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -358,6 +365,7 @@
 				fixed-link {
 					speed = <1000>;
 					full-duplex;
+					pause;
 				};
 			};
 
@@ -391,8 +399,42 @@
 			};
 
 			spi1: spi@f8008000 {
-				cs-gpios = <&pioC 25 0>;
+				cs-gpios = <&pioC 25 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioC 28 GPIO_ACTIVE_LOW>;
 				status = "okay";
+				id = <1>;
+
+				ksz8863: ksz8863@3 {
+					compatible = "microchip,ksz8863";
+					reg = <3>;
+
+					spi-max-frequency = <12000000>;
+					spi-cpha;
+					spi-cpol;
+					status = "disabled";
+					ports {
+						#address-cells = <1>;
+						#size-cells = <0>;
+						port@0 {
+							reg = <0>;
+							label = "lan1";
+						};
+						port@1 {
+							reg = <1>;
+							label = "lan2";
+						};
+						port@2 {
+							reg = <2>;
+							label = "cpu";
+							ethernet = <&macb1>;
+							phy-mode = "rmii";
+							fixed-link {
+								speed = <100>;
+								full-duplex;
+								pause;
+							};
+						};
+					};
+				};
 			};
 
 			adc0: adc@f8018000 {
@@ -419,7 +461,6 @@
 				i2c_ksz9563: ksz9563@5f {
 					compatible = "microchip,ksz9563";
 					reg = <0x5f>;
-					phy-mode = "rgmii-id";
 
 					interrupt-parent = <&pioB>;
 					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
@@ -439,9 +480,11 @@
 							reg = <2>;
 							label = "cpu";
 							ethernet = <&macb0>;
+							phy-mode = "rgmii-id";
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
+								pause;
 							};
 						};
 					};
@@ -457,6 +500,7 @@
 				fixed-link {
 					speed = <100>;
 					full-duplex;
+					pause;
 				};
 			};
 
@@ -498,7 +542,7 @@
 							<AT91_PIOE 9 AT91_PERIPH_GPIO AT91_PINCTRL_DEGLITCH>;	/* PE9, conflicts with A9 */
 					};
 
-					pinctrl_spi_ksz: spi_ksz {
+					pinctrl_ksz_irq: ksz_irq {
 						atmel,pins =
 							<AT91_PIOB 28 AT91_PERIPH_GPIO AT91_PINCTRL_DEGLITCH>;
 					};
@@ -556,12 +600,17 @@
 
 						bootloader@40000 {
 							label = "bootloader";
-							reg = <0x40000 0x80000>;
+							reg = <0x40000 0xc0000>;
 						};
 
-						bootloaderenv@c0000 {
+						bootloaderenvred@100000 {
+							label = "bootloader env redundant";
+							reg = <0x100000 0x40000>;
+						};
+
+						bootloaderenv@140000 {
 							label = "bootloader env";
-							reg = <0xc0000 0xc0000>;
+							reg = <0x140000 0x40000>;
 						};
 
 						dtb@180000 {
@@ -602,7 +651,7 @@
 		bp3 {
 			label = "PB_USER";
 			gpios = <&pioE 29 GPIO_ACTIVE_LOW>;
-			linux,code = <0x104>;
+			linux,code = <KEY_PROG1>;
 			wakeup-source;
 		};
 	};

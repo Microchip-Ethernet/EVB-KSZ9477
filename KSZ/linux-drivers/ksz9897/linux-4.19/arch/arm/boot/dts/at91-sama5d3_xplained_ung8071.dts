@@ -1,13 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * at91-sama5d3_xplained.dts - Device Tree file for the SAMA5D3 Xplained board
  *
  *  Copyright (C) 2014 Atmel,
  *		  2014 Nicolas Ferre <nicolas.ferre@atmel.com>
- *
- * Licensed under GPLv2 or later.
  */
 /dts-v1/;
 #include "sama5d36.dtsi"
+#include <dt-bindings/input/input.h>
 
 / {
 	model = "SAMA5D3 Xplained";
@@ -57,8 +57,9 @@
 			};
 
 			spi0: spi@f0004000 {
-				cs-gpios = <&pioD 13 0>, <0>, <0>, <&pioD 16 0>;
+				cs-gpios = <&pioD 13 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioD 16 GPIO_ACTIVE_LOW>;
 				status = "okay";
+				id = <0>;
 			};
 
 			can0: can@f000c000 {
@@ -84,11 +85,10 @@
 				i2c_ksz9477: ksz9477@5f {
 					compatible = "microchip,ksz9477";
 					reg = <0x5f>;
-					phy-mode = "rgmii-txid";
 
 					interrupt-parent = <&pioB>;
 					interrupts = <28 IRQ_TYPE_LEVEL_LOW>;
-					status = "disabled";
+					status = "okay";
 					ports {
 						#address-cells = <1>;
 						#size-cells = <0>;
@@ -116,18 +116,16 @@
 							reg = <5>;
 							label = "cpu";
 							ethernet = <&macb0>;
+							phy-mode = "rgmii-txid";
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
+								pause;
 							};
 						};
 						port@6 {
 							reg = <6>;
 							label = "lan6";
-							fixed-link {
-								speed = <1000>;
-								full-duplex;
-							};
 						};
 					};
 				};
@@ -188,6 +186,7 @@
 				fixed-link {
 					speed = <1000>;
 					full-duplex;
+					pause;
 				};
 			};
 
@@ -221,15 +220,16 @@
 			};
 
 			spi1: spi@f8008000 {
-				cs-gpios = <&pioC 25 0>;
+				cs-gpios = <&pioC 25 GPIO_ACTIVE_LOW>, <0>, <0>, <&pioC 28 GPIO_ACTIVE_LOW>;
 				status = "okay";
+				id = <1>;
 
 				ksz9477: ksz9477@0 {
 					compatible = "microchip,ksz9477";
 					reg = <0>;
-					phy-mode = "rgmii-txid";
 
-					spi-max-frequency = <33000000>;
+					/* Bus clock is 132 MHz. */
+					spi-max-frequency = <44000000>;
 					spi-cpha;
 					spi-cpol;
 					interrupt-parent = <&pioB>;
@@ -262,18 +262,16 @@
 							reg = <5>;
 							label = "cpu";
 							ethernet = <&macb0>;
+							phy-mode = "rgmii-txid";
 							fixed-link {
 								speed = <1000>;
 								full-duplex;
+								pause;
 							};
 						};
 						port@6 {
 							reg = <6>;
 							label = "lan6";
-							fixed-link {
-								speed = <1000>;
-								full-duplex;
-							};
 						};
 					};
 				};
@@ -310,6 +308,7 @@
 				fixed-link {
 					speed = <100>;
 					full-duplex;
+					pause;
 				};
 			};
 
@@ -351,7 +350,7 @@
 							<AT91_PIOE 9 AT91_PERIPH_GPIO AT91_PINCTRL_DEGLITCH>;	/* PE9, conflicts with A9 */
 					};
 
-					pinctrl_spi_ksz: spi_ksz {
+					pinctrl_ksz_irq: ksz_irq {
 						atmel,pins =
 							<AT91_PIOB 28 AT91_PERIPH_GPIO AT91_PINCTRL_DEGLITCH>;
 					};
@@ -409,12 +408,17 @@
 
 						bootloader@40000 {
 							label = "bootloader";
-							reg = <0x40000 0x80000>;
+							reg = <0x40000 0xc0000>;
 						};
 
-						bootloaderenv@c0000 {
+						bootloaderenvred@100000 {
+							label = "bootloader env redundant";
+							reg = <0x100000 0x40000>;
+						};
+
+						bootloaderenv@140000 {
 							label = "bootloader env";
-							reg = <0xc0000 0xc0000>;
+							reg = <0x140000 0x40000>;
 						};
 
 						dtb@180000 {
@@ -455,7 +459,7 @@
 		bp3 {
 			label = "PB_USER";
 			gpios = <&pioE 29 GPIO_ACTIVE_LOW>;
-			linux,code = <0x104>;
+			linux,code = <KEY_PROG1>;
 			wakeup-source;
 		};
 	};

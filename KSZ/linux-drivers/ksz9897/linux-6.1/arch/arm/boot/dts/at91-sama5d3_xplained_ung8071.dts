@@ -133,6 +133,7 @@
 						port@6 {
 							reg = <6>;
 							label = "lan6";
+							phy-handle = <&swphy_6>;
 						};
 					};
 					mdio {
@@ -160,6 +161,11 @@
 						};
 						swphy_4: ethernet-phy@4 {
 							reg = <4>;
+							eee-broken-100tx;
+							eee-broken-1000t;
+						};
+						swphy_6: ethernet-phy@6 {
+							reg = <6>;
 							eee-broken-100tx;
 							eee-broken-1000t;
 						};
@@ -315,6 +321,7 @@
 						port@6 {
 							reg = <6>;
 							label = "lan6";
+							phy-handle = <&swphy6>;
 							mode = <1>;
 						};
 					};
@@ -343,6 +350,11 @@
 						};
 						swphy4: ethernet-phy@4 {
 							reg = <4>;
+							eee-broken-100tx;
+							eee-broken-1000t;
+						};
+						swphy6: ethernet-phy@6 {
+							reg = <6>;
 							eee-broken-100tx;
 							eee-broken-1000t;
 						};

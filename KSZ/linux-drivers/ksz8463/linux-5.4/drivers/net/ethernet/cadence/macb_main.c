@@ -758,6 +758,9 @@ static int macb_mii_init(struct macb *bp)
 {
 	struct device_node *np;
 	int err = -ENXIO;
+#if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
+	bool no_fixed_phy = false;
+#endif
 
 	/* Enable management port */
 	macb_writel(bp, NCR, MACB_BIT(MPE));
@@ -778,8 +781,20 @@ static int macb_mii_init(struct macb *bp)
 
 	dev_set_drvdata(&bp->dev->dev, bp->mii_bus);
 
+#if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
+	/* Check whether switch driver exists so no need to create fixed-phy. */
+	err = sw_mac_chk(&bp->sw_mac);
+
+	/* Switch driver defines its own phydev. */
+	if (!err)
+		no_fixed_phy = true;
+#endif
+
 	np = bp->pdev->dev.of_node;
 	if (np && of_phy_is_fixed_link(np)) {
+#if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
+		if (!no_fixed_phy)
+#endif
 		if (of_phy_register_fixed_link(np) < 0) {
 			dev_err(&bp->pdev->dev,
 				"broken fixed-link specification %pOF\n", np);
@@ -795,14 +810,15 @@ static int macb_mii_init(struct macb *bp)
 		goto err_out_free_fixed_link;
 
 #if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
-	do {
+	if (no_fixed_phy)
+		return 0;
 
 #ifdef CONFIG_KSZ_SMI
+	do {
 		int irq = get_sw_irq(NULL);
 
 		err = smi_probe(&bp->sw_pdev, bp->mii_bus, irq,
 				smi_read, smi_write);
-#endif
 		if (!err)
 			err = sw_mac_chk(&bp->sw_mac);
 
@@ -810,6 +826,7 @@ static int macb_mii_init(struct macb *bp)
 		if (!err)
 			return 0;
 	} while (0);
+#endif
 #endif
 
 	err = macb_mii_probe(bp->dev);

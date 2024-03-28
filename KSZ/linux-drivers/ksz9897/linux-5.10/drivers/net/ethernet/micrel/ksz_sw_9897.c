@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -14927,7 +14927,7 @@ static int setup_phylink(struct ksz_port *port)
 				  &sw_port_phylink_mac_ops);
 	if (IS_ERR(port->pl)) {
 		netdev_err(port->netdev,
-			   "error creating PHYLIK: %ld\n", PTR_ERR(port->pl));
+			   "error creating PHYLINK: %ld\n", PTR_ERR(port->pl));
 		return PTR_ERR(port->pl);
 	}
 
@@ -18981,6 +18981,7 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 			sgmii = 1;
 	}
 	sw->sgmii_mode = sgmii;
+	sw->interface = PHY_INTERFACE_MODE_MII;
 	setup_device_node(sw);
 
 #ifdef DEBUG_MSG
@@ -19002,7 +19003,6 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 		info->phy = true;
 		info->interface = PHY_INTERFACE_MODE_RGMII;
 	}
-	sw->interface = PHY_INTERFACE_MODE_RGMII;
 	sw->ops->acquire(sw);
 	for (; pi < mib_port_count; pi++) {
 		u16 data;
@@ -19114,7 +19114,10 @@ dbg_msg("?%02x"NL, *data_hi);
 			info->phy = port_sgmii_detect(sw, pi);
 		}
 		info->interface = phy;
-		if (sw->HOST_PORT == pi)
+
+		/* Switch interface is not set through device tree. */
+		if (sw->HOST_PORT == pi &&
+		    sw->interface == PHY_INTERFACE_MODE_MII)
 			sw->interface = phy;
 		if (sw->HOST_PORT == pi)
 dbg_msg("host: %d %d"NL, sw->HOST_PORT, sw->interface);

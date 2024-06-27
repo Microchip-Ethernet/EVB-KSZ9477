@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 definition file
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -1023,6 +1023,10 @@
 
 #define MMD_DEVICE_ID_COMMON		2
 
+#define MMD_COMMON_LED_MODE		0
+
+#define MMD_COMMON_SINGLE_LED		(1 << 4)
+
 #define MMD_DEVICE_ID_EEE_ADV		7
 
 #define MMD_EEE_ADV			0x3C
@@ -1216,6 +1220,7 @@
 #define REG_PORT_PHY_DIGITAL_DEBUG_3	0x013C
 
 #define PORT_100BT_FIXED_LATENCY	(1 << 15)
+#define PORT_SINGLE_LED_MODE		(1 << 9)
 
 #define REG_PORT_PHY_PHY_CTRL		0x013E
 

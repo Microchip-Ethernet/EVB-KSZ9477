@@ -14,6 +14,9 @@
 
 #if defined(CONFIG_IBA_KSZ9897)
 #define CONFIG_KSZ_IBA_ONLY
+#elif defined(CONFIG_SOC_SAM9X7)
+/* Switch interrupt does not work properly in SAM9X75 when starting early. */
+#define CONFIG_DELAY_REQUEST_INTR
 #endif
 
 

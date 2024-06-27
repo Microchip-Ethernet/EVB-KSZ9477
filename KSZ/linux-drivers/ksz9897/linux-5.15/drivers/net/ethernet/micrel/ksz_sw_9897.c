@@ -4619,55 +4619,6 @@ static void port_cfg_rx_special(struct ksz_sw *sw, uint p, bool set)
 #endif
 }  /* port_cfg_rx_special */
 
-static void port_cfg_power(struct ksz_sw *sw, uint p, bool set)
-{
-	u16 ctrl;
-	u8 intr;
-	struct ksz_port_cfg *cfg = get_port_cfg(sw, p);
-
-	if (set) {
-		u32 data;
-
-		port_r16(sw, p, REG_PORT_PHY_CTRL, &ctrl);
-		if (!(ctrl & PORT_POWER_DOWN))
-			return;
-		ctrl = cfg->phy_ctrl;
-		port_w16(sw, p, REG_PORT_PHY_CTRL, cfg->phy_ctrl);
-		port_r16(sw, p, REG_PORT_PHY_CTRL, &ctrl);
-		port_r16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION, &ctrl);
-		if (ctrl != cfg->phy_adv)
-			port_w16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION,
-				cfg->phy_adv);
-		if (sw->features & GIGABIT_SUPPORT) {
-			port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
-			if (ctrl != cfg->phy_adv_g)
-				port_w16(sw, p, REG_PORT_PHY_1000_CTRL,
-					cfg->phy_adv_g);
-		}
-		port_r32(sw, p, REG_PORT_PHY_INT_ENABLE & ~3, &data);
-		data &= 0xffff00ff;
-		data |= cfg->phy_intr << 8;
-		port_w32(sw, p, REG_PORT_PHY_INT_ENABLE & ~3, data);
-		ctrl = cfg->phy_ctrl;
-		if (ctrl & PORT_AUTO_NEG_ENABLE)
-			ctrl |= PORT_AUTO_NEG_RESTART;
-		port_w16(sw, p, REG_PORT_PHY_CTRL, ctrl);
-	} else {
-		port_r8(sw, p, REG_PORT_PHY_INT_ENABLE, &intr);
-		cfg->phy_intr = intr;
-		port_r16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION, &ctrl);
-		cfg->phy_adv = ctrl;
-		if (sw->features & GIGABIT_SUPPORT) {
-			port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
-			cfg->phy_adv_g = ctrl;
-		}
-		port_r16(sw, p, REG_PORT_PHY_CTRL, &ctrl);
-		ctrl &= ~PORT_POWER_DOWN;
-		cfg->phy_ctrl = ctrl;
-		port_w16(sw, p, REG_PORT_PHY_CTRL, ctrl | PORT_POWER_DOWN);
-	}
-}  /* port_cfg_power */
-
 static int port_chk_power(struct ksz_sw *sw, uint p)
 {
 	u16 ctrl;
@@ -8563,7 +8514,7 @@ dbg_msg(" %04x=%04x"NL, 0x20, val[0]);
 		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x4, val, 1);
 		val[0] = 0x3008;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x6, val, 1);
-		val[0] = 0x2001;
+		val[0] = 0x2000;
 		port_mmd_write(sw, port, MMD_DEVICE_ID_AFED, 0x8, val, 1);
 #else
 /*
@@ -8623,6 +8574,64 @@ static void port_setup_9893(struct ksz_sw *sw, uint port)
 		port_mmd_write(sw, port, set->mmd, set->reg, val, 1);
 	}
 }  /* port_setup_9893 */
+
+static void port_cfg_power(struct ksz_sw *sw, uint p, bool set)
+{
+	u16 ctrl;
+	u8 intr;
+	struct ksz_port_cfg *cfg = get_port_cfg(sw, p);
+
+	if (set) {
+		u32 data;
+
+		port_r16(sw, p, REG_PORT_PHY_CTRL, &ctrl);
+		if (!(ctrl & PORT_POWER_DOWN))
+			return;
+		ctrl = cfg->phy_ctrl;
+		port_w16(sw, p, REG_PORT_PHY_CTRL, cfg->phy_ctrl);
+
+		/* After IBA write the value may become zero. */
+		port_r16(sw, p, REG_PORT_PHY_CTRL, &ctrl);
+		if (!ctrl)
+			port_w16(sw, p, REG_PORT_PHY_CTRL, cfg->phy_ctrl);
+		port_r16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION, &ctrl);
+		if (ctrl != cfg->phy_adv)
+			port_w16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION,
+				cfg->phy_adv);
+		if (sw->features & GIGABIT_SUPPORT) {
+			port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
+			if (ctrl != cfg->phy_adv_g)
+				port_w16(sw, p, REG_PORT_PHY_1000_CTRL,
+					cfg->phy_adv_g);
+		}
+		port_r32(sw, p, REG_PORT_PHY_INT_ENABLE & ~3, &data);
+		data &= 0xffff00ff;
+		data |= cfg->phy_intr << 8;
+		port_w32(sw, p, REG_PORT_PHY_INT_ENABLE & ~3, data);
+		if (sw->features & IS_9893)
+			port_setup_9893(sw, p);
+		else
+			port_setup_eee(sw, p);
+		cfg->setup_time = 0;
+		ctrl = cfg->phy_ctrl;
+		if (ctrl & PORT_AUTO_NEG_ENABLE)
+			ctrl |= PORT_AUTO_NEG_RESTART;
+		port_w16(sw, p, REG_PORT_PHY_CTRL, ctrl);
+	} else {
+		port_r8(sw, p, REG_PORT_PHY_INT_ENABLE, &intr);
+		cfg->phy_intr = intr;
+		port_r16(sw, p, REG_PORT_PHY_AUTO_NEGOTIATION, &ctrl);
+		cfg->phy_adv = ctrl;
+		if (sw->features & GIGABIT_SUPPORT) {
+			port_r16(sw, p, REG_PORT_PHY_1000_CTRL, &ctrl);
+			cfg->phy_adv_g = ctrl;
+		}
+		port_r16(sw, p, REG_PORT_PHY_CTRL, &ctrl);
+		ctrl &= ~PORT_POWER_DOWN;
+		cfg->phy_ctrl = ctrl;
+		port_w16(sw, p, REG_PORT_PHY_CTRL, ctrl | PORT_POWER_DOWN);
+	}
+}  /* port_cfg_power */
 
 static void sw_dis_intr(struct ksz_sw *sw)
 {
@@ -8905,8 +8914,11 @@ static void sw_setup(struct ksz_sw *sw)
 		data |= val << 8;
 		port_w32(sw, port, REG_PORT_PHY_INT_ENABLE & ~3, data);
 	}
+
+	/* Setup SGMII only when the port is enabled. */
 	port = 6;
-	if (PHY_INTERFACE_MODE_SGMII == sw->port_info[port].interface) {
+	if (PHY_INTERFACE_MODE_SGMII == sw->port_info[port].interface &&
+	    get_log_port(sw, port) <= sw->mib_port_cnt) {
 		bool pcs = true;
 		bool master = false;
 		bool autoneg = true;
@@ -14980,13 +14992,14 @@ static void sw_init_phylink(struct ksz_sw *sw, struct ksz_port *port)
 }  /* sw_init_phylink */
 #endif
 
-static void setup_device_node(struct ksz_sw *sw)
+static int setup_device_node(struct ksz_sw *sw)
 {
 	struct sw_priv *ks = sw->dev;
 	struct device_node *np;
+	int cnt = 0;
 
 	if (!ks->of_dev)
-		return;
+		goto err;
 	np = ks->of_dev->of_node;
 	if (np) {
 		struct device_node *ports, *port;
@@ -15022,6 +15035,7 @@ dbg_msg(" found eth\n");
 dbg_msg(" name: %s\n", name);
 				/* Save the device node. */
 				sw->devnode[reg] = port;
+				cnt++;
 
 				err = of_property_read_u32(port, "mode", &mode);
 				if (err)
@@ -15034,7 +15048,19 @@ dbg_msg(" mode: %d\n", mode);
 					sw->sgmii_mode = (u8) mode;
 			}
 		}
+
+		/* Will get kernel crash if devnode is not present. */
+		if (cnt > sw->mib_port_cnt)
+			return 0;
 	}
+
+err:
+	cnt = 0;
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	dev_err(ks->dev, "Please fix the device tree for correct ports.");
+	cnt = -1;
+#endif
+	return cnt;
 }
 
 static int sw_open_dev(struct ksz_sw *sw, struct net_device *dev,
@@ -17629,8 +17655,13 @@ static void sw_change(struct work_struct *work)
 
 	/* Fake interrupt can be triggered once. */
 	if (ks->intr_working & 0x80000000) {
+		int p = 0;
+
+		/* First physical port can be disabled. */
+		if (sw->netport[0])
+			p = get_phy_port(sw, sw->netport[0]->first_port);
 		ks->intr_working |= 1;
-		if (ks->sw.info->port_cfg[0].intr_mask & PORT_PHY_INT)
+		if (ks->sw.info->port_cfg[p].intr_mask & PORT_PHY_INT)
 			ks->intr_working |= 2;
 	}
 	ks->intr_working |= 0x80000000;
@@ -18339,6 +18370,10 @@ static void link_read_work(struct work_struct *work)
 		int n = i + s;
 
 		port = sw->netport[i];
+
+		/* Port can be non-contiguous when using multiple devices. */
+		if (dev_cnt > 1 && port && port->linked)
+			n = port->linked->phy_id;
 		phydata = &sw->phydata[n];
 		if (!port)
 			port = phydata->port;
@@ -18738,7 +18773,7 @@ dbg_msg("%02x %02x"NL, id1, id2);
 	    id1 != FAMILY_ID_94 && id1 != FAMILY_ID_85 && id1 != 0x64) {
 		dev_err(ks->dev, "failed to read device ID(0x%x)"NL, id);
 		ret = -ENODEV;
-		goto err_mii;
+		goto err_platform;
 	}
 	dev_info(ks->dev, "chip id 0x%08x"NL, id);
 
@@ -18912,7 +18947,7 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 	if (!port_count) {
 		dev_err(ks->dev, "device not known"NL);
 		ret = -ENODEV;
-		goto err_mii;
+		goto err_platform;
 	}
 
 	sw->id = sw_device_present;
@@ -18982,7 +19017,10 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 	}
 	sw->sgmii_mode = sgmii;
 	sw->interface = PHY_INTERFACE_MODE_MII;
-	setup_device_node(sw);
+	if (setup_device_node(sw)) {
+		ret = -ENODEV;
+		goto err_platform;
+	}
 
 #ifdef DEBUG_MSG
 	flush_work(&db.dbg_print);
@@ -19328,9 +19366,10 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 
 	if (ks->irq <= 0)
 		return 0;
+
+	/* Default is enable interrupts. */
 	sw->ops->acquire(sw);
-	if (!reset)
-		sw_dis_intr(sw);
+	sw_dis_intr(sw);
 	sw->reg->w32(sw, REG_PTP_INT_STATUS__4, 0xffffffff);
 	sw->reg->w8(sw, REG_SW_LUE_INT_MASK__1, LUE_INT_MASK);
 	for (p = 0; p < sw->port_cnt; p++) {

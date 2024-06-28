@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8795 switch common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -8749,7 +8749,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (skb->len < ETH_ZLEN)
 		padlen = ETH_ZLEN - skb->len;
 	len = skb_tailroom(skb);
-	if (len < padlen) {
+	if (len < 1 + padlen) {
 		need_new_copy = true;
 		len = (skb->len + padlen + 4) & ~3;
 	}
@@ -8993,7 +8993,7 @@ static void sw_init_mib(struct ksz_sw *sw)
 	sw->port_state[sw->HOST_PORT].state = media_connected;
 }  /* sw_init_mib */
 
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 				   unsigned long *supported,
 				   struct phylink_link_state *state)
@@ -9170,7 +9170,7 @@ static int setup_phylink(struct ksz_port *port)
 				  &sw_port_phylink_mac_ops);
 	if (IS_ERR(port->pl)) {
 		netdev_err(port->netdev,
-			   "error creating PHYLIK: %ld\n", PTR_ERR(port->pl));
+			   "error creating PHYLINK: %ld\n", PTR_ERR(port->pl));
 		return PTR_ERR(port->pl);
 	}
 
@@ -9213,20 +9213,22 @@ static void sw_init_phylink(struct ksz_sw *sw, struct ksz_port *port)
 }  /* sw_init_phylink */
 #endif
 
-static void setup_device_node(struct ksz_sw *sw)
+static int setup_device_node(struct ksz_sw *sw)
 {
 	struct sw_priv *ks = sw->dev;
 	struct device_node *np;
-	struct device_node *ports, *port;
-	struct device_node *ethernet;
-	const char *name;
-	int err;
-	u32 reg;
+	int cnt = 0;
 
 	if (!ks->of_dev)
-		return;
+		goto err;
 	np = ks->of_dev->of_node;
 	if (np) {
+		struct device_node *ports, *port;
+		struct device_node *ethernet;
+		const char *name;
+		int err;
+		u32 reg;
+
 		ports = of_get_child_by_name(np, "ports");
 		if (ports) {
 			for_each_available_child_of_node(ports, port) {
@@ -9250,9 +9252,22 @@ dbg_msg(" found eth\n");
 dbg_msg(" name: %s\n", name);
 				/* Save the device node. */
 				sw->devnode[reg] = port;
+				cnt++;
 			}
 		}
+
+		/* Will get kernel crash if devnode is not present. */
+		if (cnt > sw->mib_port_cnt)
+			return 0;
 	}
+
+err:
+	cnt = 0;
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	dev_err(ks->dev, "Please fix the device tree for correct ports.");
+	cnt = -1;
+#endif
+	return cnt;
 }
 
 static int sw_open_dev(struct ksz_sw *sw, struct net_device *dev,
@@ -9423,7 +9438,7 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 
 static void sw_open(struct ksz_sw *sw)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw_init_phylink(sw, sw->main_port);
 #endif
 #ifdef CONFIG_KSZ_MRP
@@ -9444,7 +9459,7 @@ static void sw_open(struct ksz_sw *sw)
 
 static void sw_close(struct ksz_sw *sw)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw_exit_phylink(sw, sw->main_port);
 #endif
 #ifdef CONFIG_KSZ_MRP
@@ -10150,7 +10165,7 @@ static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
 		phydev->speed = 10;
 	phydev->duplex = (info->duplex == 2);
 
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	/* Not started yet. */
 	if (sw->phylink_ops && port != sw->main_port &&
 	    phydev->state == PHY_READY)
@@ -10728,7 +10743,7 @@ static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
 	int *mib_port_cnt, int *dev_cnt,
 	const void *phylink_ops)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw->phylink_ops = phylink_ops;
 #endif
 	phy_offset = 0;
@@ -10769,7 +10784,7 @@ static void sw_leave_dev(struct ksz_sw *sw)
 	int dev_count = sw->dev_count + sw->dev_offset;
 	struct sw_priv *ks = sw->dev;
 	struct phy_priv *phydata;
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	struct ksz_port *port;
 #endif
 	int i;
@@ -10783,7 +10798,7 @@ static void sw_leave_dev(struct ksz_sw *sw)
 		leave_mrp(&sw->mrp);
 #endif
 	for (i = 0; i < dev_count; i++) {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 		port = sw->netport[i];
 		if (port && port->pl) {
 		       phylink_destroy(port->pl);
@@ -10908,8 +10923,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	sw->netport[i] = port;
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
-	port->dn = sw->devnode[phy_id - 1];
-#ifdef CONFIG_PHYLINK
+	if (phy_id)
+		port->dn = sw->devnode[phy_id - 1];
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	setup_phylink(port);
 #endif
 	if (sw->dev_count > 1 && i && !(sw->features & DIFF_MAC_ADDR)) {
@@ -11365,7 +11381,9 @@ static int ksz_mii_read(struct mii_bus *bus, int phy_id, int regnum)
 	struct ksz_sw *sw = &ks->sw;
 	int ret = 0xffff;
 
-	if (phy_id > sw->mib_port_cnt + 1)
+	if (phy_id > sw->port_cnt)
+		return 0xffff;
+	if (phy_id && get_log_port(sw, phy_id - 1) > sw->mib_port_cnt)
 		return 0xffff;
 
 	mutex_lock(&ks->lock);
@@ -11385,8 +11403,12 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 	struct sw_priv *ks = bus->priv;
 	struct ksz_sw *sw = &ks->sw;
 
-	if (phy_id > sw->mib_port_cnt + 1)
+	if (phy_id > sw->port_cnt)
 		return -EINVAL;
+
+	/* Zero is used for the whole switch. */
+	if ((sw->multi_dev & 1) && phy_id == 0)
+		return 0;
 
 	mutex_lock(&ks->lock);
 	if (regnum < 6) {
@@ -11399,6 +11421,7 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 			first = 1;
 			last = sw->mib_port_cnt;
 		} else {
+			bool found;
 			int n;
 			int f;
 			int l;
@@ -11406,11 +11429,19 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 
 			first = phy_id;
 			last = phy_id;
+			found = false;
 			for (n = 0; n < sw->eth_cnt; n++) {
 				map = &sw->eth_maps[n];
 				f = map->first;
 				l = f + map->cnt - 1;
-				if (f <= phy_id && phy_id < l) {
+				for (i = f; i <= l; i++) {
+					p = get_phy_port(sw, i);
+					if (phy_id == p + 1) {
+						found = true;
+						break;
+					}
+				}
+				if (found) {
 					first = map->first;
 					last = first + map->cnt - 1;
 					break;
@@ -11444,7 +11475,7 @@ static void sw_init_phy_priv(struct sw_priv *ks)
 	uint n;
 	uint p;
 
-	for (n = 0; n <= sw->mib_port_cnt + 1; n++) {
+	for (n = 0; n <= sw->port_cnt; n++) {
 		phydata = &sw->phydata[n];
 		port = &ks->ports[n];
 		phydata->port = port;
@@ -11515,7 +11546,7 @@ static int ksz_mii_init(struct sw_priv *ks)
 	bus->write = ksz_mii_write;
 	snprintf(bus->id, MII_BUS_ID_SIZE, "sw.%d", ks->sw.id);
 	bus->parent = &pdev->dev;
-	bus->phy_mask = ~((1 << (ks->sw.mib_port_cnt + 2)) - 1);
+	bus->phy_mask = ~((1 << (ks->sw.port_cnt + 1)) - 1);
 	bus->priv = ks;
 
 	for (i = 0; i < PHY_MAX_ADDR; i++)
@@ -11820,6 +11851,7 @@ static int ksz_probe(struct sw_priv *ks)
 
 	ks->intr_mode = intr_mode ? IRQF_TRIGGER_FALLING :
 		IRQF_TRIGGER_LOW;
+	ks->intr_mode |= IRQF_ONESHOT;
 
 	dev_set_drvdata(ks->dev, ks);
 
@@ -12028,7 +12060,10 @@ dbg_msg("ports: %x\n", ports);
 	mutex_unlock(&ks->lock);
 
 	sw_init_phy_priv(ks);
-	setup_device_node(sw);
+	if (setup_device_node(sw)) {
+		ret = -ENODEV;
+		goto err_mii;
+	}
 
 	ret = ksz_mii_init(ks);
 	if (ret)

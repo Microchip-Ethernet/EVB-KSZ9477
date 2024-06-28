@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8795 switch common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -8749,7 +8749,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (skb->len < ETH_ZLEN)
 		padlen = ETH_ZLEN - skb->len;
 	len = skb_tailroom(skb);
-	if (len < padlen) {
+	if (len < 1 + padlen) {
 		need_new_copy = true;
 		len = (skb->len + padlen + 4) & ~3;
 	}
@@ -9153,7 +9153,7 @@ static int setup_phylink(struct ksz_port *port)
 				  &sw_port_phylink_mac_ops);
 	if (IS_ERR(port->pl)) {
 		netdev_err(port->netdev,
-			   "error creating PHYLIK: %ld\n", PTR_ERR(port->pl));
+			   "error creating PHYLINK: %ld\n", PTR_ERR(port->pl));
 		return PTR_ERR(port->pl);
 	}
 
@@ -10411,7 +10411,7 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info->log_p = l;
 		info->log_m = 0;
 	}
-	n = (1 << n) - 1;
+	n = (1 << cnt) - 1;
 	ports &= n;
 	for (i = 0, n = 0; n <= sw->port_cnt; n++) {
 		if (n > 0) {
@@ -11820,6 +11820,7 @@ static int ksz_probe(struct sw_priv *ks)
 
 	ks->intr_mode = intr_mode ? IRQF_TRIGGER_FALLING :
 		IRQF_TRIGGER_LOW;
+	ks->intr_mode |= IRQF_ONESHOT;
 
 	dev_set_drvdata(ks->dev, ks);
 

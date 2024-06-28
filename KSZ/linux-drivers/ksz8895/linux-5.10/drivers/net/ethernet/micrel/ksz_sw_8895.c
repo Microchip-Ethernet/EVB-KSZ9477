@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -6781,7 +6781,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (skb->len < ETH_ZLEN)
 		padlen = ETH_ZLEN - skb->len;
 	len = skb_tailroom(skb);
-	if (len < padlen) {
+	if (len < 1 + padlen) {
 		need_new_copy = true;
 		len = (skb->len + padlen + 4) & ~3;
 	}
@@ -7172,7 +7172,7 @@ static int setup_phylink(struct ksz_port *port)
 				  &sw_port_phylink_mac_ops);
 	if (IS_ERR(port->pl)) {
 		netdev_err(port->netdev,
-			   "error creating PHYLIK: %ld\n", PTR_ERR(port->pl));
+			   "error creating PHYLINK: %ld\n", PTR_ERR(port->pl));
 		return PTR_ERR(port->pl);
 	}
 
@@ -7239,14 +7239,6 @@ dbg_msg(" reg: %d\n", reg);
 				ethernet = of_parse_phandle(port, "ethernet", 0);
 				if (ethernet)
 dbg_msg(" found eth\n");
-				if (ethernet) {
-					name = of_get_property(port,
-							       "phy-mode",
-							       NULL);
-					if (name && !strcmp(name, "rmii"))
-						sw->interface =
-							PHY_INTERFACE_MODE_RMII;
-				}
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
@@ -8372,7 +8364,7 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info->log_p = l;
 		info->log_m = 0;
 	}
-	n = (1 << n) - 1;
+	n = (1 << cnt) - 1;
 	ports &= n;
 	for (i = 0, n = 0; n <= sw->port_cnt; n++) {
 		if (n > 0) {
@@ -9180,7 +9172,7 @@ static int kszphy_probe(struct phy_device *phydev)
 
 	p = phydev->mdio.addr;
 	phydev->priv = &sw->phydata[p];
-	phydev->interface = PHY_INTERFACE_MODE_MII;
+	phydev->interface = sw->interface;
 	return 0;
 }
 
@@ -9713,6 +9705,7 @@ static int ksz_probe(struct sw_priv *ks)
 
 	ks->intr_mode = intr_mode ? IRQF_TRIGGER_FALLING :
 		IRQF_TRIGGER_LOW;
+	ks->intr_mode |= IRQF_ONESHOT;
 
 	dev_set_drvdata(ks->dev, ks);
 
@@ -9817,7 +9810,7 @@ dbg_msg("ports: %x\n", ports);
 		info->link = 0xFF;
 		info->state = media_disconnected;
 	}
-	sw->interface = PHY_INTERFACE_MODE_MII;
+	sw->interface = PHY_INTERFACE_MODE_RMII;
 	pi = sw->HOST_PORT;
 	info = get_port_info(sw, pi);
 	info->tx_rate = 100 * TX_RATE_UNIT;

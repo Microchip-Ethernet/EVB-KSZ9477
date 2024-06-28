@@ -2019,8 +2019,7 @@ static int gem_rx(struct macb_queue *queue, struct napi_struct *napi,
 
 #ifdef CONFIG_KSZ_SWITCH
 		/* Use the real hardware private structure. */
-		if (sw_is_switch(sw))
-			bp = hbp;
+		bp = hbp;
 #endif
 	}
 
@@ -3341,7 +3340,7 @@ static void macb_init_hw(struct macb *bp)
 	do {
 		struct ksz_sw *sw = get_sw(bp);
 
-		if (sw_is_switch(sw))
+		if (sw_is_switch(sw) && macb_is_gem(bp))
 			config |= MACB_BIT(JFRAME);
 	} while (0);
 #endif
@@ -3568,6 +3567,7 @@ skip_hw:
 
 		/* Switch to main private structure. */
 		bp = priv->hw_priv->dev;
+		dev = bp->dev;
 	}
 #endif
 
@@ -3659,10 +3659,8 @@ static int macb_close(struct net_device *dev)
 
 	macb_free_consistent(bp);
 
-	if (bp->ptp_info)
-		bp->ptp_info->ptp_remove(dev);
-
 #ifdef CONFIG_KSZ_SWITCH
+	dev = bp->dev;
 #ifdef CONFIG_KSZ_SMI
 	if (restart_mdio) {
 		u32 config;
@@ -3677,6 +3675,9 @@ static int macb_close(struct net_device *dev)
 #endif
 #endif
 
+	if (bp->ptp_info)
+		bp->ptp_info->ptp_remove(dev);
+
 	pm_runtime_put(&bp->pdev->dev);
 
 	return 0;
@@ -3684,8 +3685,10 @@ static int macb_close(struct net_device *dev)
 
 static int macb_change_mtu(struct net_device *dev, int new_mtu)
 {
+#if !defined(CONFIG_NET_DSA) && !defined(CONFIG_NET_DSA_MODULE)
 	if (netif_running(dev))
 		return -EBUSY;
+#endif
 
 #ifdef CONFIG_KSZ_SWITCH
 #if defined(CONFIG_HAVE_KSZ9897)
@@ -5938,6 +5941,10 @@ static int macb_probe(struct platform_device *pdev)
 #ifdef CONFIG_KSZ_SWITCH
 	if (macb_is_gem(bp))
 		dev->max_mtu = 3902 - ETH_HLEN - ETH_FCS_LEN;
+#endif
+#if defined(CONFIG_NET_DSA) || defined(CONFIG_NET_DSA_MODULE)
+	if (dev->max_mtu <= ETH_DATA_LEN)
+		dev->max_mtu = ETH_DATA_LEN + 8;
 #endif
 
 	if (bp->caps & MACB_CAPS_BD_RD_PREFETCH) {

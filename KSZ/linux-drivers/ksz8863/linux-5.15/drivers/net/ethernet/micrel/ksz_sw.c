@@ -1,7 +1,7 @@
 /**
  * Microchip switch common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -7185,6 +7185,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	u8 dest;
 	struct sk_buff *org_skb;
 	int update_dst = (sw->overrides & TAIL_TAGGING);
+	int headlen = 0;
 
 #ifdef CONFIG_1588_PTP
 	struct ptp_info *ptp = ptr;
@@ -7204,6 +7205,8 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		return skb;
 #endif
 
+	if (sw->features & SW_VLAN_DEV)
+		headlen = VLAN_HLEN;
 	org_skb = skb;
 	port = 0;
 
@@ -7287,28 +7290,30 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (skb->len < ETH_ZLEN)
 		padlen = ETH_ZLEN - skb->len;
 	len = skb_tailroom(skb);
-	if (len < padlen) {
+	if (len < 1 + padlen) {
 		need_new_copy = true;
 		len = (skb->len + padlen + 4) & ~3;
+	}
+	if (skb_headroom(skb) < headlen) {
+		need_new_copy = true;
 	}
 	if (need_new_copy) {
 		int headerlen = skb_headroom(skb);
 
-		skb = alloc_skb(headerlen + len, GFP_ATOMIC);
+		if (headerlen < headlen)
+			headerlen = headlen;
+		skb = skb_copy_expand(org_skb, headerlen, len, GFP_ATOMIC);
 		if (!skb)
 			return NULL;
-		skb_reserve(skb, headerlen);
-		skb_put(skb, org_skb->len);
-		skb_copy_bits(org_skb, -headerlen, skb->head,
-			      headerlen + org_skb->len);
-		skb_copy_header(skb, org_skb);
 		consume_skb(org_skb);
 	}
+
+	/* skb_put requires tail pointer set first. */
+	skb_set_tail_pointer(skb, skb->len);
 	if (padlen) {
 		if (__skb_put_padto(skb, skb->len + padlen, false))
 			return NULL;
 	}
-	skb_set_tail_pointer(skb, skb->len);
 	len = skb->len;
 
 	if (!dest) {
@@ -7700,7 +7705,7 @@ static int setup_phylink(struct ksz_port *port)
 				  &sw_port_phylink_mac_ops);
 	if (IS_ERR(port->pl)) {
 		netdev_err(port->netdev,
-			   "error creating PHYLIK: %ld\n", PTR_ERR(port->pl));
+			   "error creating PHYLINK: %ld\n", PTR_ERR(port->pl));
 		return PTR_ERR(port->pl);
 	}
 
@@ -7767,14 +7772,6 @@ dbg_msg(" reg: %d\n", reg);
 				ethernet = of_parse_phandle(port, "ethernet", 0);
 				if (ethernet)
 dbg_msg(" found eth\n");
-				if (ethernet) {
-					name = of_get_property(port,
-							       "phy-mode",
-							       NULL);
-					if (name && !strcmp(name, "rmii"))
-						sw->interface =
-							PHY_INTERFACE_MODE_RMII;
-				}
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
@@ -7891,8 +7888,7 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 
 		p = get_phy_port(sw, port->first_port);
 		if (info->ports[0] == p)
-			prep_dlr(info, sw->main_dev,
-					sw->main_dev->dev_addr);
+			prep_dlr(info, sw->main_dev, sw->main_dev->dev_addr);
 	}
 #endif
 #ifdef CONFIG_KSZ_HSR
@@ -7901,8 +7897,7 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 
 		p = get_phy_port(sw, port->first_port);
 		if (info->ports[0] == p)
-			prep_hsr(info, sw->main_dev,
-					sw->main_dev->dev_addr);
+			prep_hsr(info, sw->main_dev, sw->main_dev->dev_addr);
 	}
 #endif
 }  /* sw_open_port */
@@ -9445,7 +9440,7 @@ static int kszphy_probe(struct phy_device *phydev)
 
 	p = phydev->mdio.addr;
 	phydev->priv = &sw->phydata[p];
-	phydev->interface = PHY_INTERFACE_MODE_MII;
+	phydev->interface = sw->interface;
 	return 0;
 }
 
@@ -9947,6 +9942,7 @@ static int ksz_probe(struct sw_priv *ks)
 {
 	struct ksz_sw *sw;
 	struct ksz_port_info *info;
+	bool rmii = false;
 	u16 id;
 	int i;
 	uint mib_port_count;
@@ -9959,6 +9955,7 @@ static int ksz_probe(struct sw_priv *ks)
 
 	ks->intr_mode = intr_mode ? IRQF_TRIGGER_FALLING :
 		IRQF_TRIGGER_LOW;
+	ks->intr_mode |= IRQF_ONESHOT;
 
 	mutex_init(&ks->hwlock);
 	mutex_init(&ks->lock);
@@ -9983,6 +9980,14 @@ static int ksz_probe(struct sw_priv *ks)
 		sw->reg->r8(sw, 0);
 #endif
 	ret = sw_chk_id(sw, &id);
+#ifdef CONFIG_HAVE_KSZ8863
+	if (ret > 0) {
+		u8 mode = sw->reg->r8(sw, REG_MODE_INDICATOR);
+
+		if (mode & PORT_3_RMII)
+			rmii = true;
+	}
+#endif
 	mutex_unlock(&ks->lock);
 	if (ret < 0) {
 		dev_err(ks->dev, "failed to read device ID(0x%x)\n", id);
@@ -10061,8 +10066,12 @@ dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 		info->state = media_disconnected;
 	}
 	sw->interface = PHY_INTERFACE_MODE_MII;
+	if (rmii)
+		sw->interface = PHY_INTERFACE_MODE_RMII;
 	info = get_port_info(sw, pi);
 	info->state = media_connected;
+	info->tx_rate = 100 * TX_RATE_UNIT;
+	info->duplex = 2;
 	info->lpa = 0x05e1;
 
 	sw_init_phy_priv(ks);

@@ -1,7 +1,7 @@
 /**
  * Microchip switch common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -7287,7 +7287,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (skb->len < ETH_ZLEN)
 		padlen = ETH_ZLEN - skb->len;
 	len = skb_tailroom(skb);
-	if (len < padlen) {
+	if (len < 1 + padlen) {
 		need_new_copy = true;
 		len = (skb->len + padlen + 4) & ~3;
 	}
@@ -7700,7 +7700,7 @@ static int setup_phylink(struct ksz_port *port)
 				  &sw_port_phylink_mac_ops);
 	if (IS_ERR(port->pl)) {
 		netdev_err(port->netdev,
-			   "error creating PHYLIK: %ld\n", PTR_ERR(port->pl));
+			   "error creating PHYLINK: %ld\n", PTR_ERR(port->pl));
 		return PTR_ERR(port->pl);
 	}
 
@@ -7767,14 +7767,6 @@ dbg_msg(" reg: %d\n", reg);
 				ethernet = of_parse_phandle(port, "ethernet", 0);
 				if (ethernet)
 dbg_msg(" found eth\n");
-				if (ethernet) {
-					name = of_get_property(port,
-							       "phy-mode",
-							       NULL);
-					if (name && !strcmp(name, "rmii"))
-						sw->interface =
-							PHY_INTERFACE_MODE_RMII;
-				}
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
@@ -9445,7 +9437,7 @@ static int kszphy_probe(struct phy_device *phydev)
 
 	p = phydev->mdio.addr;
 	phydev->priv = &sw->phydata[p];
-	phydev->interface = PHY_INTERFACE_MODE_MII;
+	phydev->interface = sw->interface;
 	return 0;
 }
 
@@ -9947,6 +9939,7 @@ static int ksz_probe(struct sw_priv *ks)
 {
 	struct ksz_sw *sw;
 	struct ksz_port_info *info;
+	bool rmii = false;
 	u16 id;
 	int i;
 	uint mib_port_count;
@@ -9959,6 +9952,7 @@ static int ksz_probe(struct sw_priv *ks)
 
 	ks->intr_mode = intr_mode ? IRQF_TRIGGER_FALLING :
 		IRQF_TRIGGER_LOW;
+	ks->intr_mode |= IRQF_ONESHOT;
 
 	mutex_init(&ks->hwlock);
 	mutex_init(&ks->lock);
@@ -9983,6 +9977,14 @@ static int ksz_probe(struct sw_priv *ks)
 		sw->reg->r8(sw, 0);
 #endif
 	ret = sw_chk_id(sw, &id);
+#ifdef CONFIG_HAVE_KSZ8863
+	if (ret > 0) {
+		u8 mode = sw->reg->r8(sw, REG_MODE_INDICATOR);
+
+		if (mode & PORT_3_RMII)
+			rmii = true;
+	}
+#endif
 	mutex_unlock(&ks->lock);
 	if (ret < 0) {
 		dev_err(ks->dev, "failed to read device ID(0x%x)\n", id);
@@ -10061,8 +10063,12 @@ dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 		info->state = media_disconnected;
 	}
 	sw->interface = PHY_INTERFACE_MODE_MII;
+	if (rmii)
+		sw->interface = PHY_INTERFACE_MODE_RMII;
 	info = get_port_info(sw, pi);
 	info->state = media_connected;
+	info->tx_rate = 100 * TX_RATE_UNIT;
+	info->duplex = 2;
 	info->lpa = 0x05e1;
 
 	sw_init_phy_priv(ks);

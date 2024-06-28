@@ -1,7 +1,7 @@
 /**
  * Microchip switch common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -9640,6 +9640,7 @@ static int ksz_probe(struct sw_priv *ks)
 
 	ks->intr_mode = intr_mode ? IRQF_TRIGGER_FALLING :
 		IRQF_TRIGGER_LOW;
+	ks->intr_mode |= IRQF_ONESHOT;
 
 	mutex_init(&ks->hwlock);
 	mutex_init(&ks->lock);

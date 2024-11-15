@@ -8690,10 +8690,11 @@ static void sw_enable(struct ksz_sw *sw)
 				port_cfg_power(sw, port, false);
 		}
 	}
-	if (fewer)
-dbg_msg(" fewer: %d %d"NL, fewer, sw->eth_cnt);
-	if (fewer)
+	if (fewer) {
 		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, sw->PORT_MASK);
+		sw_cfg_default_vlan(sw, true);
+dbg_msg(" fewer: %d %d"NL, fewer, sw->eth_cnt);
+	}
 	if ((sw->dev_count > 1 && !sw->dev_offset) ||
 	    (sw->features & STP_SUPPORT)) {
 		u16 member;
@@ -14917,8 +14918,14 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
 	struct ksz_sw *sw = p->sw;
-	struct ksz_port_info *info = get_port_info(sw, sw->HOST_PORT);
+	struct ksz_port_info *info;
+	int index;
 
+	if (p->port_cnt == 1)
+		index = p->first_port;
+	else
+		index = 0;
+	info = get_port_info(sw, get_phy_port(sw, index));
 	if ((sw->dev_offset && p->port_cnt > 1) ||
 	    (!sw->dev_offset && !sw->phy_offset)) {
 		config->mac_capabilities = MAC_SYM_PAUSE | MAC_10 | MAC_100;
@@ -14936,6 +14943,11 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 		__set_bit(PHY_INTERFACE_MODE_RGMII_ID,
 			  config->supported_interfaces);
 	}
+
+	/* The first network device that gets running determines which setting
+	 * to use to start the MAC, so host port has to be used.
+	 */
+	info = get_port_info(sw, get_phy_port(sw, 0));
 	s->interface = sw->interface;
 	s->speed = info->tx_rate / TX_RATE_UNIT;
 	s->duplex = 1;
@@ -16670,325 +16682,6 @@ static char **eth_proto[] = {
 static int iba = 1;
 #endif
 
-static uint sw_setup_zone(struct ksz_sw *sw, uint in_ports)
-{
-	int c;
-	int f;
-	int limit;
-	int m;
-	uint p;
-	uint q;
-	int w;
-	int *v;
-	char **s;
-	uint features;
-	struct ksz_dev_map *map;
-	uint ports;
-	uint used = 0;
-	int last_log_port = 0;
-	int last_phy_port = 0;
-	int last_vlan = 0;
-	uint left = (1 << sw->port_cnt) - 1;
-
-	if (multi_dev > 2) {
-		ports = in_ports;
-		goto setup_next;
-	}
-	q = 0;
-	ports = 0;
-	for (p = 0; p < sw->port_cnt - 1; p++) {
-		v = eth_ports[p];
-
-		/* No more port setting. */
-		if (!v || !*v)
-			break;
-		m = *v;
-		if (!(m & left)) {
-			left = 0;
-			break;
-		}
-
-		/* Find out how the ports are to be used. */
-		limit = 0;
-		w = last_vlan;
-		features = 0;
-		s = eth_proto[p];
-#ifdef CONFIG_KSZ_DLR
-		if (!strcmp(*s, "dlr")) {
-			features = DLR_HW;
-#ifdef CONFIG_1588_PTP
-			if (sw->features & PTP_HW) {
-				features |= VLAN_PORT;
-				sw->features |= VLAN_PORT | VLAN_PORT_TAGGING;
-			}
-#endif
-			limit = 2;
-			if (!w)
-				w = 1;
-		}
-#endif
-#ifdef CONFIG_KSZ_HSR
-		if (!strcmp(*s, "hsr")) {
-			features = HSR_HW;
-#ifdef CONFIG_1588_PTP
-			if (sw->features & PTP_HW) {
-				features |= VLAN_PORT;
-				sw->features |= VLAN_PORT | VLAN_PORT_TAGGING;
-			}
-#endif
-			limit = 2;
-			if (!w)
-				w = 1;
-		} else if (!strcmp(*s, "redbox")) {
-			features = HSR_REDBOX;
-			if (!w)
-				w = 1;
-			sw->overrides |= HSR_FORWARD;
-		} else if (!strcmp(*s, "redbox_")) {
-			features = HSR_REDBOX;
-			if (!w)
-				w = 1;
-		}
-#endif
-#ifdef CONFIG_KSZ_STP
-		if (!strcmp(*s, "stp")) {
-			features = STP_SUPPORT;
-		}
-#endif
-#ifdef CONFIG_1588_PTP
-		if (!features && !p) {
-			if (sw->features & PTP_HW) {
-				features |= VLAN_PORT;
-				sw->features |= VLAN_PORT | VLAN_PORT_TAGGING;
-			}
-		}
-#endif
-
-		m &= ~((1 << last_phy_port) - 1);
-		m &= left;
-
-		/* No more legitimate port. */
-		if (!m)
-			break;
-
-		v = eth_vlans[p];
-		if (!w && (!v || !*v))
-			break;
-		if (*v)
-			w = *v;
-
-		/* Check VLAN id is unused. */
-		for (q = 0; q < p; q++) {
-			if (w > 1 && w == sw->eth_maps[q].vlan)
-				w = last_vlan + 1;
-		}
-		c = 0;
-		f = -1;
-		for (q = p; q < sw->port_cnt - 1; q++) {
-			if (m & (1 << q)) {
-				if (f < 0)
-					f = last_log_port;
-				++c;
-				++last_log_port;
-
-				/* Limit to certain ports. */
-				if (limit && c >= limit) {
-					if (!(used & features)) {
-						used |= features;
-						++q;
-						last_phy_port = q;
-						break;
-					}
-					features = 0;
-				}
-				last_phy_port = q + 1;
-			} else if (f >= 0) {
-				if (limit && c < limit)
-					features = 0;
-				break;
-			}
-		}
-		if (!c)
-			continue;
-		m &= (1 << q) - 1;
-		if (!p && c > 1)
-			used |= (features & VLAN_PORT);
-#ifdef CONFIG_KSZ_STP
-		if ((features & STP_SUPPORT) && c > 1) {
-			used |= (features & STP_SUPPORT);
-			stp = m;
-		}
-#endif
-#ifdef CONFIG_KSZ_DLR
-		if ((features & DLR_HW) && !(used & DLR_HW))
-			features = 0;
-#endif
-#ifdef CONFIG_KSZ_HSR
-		if ((features & HSR_HW) && !(used & HSR_HW))
-			features = 0;
-		if (features == HSR_REDBOX)
-			used |= features;
-#endif
-		++f;
-		map = &sw->eth_maps[p];
-		map->cnt = c;
-		map->mask = m;
-		map->first = f;
-		map->phy_id = f;
-		map->vlan = w & (4096 - 1);
-		map->proto = features;
-		if (last_vlan < w)
-			last_vlan = w;
-		ports |= m;
-#ifdef CONFIG_KSZ_DLR
-		if (features & DLR_HW) {
-			struct ksz_dlr_info *dlr = &sw->info->dlr;
-
-			c = 0;
-			f = 0;
-			do {
-				if (m & 1) {
-					dlr->ports[c++] = f;
-				}
-				m >>= 1;
-				++f;
-			} while (m && c < map->cnt);
-		}
-#endif
-#ifdef CONFIG_KSZ_HSR
-		if (features & HSR_HW) {
-			struct ksz_hsr_info *hsr = &sw->info->hsr;
-
-			c = 0;
-			f = 0;
-			do {
-				if (m & 1) {
-					hsr->ports[c++] = f;
-				}
-				m >>= 1;
-				++f;
-			} while (m && c < map->cnt);
-		}
-#endif
-	}
-
-	/* No VLAN devices specified. */
-	if (!p) {
-		ports = in_ports;
-		goto setup_next;
-	}
-
-	/* Not all ports are used. */
-	if (last_phy_port < sw->mib_port_cnt)
-		left &= ~((1 << last_phy_port) - 1);
-	else
-		left = 0;
-	if (multi_dev != 1)
-		left = 0;
-	features = 0;
-	s = eth_proto[p];
-#ifdef CONFIG_KSZ_STP
-	if (s && !strcmp(*s, "stp"))
-		features = STP_SUPPORT;
-#endif
-#ifdef CONFIG_KSZ_HSR
-	if (left && (used & HSR_HW)) {
-
-		/* Redbox is explicitly specified. */
-		if (used & HSR_REDBOX)
-			left = 0;
-		if ((used & HSR_HW) && !(used & HSR_REDBOX)) {
-			s = eth_proto[1];
-			if (!strcmp(*s, "redbox")) {
-				features = HSR_REDBOX;
-				used |= HSR_REDBOX;
-				sw->overrides |= HSR_FORWARD;
-			} else if (!strcmp(*s, "redbox_")) {
-				features = HSR_REDBOX;
-				used |= HSR_REDBOX;
-			}
-		}
-		if (used & HSR_REDBOX)
-			sw->features |= HSR_REDBOX;
-		else if (used & HSR_HW)
-			left = 0;
-	}
-#endif
-	if (left) {
-		m = left;
-		c = 0;
-		f = -1;
-		for (q = 0; q < sw->mib_port_cnt; q++) {
-			if (m & (1 << q)) {
-				if (f < 0)
-					f = last_log_port;
-				++c;
-			}
-		}
-		m &= (1 << q) - 1;
-		if ((features & STP_SUPPORT) && c > 1) {
-			used |= (features & STP_SUPPORT);
-			stp = m;
-		}
-		++f;
-		map = &sw->eth_maps[p];
-		map->cnt = c;
-		map->mask = m;
-		map->first = f;
-		map->phy_id = f;
-		map->vlan = ++last_vlan & (4096 - 1);
-		map->proto = features;
-		ports |= m;
-		p++;
-	}
-	if (p > 1)
-		sw->features |= SW_VLAN_DEV;
-	else if (multi_dev == 1)
-		multi_dev = 0;
-	sw->eth_cnt = p;
-	for (p = 0; p < sw->eth_cnt; p++) {
-		map = &sw->eth_maps[p];
-		dbg_msg("%d: %d:%d:%d m=%04x v=%03x %08x"NL,
-			p, map->first, map->cnt, map->phy_id,
-			map->mask, map->vlan, map->proto);
-	}
-
-setup_next:
-#ifdef CONFIG_KSZ_DLR
-	if (!(used & DLR_HW))
-		sw->features &= ~DLR_HW;
-	else
-		sw->features |= DLR_HW;
-#endif
-#ifdef CONFIG_KSZ_HSR
-	if (!(used & HSR_HW))
-		sw->features &= ~HSR_HW;
-	else
-		sw->features |= HSR_HW;
-#endif
-	if ((sw->features & (DLR_HW | HSR_HW)) || sw->eth_cnt > 1) {
-		if (multi_dev < 0)
-			multi_dev = 0;
-		if (stp <= 1)
-			stp = 0;
-		avb = 0;
-		sw->overrides &= ~USE_802_1X_AUTH;
-	}
-#ifdef CONFIG_KSZ_STP
-	if (stp > 0) {
-		sw->features |= STP_SUPPORT;
-	}
-#endif
-#ifdef CONFIG_1588_PTP
-	if (!(used & VLAN_PORT))
-		sw->features &= ~(VLAN_PORT | VLAN_PORT_TAGGING);
-	if (!avb)
-		sw->features &= ~AVB_SUPPORT;
-#endif
-dbg_msg("features: %x m:%d a:%d s:%x"NL, sw->features, multi_dev, avb, stp);
-	return ports;
-}  /* sw_setup_zone */
-
 static int phy_offset;
 
 static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
@@ -18660,6 +18353,19 @@ static struct ksz_port_mapping port_mappings[] = {
 
 static u8 port_map[8];
 
+static struct ksz_port_mapping *ksz_get_port_map(struct ksz_sw *sw, u8 id)
+{
+	struct ksz_port_mapping *map;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(port_mappings); i++) {
+		map = &port_mappings[i];
+		if (id == map->id)
+			return map;
+	}
+	return NULL;
+}
+
 static int ksz_setup_port_mappings(struct ksz_sw *sw, u8 id)
 {
 	struct ksz_port_mapping *map;
@@ -18721,6 +18427,41 @@ static void ksz_update_port_mappings(struct ksz_sw *sw, u8 id, int *host_port)
 		*host_port = map->map[n];
 }  /* ksz_update_port_mappings */
 
+static u8 ksz_next_avail_port(struct ksz_sw *sw, u8 p)
+{
+	bool found = false;
+	int n;
+
+	while (!found && p < sw->port_cnt) {
+		p++;
+		for (n = 0; n <= sw->mib_port_cnt; n++) {
+			if (p == port_map[n]) {
+				found = true;
+				break;
+			}
+		}
+	}
+	if (!found)
+		p = 0;
+	if (p == sw->HOST_PORT + 1)
+		p++;
+	return p;
+}
+	
+static void ksz_update_new_mapping(struct ksz_sw *sw, u8 id, u8 new_map[])
+{
+	struct ksz_port_mapping *map;
+	uint n;
+
+	map = ksz_get_port_map(sw, id);
+	if (!map)
+		return;
+	for (n = 0; n < map->cnt - 1; n++) {
+		map->map[n] = new_map[n];
+		port_map[n] = new_map[n];
+	}
+}  /* ksz_update_new_mapping */
+
 static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 {
 	struct ksz_port_mapping *map;
@@ -18769,7 +18510,7 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info = &sw->port_info[n];
 		ports |= info->phy_m;
 	}
-dbg_msg("ports: %x"NL, ports);
+dbg_msg("phy ports: %x"NL, ports);
 
 	for (n = 0; n <= i; n++) {
 		info = &sw->port_info[n];
@@ -18829,6 +18570,322 @@ dbg_msg(" hsr member: %d:%d %x"NL, hsr->ports[0], hsr->ports[1], hsr->member);
 	}
 #endif
 }  /* ksz_setup_logical_ports */
+
+static uint sw_setup_zone(struct ksz_sw *sw, u8 id, uint in_ports)
+{
+	int c;
+	int f;
+	int limit;
+	int m;
+	uint p;
+	uint q;
+	int w;
+	int *v;
+	char **s;
+	uint features;
+	struct ksz_dev_map *map;
+	uint ports;
+	uint used = 0;
+	int last_log_port = 0;
+	int last_vlan = 0;
+	uint left = (1 << sw->mib_port_cnt) - 1;
+	u8 new_map[8];
+
+	if (multi_dev > 2) {
+		ports = in_ports;
+		goto setup_next;
+	}
+	memset(new_map, 0, sizeof(new_map));
+	left &= in_ports;
+	q = 0;
+	for (p = 0; p < sw->port_cnt - 1; p++) {
+		v = eth_ports[p];
+
+		/* No more port setting. */
+		if (!v || !*v)
+			break;
+		m = *v;
+		if (!(m & left)) {
+			left = 0;
+			break;
+		}
+
+		/* Find out how the ports are to be used. */
+		limit = 0;
+		w = last_vlan;
+		features = 0;
+		s = eth_proto[p];
+#ifdef CONFIG_KSZ_DLR
+		if (!strcmp(*s, "dlr")) {
+			features = DLR_HW;
+#ifdef CONFIG_1588_PTP
+			if (sw->features & PTP_HW) {
+				features |= VLAN_PORT;
+				sw->features |= VLAN_PORT | VLAN_PORT_TAGGING;
+			}
+#endif
+			limit = 2;
+			if (!w)
+				w = 1;
+		}
+#endif
+#ifdef CONFIG_KSZ_HSR
+		if (!strcmp(*s, "hsr")) {
+			features = HSR_HW;
+#ifdef CONFIG_1588_PTP
+			if (sw->features & PTP_HW) {
+				features |= VLAN_PORT;
+				sw->features |= VLAN_PORT | VLAN_PORT_TAGGING;
+			}
+#endif
+			limit = 2;
+			if (!w)
+				w = 1;
+		} else if (!strcmp(*s, "redbox")) {
+			features = HSR_REDBOX;
+			if (!w)
+				w = 1;
+			sw->overrides |= HSR_FORWARD;
+		} else if (!strcmp(*s, "redbox_")) {
+			features = HSR_REDBOX;
+			if (!w)
+				w = 1;
+		}
+#endif
+#ifdef CONFIG_KSZ_STP
+		if (!strcmp(*s, "stp")) {
+			features = STP_SUPPORT;
+		}
+#endif
+#ifdef CONFIG_1588_PTP
+		if (!features && !p) {
+			if (sw->features & PTP_HW) {
+				features |= VLAN_PORT;
+				sw->features |= VLAN_PORT | VLAN_PORT_TAGGING;
+			}
+		}
+#endif
+
+		m &= left;
+
+		/* No more legitimate port. */
+		if (!m)
+			break;
+
+		v = eth_vlans[p];
+		if (!w && (!v || !*v))
+			break;
+		if (*v)
+			w = *v;
+
+		/* Check VLAN id is unused. */
+		for (q = 0; q < p; q++) {
+			if (w > 1 && w == sw->eth_maps[q].vlan)
+				w = last_vlan + 1;
+		}
+		c = 0;
+		f = -1;
+		for (q = 0; q < sw->port_cnt; q++) {
+			if (m & (1 << q)) {
+				uint i = ksz_next_avail_port(sw, q);
+
+				if (!i)
+					break;
+				new_map[last_log_port] = i;
+				if (f < 0)
+					f = last_log_port;
+				++c;
+				++last_log_port;
+
+				/* Limit to certain ports. */
+				if (limit && c >= limit) {
+					if (!(used & features)) {
+						used |= features;
+						++q;
+						break;
+					}
+					features = 0;
+				}
+			}
+		}
+		if (!c)
+			continue;
+		if (!p && c > 1)
+			used |= (features & VLAN_PORT);
+#ifdef CONFIG_KSZ_STP
+		if ((features & STP_SUPPORT) && c > 1) {
+			used |= (features & STP_SUPPORT);
+			stp = m;
+		}
+#endif
+#ifdef CONFIG_KSZ_DLR
+		if ((features & DLR_HW) && !(used & DLR_HW))
+			features = 0;
+#endif
+#ifdef CONFIG_KSZ_HSR
+		if ((features & HSR_HW) && !(used & HSR_HW))
+			features = 0;
+		if (features == HSR_REDBOX)
+			used |= features;
+#endif
+		++f;
+		map = &sw->eth_maps[p];
+		map->cnt = c;
+		map->mask = m;
+		map->first = f;
+		map->phy_id = f;
+		map->vlan = w & (4096 - 1);
+		map->proto = features;
+		if (last_vlan < w)
+			last_vlan = w;
+		left &= ~m;
+#ifdef CONFIG_KSZ_DLR
+		if (features & DLR_HW) {
+			struct ksz_dlr_info *dlr = &sw->info->dlr;
+
+			dlr->ports[0] = f - 1;
+			dlr->ports[1] = f;
+		}
+#endif
+#ifdef CONFIG_KSZ_HSR
+		if (features & HSR_HW) {
+			struct ksz_hsr_info *hsr = &sw->info->hsr;
+
+			hsr->ports[0] = f - 1;
+			hsr->ports[1] = f;
+		}
+#endif
+	}
+
+	/* No VLAN devices specified. */
+	if (!p) {
+		ports = in_ports;
+		goto setup_next;
+	}
+
+	ports = (1 << last_log_port) - 1;
+	if (left) {
+		m = left;
+		c = 0;
+		f = -1;
+		for (q = 0; q < sw->mib_port_cnt; q++) {
+			if (m & (1 << q)) {
+				uint i = ksz_next_avail_port(sw, q);
+
+				if (!i)
+					break;
+				new_map[last_log_port] = i;
+				if (f < 0)
+					f = last_log_port;
+				++c;
+				++last_log_port;
+			}
+		}
+	}
+dbg_msg("%d %d %d %d %d %d %d\n",
+new_map[0],
+new_map[1],
+new_map[2],
+new_map[3],
+new_map[4],
+new_map[5],
+new_map[6]);
+	ksz_update_new_mapping(sw, id, new_map);
+	if (multi_dev != 1)
+		left = 0;
+	features = 0;
+	s = eth_proto[p];
+#ifdef CONFIG_KSZ_STP
+	if (s && !strcmp(*s, "stp"))
+		features = STP_SUPPORT;
+#endif
+#ifdef CONFIG_KSZ_HSR
+	if (left && (used & HSR_HW)) {
+
+		/* Redbox is explicitly specified. */
+		if (used & HSR_REDBOX)
+			left = 0;
+		if ((used & HSR_HW) && !(used & HSR_REDBOX)) {
+			s = eth_proto[1];
+			if (!strcmp(*s, "redbox")) {
+				features = HSR_REDBOX;
+				used |= HSR_REDBOX;
+				sw->overrides |= HSR_FORWARD;
+			} else if (!strcmp(*s, "redbox_")) {
+				features = HSR_REDBOX;
+				used |= HSR_REDBOX;
+			}
+		}
+		if (used & HSR_REDBOX)
+			sw->features |= HSR_REDBOX;
+		else if (used & HSR_HW)
+			left = 0;
+	}
+#endif
+	if (left) {
+		m = left;
+		if ((features & STP_SUPPORT) && c > 1) {
+			used |= (features & STP_SUPPORT);
+			stp = m;
+		}
+		++f;
+		map = &sw->eth_maps[p];
+		map->cnt = c;
+		map->mask = m;
+		map->first = f;
+		map->phy_id = f;
+		map->vlan = ++last_vlan & (4096 - 1);
+		map->proto = features;
+		p++;
+		ports = (1 << last_log_port) - 1;
+	}
+	if (p > 1)
+		sw->features |= SW_VLAN_DEV;
+	else if (multi_dev == 1)
+		multi_dev = 0;
+	sw->eth_cnt = p;
+	for (p = 0; p < sw->eth_cnt; p++) {
+		map = &sw->eth_maps[p];
+		dbg_msg("%d: %d:%d:%d m=%04x v=%03x %08x"NL,
+			p, map->first, map->cnt, map->phy_id,
+			map->mask, map->vlan, map->proto);
+	}
+
+setup_next:
+#ifdef CONFIG_KSZ_DLR
+	if (!(used & DLR_HW))
+		sw->features &= ~DLR_HW;
+	else
+		sw->features |= DLR_HW;
+#endif
+#ifdef CONFIG_KSZ_HSR
+	if (!(used & HSR_HW))
+		sw->features &= ~HSR_HW;
+	else
+		sw->features |= HSR_HW;
+#endif
+	if ((sw->features & (DLR_HW | HSR_HW)) || sw->eth_cnt > 1) {
+		if (multi_dev < 0)
+			multi_dev = 0;
+		if (stp <= 1)
+			stp = 0;
+		avb = 0;
+		sw->overrides &= ~USE_802_1X_AUTH;
+	}
+#ifdef CONFIG_KSZ_STP
+	if (stp > 0) {
+		sw->features |= STP_SUPPORT;
+	}
+#endif
+#ifdef CONFIG_1588_PTP
+	if (!(used & VLAN_PORT))
+		sw->features &= ~(VLAN_PORT | VLAN_PORT_TAGGING);
+	if (!avb)
+		sw->features &= ~AVB_SUPPORT;
+#endif
+dbg_msg("features: %x m:%d a:%d s:%x"NL, sw->features, multi_dev, avb, stp);
+	return ports;
+}  /* sw_setup_zone */
 
 static int ksz_probe_next(struct sw_priv *ks)
 {
@@ -19068,7 +19125,7 @@ dbg_msg("avb=%d  rr=%d  giga=%d"NL,
 	/* No specific ports are specified. */
 	if (!ports)
 		ports = (1 << port_count) - 1;
-dbg_msg("init ports: %x"NL, ports);
+dbg_msg("init log ports: %x"NL, ports);
 
 	sw->dev_count = 1;
 
@@ -19090,7 +19147,7 @@ dbg_msg("init ports: %x"NL, ports);
 			avb = 1;
 	}
 
-	ports = sw_setup_zone(sw, ports);
+	ports = sw_setup_zone(sw, sku, ports);
 
 	if (multi_dev < 0 && (avb || sw->features & (PTP_HW) ||
 	    sw->overrides & (USE_802_1X_AUTH))) {

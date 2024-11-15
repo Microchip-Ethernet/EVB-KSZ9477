@@ -1048,16 +1048,19 @@ static inline void set_tx_tag_queue(struct ksz_sw *sw,
 	tag->ports |= (q << sw->TAIL_TAG_SHIFT);
 }
 
+#ifdef CONFIG_KSZ_HSR
 static inline bool using_hsr(struct ksz_sw *sw)
 {
 	return (sw->features & HSR_HW);
 }
+#endif
 
 static inline bool using_tail_tag(struct ksz_sw *sw)
 {
 	return (sw->overrides & TAIL_TAGGING);
 }
 
+#ifdef CONFIG_KSZ_IBA
 static inline bool iba_stopped(void *ptr)
 {
 	struct ksz_sw *sw = ptr;
@@ -1067,6 +1070,7 @@ static inline bool iba_stopped(void *ptr)
 		return true;
 	return false;
 }
+#endif
 
 struct lan_attributes {
 	int info;

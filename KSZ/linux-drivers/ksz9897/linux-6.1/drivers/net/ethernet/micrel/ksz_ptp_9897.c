@@ -2922,7 +2922,6 @@ static void ptp_check(struct ptp_info *ptp)
 static void ptp_start(struct ptp_info *ptp, int init)
 {
 	struct ksz_sw *sw = ptp->parent;
-	struct ksz_iba_info *iba = &sw->info->iba;
 	u32 ctrl;
 	u16 val;
 	struct timespec64 ts;
@@ -2935,12 +2934,15 @@ static void ptp_start(struct ptp_info *ptp, int init)
 			ptp->test_access_time(ptp);
 		ptp_init_hw(ptp);
 	} else {
-		if (init && (sw->features & NEW_CAP))
-			ptp_hw_enable(ptp);
+#ifdef CONFIG_KSZ_IBA
+		struct ksz_iba_info *iba = &sw->info->iba;
 
 		/* Update access time calculated with SPI. */
 		if (iba->use_iba && ptp->get_delay > 80000)
 			ptp->get_delay = 80000;
+#endif
+		if (init && (sw->features & NEW_CAP))
+			ptp_hw_enable(ptp);
 	}
 	ptp->ops->acquire(ptp);
 	ctrl = sw->reg->r16(sw, REG_PTP_MSG_CONF1);

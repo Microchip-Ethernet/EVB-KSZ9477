@@ -790,7 +790,7 @@ static void prep_sw_dev(struct ksz_sw *sw, struct ksz_mac *priv, int i,
 	/* MAC driver uses phylink. */
 	if (sw->phylink_ops) {
 		/* Use the phylink created by the switch driver. */
-		if (!priv->phylink)
+		if (!priv->phylink && !IS_ERR(priv->port.pl))
 			priv->phylink = priv->port.pl;
 		return;
 	}

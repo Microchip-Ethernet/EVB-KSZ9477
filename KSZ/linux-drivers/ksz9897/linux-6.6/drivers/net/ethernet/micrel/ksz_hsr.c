@@ -1,7 +1,7 @@
 /**
  * Microchip HSR code
  *
- * Copyright (c) 2016-2023 Microchip Technology Inc.
+ * Copyright (c) 2016-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright 2011-2014 Autronica Fire and Security AS
@@ -1696,7 +1696,7 @@ static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 	int forward;
 	int ret = 2;
 
-	if (!info->redbox)
+	if (!info->redbox_up)
 		return ret;
 
 	/* Stop processing if coming from HSR ports. */
@@ -2380,6 +2380,10 @@ static void sw_setup_hsr(struct ksz_sw *sw)
 
 static void stop_hsr(struct ksz_hsr_info *info)
 {
+	info->hsr_up = false;
+
+	/* Redbox should not be running .*/
+	info->redbox_up = false;
 	hsr_dev_destroy(info);
 }
 

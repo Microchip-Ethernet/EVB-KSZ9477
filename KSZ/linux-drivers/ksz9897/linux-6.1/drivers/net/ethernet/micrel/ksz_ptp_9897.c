@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -2991,6 +2991,12 @@ static void ptp_start(struct ptp_info *ptp, int init)
 		ptp->forward |= FWD_STP_DEV;
 	else if (sw->features & VLAN_PORT_TAGGING)
 		ptp->forward |= FWD_VLAN_DEV;
+
+#ifdef CONFIG_KSZ_HSR
+	/* The bridge device is used for forwarding. */
+	if ((sw->features & HSR_REDBOX) && !(sw->overrides & HSR_FORWARD))
+		ptp->forward = FWD_MAIN_DEV;
+#endif
 	ptp->def_forward = ptp->forward;
 }  /* ptp_start */
 

@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2024 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -2922,7 +2922,6 @@ static void ptp_check(struct ptp_info *ptp)
 static void ptp_start(struct ptp_info *ptp, int init)
 {
 	struct ksz_sw *sw = ptp->parent;
-	struct ksz_iba_info *iba = &sw->info->iba;
 	u32 ctrl;
 	u16 val;
 	struct timespec64 ts;
@@ -2935,12 +2934,15 @@ static void ptp_start(struct ptp_info *ptp, int init)
 			ptp->test_access_time(ptp);
 		ptp_init_hw(ptp);
 	} else {
-		if (init && (sw->features & NEW_CAP))
-			ptp_hw_enable(ptp);
+#ifdef CONFIG_KSZ_IBA
+		struct ksz_iba_info *iba = &sw->info->iba;
 
 		/* Update access time calculated with SPI. */
 		if (iba->use_iba && ptp->get_delay > 80000)
 			ptp->get_delay = 80000;
+#endif
+		if (init && (sw->features & NEW_CAP))
+			ptp_hw_enable(ptp);
 	}
 	ptp->ops->acquire(ptp);
 	ctrl = sw->reg->r16(sw, REG_PTP_MSG_CONF1);
@@ -2989,6 +2991,12 @@ static void ptp_start(struct ptp_info *ptp, int init)
 		ptp->forward |= FWD_STP_DEV;
 	else if (sw->features & VLAN_PORT_TAGGING)
 		ptp->forward |= FWD_VLAN_DEV;
+
+#ifdef CONFIG_KSZ_HSR
+	/* The bridge device is used for forwarding. */
+	if ((sw->features & HSR_REDBOX) && !(sw->overrides & HSR_FORWARD))
+		ptp->forward = FWD_MAIN_DEV;
+#endif
 	ptp->def_forward = ptp->forward;
 }  /* ptp_start */
 
@@ -3682,99 +3690,6 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 	err = ptp_hwtstamp_set(ptp, &kconfig, ports);
 	if (err)
 		return err;
-#if 0
-	/* reserved for future extensions */
-	if (config.flags)
-		return -EINVAL;
-
-	switch (config.tx_type) {
-	case HWTSTAMP_TX_OFF:
-		ptp->tx_en_ports &= ~ports;
-		if (!ptp->tx_en_ports)
-			ptp->tx_en &= ~7;
-		if (!(ptp->tx_en & 1))
-			ptp->tx_en &= ~(1 << 8);
-		break;
-	case HWTSTAMP_TX_ONESTEP_P2P:
-		ptp->tx_en |= 6;
-		break;
-	case HWTSTAMP_TX_ONESTEP_SYNC:
-		ptp->tx_en |= 2;
-		break;
-	case HWTSTAMP_TX_ON:
-		break;
-	default:
-		return -ERANGE;
-	}
-	if (config.tx_type != HWTSTAMP_TX_OFF) {
-
-		/* PTP stack can use PTP driver API to setup mode. */
-		if (!ptp->use_own_api && !(ptp->tx_en & 1)) {
-			u16 mode = ptp->mode;
-
-			mode &= ~(PTP_1STEP | PTP_TC_P2P | PTP_MASTER);
-			mode |= PTP_MASTER;
-			if (ptp->tx_en & 2) {
-				mode |= PTP_1STEP;
-				if (ptp->tx_en & 4)
-					mode |= PTP_TC_P2P;
-			} else {
-#ifdef USE_2_STEP_WORKAROUND
-				/* Workaround for 2-step clock issues. */
-				ptp->need_1_step_clock_oper = true;
-				ptp->need_2_step_resp_help = true;
-#endif
-
-				/* Assume stack will forward everything. */
-				mode |= PTP_802_1AS;
-			}
-			ptp_acquire(ptp);
-			set_ptp_mode(ptp, mode);
-			ptp->op_mode = 1;
-			ptp_release(ptp);
-		}
-
-		/* Default is to include tx latency in tx timestamp. */
-		if (!(ptp->tx_en & 1))
-			ptp->tx_en |= (1 << 8);
-		ptp->tx_en_ports |= ports;
-		ptp->tx_en |= 1;
-	}
-
-	switch (config.rx_filter) {
-	case HWTSTAMP_FILTER_NONE:
-		ptp->rx_en_ports &= ~ports;
-		if (!ptp->rx_en_ports)
-			ptp->rx_en &= ~1;
-		if (!(ptp->rx_en & 1))
-			ptp->rx_en &= ~(1 << 8);
-		ptp_exit_state(ptp);
-		break;
-	case HWTSTAMP_FILTER_PTP_V2_L2_SYNC:
-	case HWTSTAMP_FILTER_PTP_V2_L4_SYNC:
-		ptp_acquire(ptp);
-		set_ptp_mode(ptp, ptp->mode & ~PTP_MASTER);
-		ptp_release(ptp);
-		break;
-	case HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ:
-	case HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ:
-		ptp_acquire(ptp);
-		set_ptp_mode(ptp, ptp->mode | PTP_MASTER);
-		ptp_release(ptp);
-		break;
-	case HWTSTAMP_FILTER_ALL:
-	case HWTSTAMP_FILTER_PTP_V2_EVENT:
-	default:
-		ptp_init_state(ptp);
-
-		/* Default is to include rx latency in rx timestamp. */
-		if (!(ptp->rx_en & 1))
-			ptp->rx_en |= (1 << 8);
-		ptp->rx_en_ports |= ports;
-		ptp->rx_en |= 1;
-		break;
-	}
-#endif
 
 	return copy_to_user(ifr->ifr_data, &config, sizeof(config)) ?
 		-EFAULT : 0;

@@ -239,10 +239,6 @@ static struct hsr_node *hsr_add_node(struct hsr_priv *hsr,
 	if (!new_node)
 		return NULL;
 
-#ifdef CONFIG_KSZ_SWITCH
-dbg_msg("%s %x %02x:%02x:%02x:%02x:%02x:%02x %04x %d\n", __func__, (int)new_node,
-addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], seq_out, hsr_dev);
-#endif
 	ether_addr_copy(new_node->macaddress_A, addr);
 	spin_lock_init(&new_node->seq_out_lock);
 
@@ -256,6 +252,12 @@ addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], seq_out, hsr_dev);
 	}
 	for (i = 0; i < HSR_PT_PORTS; i++)
 		new_node->seq_out[i] = seq_out;
+
+#ifdef CONFIG_KSZ_SWITCH
+dbg_msg("%s %x %02x:%02x:%02x:%02x:%02x:%02x %04x %d\n", __func__,
+(int)new_node,
+addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], seq_out, hsr_dev);
+#endif
 
 	if (san && hsr->proto_ops->handle_san_frame)
 		hsr->proto_ops->handle_san_frame(san, rx_port, new_node);
@@ -593,8 +595,14 @@ static struct hsr_node *hsr_addr_chk_dest(struct hsr_priv *hsr,
 	node_dst = find_node_by_addr_A(&hsr->node_db,
 				       eth_hdr(skb)->h_dest);
 	if (!node_dst) {
-dbg_msg("%02x %02x %02x %02x %02x %02x\n",
-	skb->data[0], skb->data[1], skb->data[2], skb->data[3], skb->data[4], skb->data[5]);
+#ifdef CONFIG_KSZ_SWITCH
+		struct ksz_hsr_info *info = container_of(hsr,
+			struct ksz_hsr_info, hsr);
+
+		/* Do not give a warning when running Redbox. */
+		if (info->redbox)
+			return NULL;
+#endif
 		if (net_ratelimit())
 			netdev_err(skb->dev, "%s: Unknown node\n", __func__);
 		return NULL;
@@ -1352,7 +1360,7 @@ static bool is_supervision_frame(struct hsr_priv *hsr, struct sk_buff *skb)
 		return false;
 
 	/* Get next tlv */
-	total_length += sizeof(struct hsr_sup_tlv) + hsr_sup_tag->tlv.HSR_TLV_length;
+	total_length += hsr_sup_tag->tlv.HSR_TLV_length;
 	if (!pskb_may_pull(skb, total_length))
 		return false;
 	skb_pull(skb, total_length);
@@ -1947,7 +1955,6 @@ static void hsr_forward_do(struct hsr_frame_info *frame)
 				frame->skb_out = frame->skb_std;
 				skb = frame->skb_std;
 			} else {
-dbg_msg(" new in\n");
 				skb = __pskb_copy(frame->skb_std,
 						  skb_headroom(frame->skb_std) +
 						  HSR_HLEN, GFP_ATOMIC);
@@ -2260,7 +2267,8 @@ static int fill_frame_info(struct hsr_frame_info *frame,
 			frame->is_redbox_dest = true;
 			if ((frame->node_dst && frame->node_dst->slave))
 				frame->is_redbox_exclusive = true;
-			else if (!frame->is_hsr_dest)
+			else if (!frame->is_hsr_dest &&
+				 port->type == HSR_PT_MASTER)
 				frame->is_redbox_exclusive = true;
 
 			/* Do not forward to host. */
@@ -3417,6 +3425,16 @@ static bool hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb)
 		/* Remove the fixed entries in MAC table. */
 		if (!node->slave)
 			proc_hsr_cfg(info, node->macaddress_A, 0);
+#if 1
+		if (node->slave == 2)
+dbg_msg("renew: %02x:%02x:%02x:%02x:%02x:%02x\n",
+node->macaddress_A[0],
+node->macaddress_A[1],
+node->macaddress_A[2],
+node->macaddress_A[3],
+node->macaddress_A[4],
+node->macaddress_A[5]);
+#endif
 		node->slave = 1;
 		node->time_in[HSR_PT_SLAVE_A] = jiffies;
 		node->time_in_stale[HSR_PT_SLAVE_A] = false;
@@ -3902,6 +3920,9 @@ static void sw_setup_hsr(struct ksz_sw *sw)
 static void stop_hsr(struct ksz_hsr_info *info)
 {
 	info->hsr_up = false;
+
+	/* Redbox should not be running. */
+	info->redbox_up = false;
 #ifdef CONFIG_HAVE_HSR_HW
 	cancel_delayed_work_sync(&info->chk_ring);
 #endif

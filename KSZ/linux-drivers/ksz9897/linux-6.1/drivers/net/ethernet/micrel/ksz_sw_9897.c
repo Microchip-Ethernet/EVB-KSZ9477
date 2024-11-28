@@ -14207,6 +14207,7 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 		/* Default pkt_type is PACKET_HOST. */
 		if (skb->pkt_type == PACKET_HOST)
 			skb->pkt_type = PACKET_OUTGOING;
+		skb_reset_mac_header(skb);
 		skb_reset_mac_len(skb);
 		member = hsr_forward_skb(skb, from);
 		if (!member)
@@ -14917,8 +14918,8 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 					    struct phylink_link_state *s)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
-	struct ksz_sw *sw = p->sw;
 	struct ksz_port_info *info;
+	struct ksz_sw *sw = p->sw;
 	int index;
 
 	if (p->port_cnt == 1)
@@ -14947,7 +14948,7 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 	/* The first network device that gets running determines which setting
 	 * to use to start the MAC, so host port has to be used.
 	 */
-	info = get_port_info(sw, get_phy_port(sw, 0));
+	info = get_port_info(sw, sw->HOST_PORT);
 	s->interface = sw->interface;
 	s->speed = info->tx_rate / TX_RATE_UNIT;
 	s->duplex = 1;

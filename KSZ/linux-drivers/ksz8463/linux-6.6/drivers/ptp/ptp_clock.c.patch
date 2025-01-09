@@ -1,0 +1,21 @@
+diff -Napur linux-6.6.6-orig/drivers/ptp/ptp_clock.c linux-6.6.6/drivers/ptp/ptp_clock.c
+--- linux-6.6.6-orig/drivers/ptp/ptp_clock.c	2023-12-11 01:40:17.000000000 -0800
++++ linux-6.6.6/drivers/ptp/ptp_clock.c	2023-12-11 19:10:42.324088860 -0800
+@@ -149,6 +149,17 @@ static int ptp_clock_adjtime(struct posi
+ 		}
+ 	} else if (tx->modes == 0) {
+ 		tx->freq = ptp->dialed_frequency;
++#if defined(CONFIG_KSZ_PTP) || defined(CONFIG_LAN937X_PTP)
++		do {
++			s64 freq;
++
++			err = ops->gettime64(ops, NULL);
++			freq = err;
++			freq <<= 13;
++			freq = div64_s64(freq, 125);
++			tx->freq = freq;
++		} while (0);
++#endif
+ 		err = 0;
+ 	}
+ 

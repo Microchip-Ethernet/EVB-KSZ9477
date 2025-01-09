@@ -18,6 +18,11 @@
 #undef CONFIG_KSZ_DLR
 #undef CONFIG_KSZ_HSR
 
+#if defined(CONFIG_SOC_SAM9X7)
+/* Switch interrupt does not work properly in SAM9X75 when starting early. */
+#define CONFIG_DELAY_REQUEST_INTR
+#endif
+
 
 #include "ksz_common.h"
 

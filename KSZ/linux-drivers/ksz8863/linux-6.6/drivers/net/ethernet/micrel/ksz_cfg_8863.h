@@ -21,6 +21,12 @@
 /* KSZ8463 and KSZ8863 use same ksz_sw.c code. */
 #undef CONFIG_HAVE_KSZ8463
 
+#if defined(CONFIG_SOC_SAM9X7)
+/* Switch interrupt does not work properly in SAM9X75 when starting early. */
+#define CONFIG_DELAY_REQUEST_INTR
+#endif
+
+
 #include "ksz_common.h"
 
 /* For ksz_request used by PTP or MRP driver. */

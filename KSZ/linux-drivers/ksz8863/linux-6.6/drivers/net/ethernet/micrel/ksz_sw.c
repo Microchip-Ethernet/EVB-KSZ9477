@@ -1,7 +1,7 @@
 /**
  * Microchip switch common code
  *
- * Copyright (c) 2015-2024 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -4433,6 +4433,20 @@ static int sw_reg_get(struct ksz_sw *sw, u32 reg, size_t count, char *buf)
 		if (check_sw_reg_range(reg))
 			*addr = SW_R(sw, reg);
 	}
+
+	/* 16-bit access with odd address. */
+	if (SW_SIZE != 1 && (reg & 1)) {
+		/*
+		 * Return zero to let the calling program know the boundary
+		 * must be 16-bit.
+		 */
+		if (!(count & 1))
+			i = 0;
+		else if (count == 1)
+			buf[0] = buf[1];
+	}
+	if (count == 1)
+		i = 1;
 	return i;
 }
 
@@ -4442,6 +4456,19 @@ static int sw_reg_set(struct ksz_sw *sw, u32 reg, size_t count, char *buf)
 	SW_D *addr;
 
 	addr = (SW_D *) buf;
+
+	/* 16-bit access with 8-bit write. */
+	if (SW_SIZE != 1 && count == 1) {
+		SW_D tmp = SW_R(sw, reg);
+
+		if (reg & 1)
+			tmp = (tmp & 0x00ff) | (buf[0] << 8);
+		else
+			tmp = (tmp & 0xff00) | buf[0];
+		if (check_sw_reg_range(reg))
+			SW_W(sw, reg, tmp);
+		return 1;
+	}
 	for (i = 0; i < count; i += SW_SIZE, reg += SW_SIZE, addr++) {
 		if (check_sw_reg_range(reg))
 			SW_W(sw, reg, *addr);
@@ -7387,10 +7414,15 @@ static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	return skb;
 }  /* sw_final_skb */
 
+#ifdef CONFIG_DELAY_REQUEST_INTR
+static int sw_start_interrupt(struct sw_priv *ks, const char *name);
+#endif
+
 static void sw_start(struct ksz_sw *sw, const u8 *addr)
 {
 	int need_tail_tag = false;
 	int need_vlan = false;
+	int setup = true;
 
 	sw->ops->acquire(sw);
 	sw_setup(sw);
@@ -7470,7 +7502,22 @@ static void sw_start(struct ksz_sw *sw, const u8 *addr)
 	if (need_vlan) {
 		sw_ena_vlan(sw);
 	}
-	sw_ena_intr(sw);
+
+#ifdef CONFIG_DELAY_REQUEST_INTR
+	/* SAM9X75 switch interrupt does not work when requesting early. */
+	do {
+		struct sw_priv *ks = sw->dev;
+		int ret;
+
+		ret = sw_start_interrupt(ks, dev_name(ks->dev));
+		if (ret < 0) {
+			printk(KERN_WARNING "No switch interrupt"NL);
+			setup = false;
+		}
+	} while (0);
+#endif
+	if (setup)
+		sw_ena_intr(sw);
 	sw->ops->release(sw);
 
 #ifdef CONFIG_KSZ_STP
@@ -7593,14 +7640,25 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 					    struct phylink_link_state *s)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
+	struct ksz_port_info *info;
 	struct ksz_sw *sw = p->sw;
-	struct ksz_port_info *info = get_port_info(sw, sw->HOST_PORT);
+	int index;
 
+	if (p->port_cnt == 1)
+		index = p->first_port;
+	else
+		index = 0;
+	info = get_port_info(sw, get_phy_port(sw, index));
 	config->mac_capabilities = MAC_SYM_PAUSE | MAC_10 | MAC_100;
 	__set_bit(PHY_INTERFACE_MODE_MII,
 		  config->supported_interfaces);
 	__set_bit(PHY_INTERFACE_MODE_RMII,
 		  config->supported_interfaces);
+
+	/* The first network device that gets running determines which setting
+	 * to use to start the MAC, so host port has to be used.
+	 */
+	info = get_port_info(sw, sw->HOST_PORT);
 	s->interface = sw->interface;
 	s->speed = info->tx_rate / TX_RATE_UNIT;
 	s->duplex = 1;
@@ -9948,6 +10006,8 @@ static void ksz_probe_last(struct sw_priv *ks)
 	mutex_lock(&ks->lock);
 	sw_setup_intr(sw);
 	mutex_unlock(&ks->lock);
+
+#ifndef CONFIG_DELAY_REQUEST_INTR
 	ret = sw_start_interrupt(ks, dev_name(ks->dev));
 	if (ret < 0)
 		printk(KERN_WARNING "No switch interrupt\n");
@@ -9956,6 +10016,7 @@ static void ksz_probe_last(struct sw_priv *ks)
 		sw_ena_intr(sw);
 		mutex_unlock(&ks->lock);
 	}
+#endif
 #endif
 }
 

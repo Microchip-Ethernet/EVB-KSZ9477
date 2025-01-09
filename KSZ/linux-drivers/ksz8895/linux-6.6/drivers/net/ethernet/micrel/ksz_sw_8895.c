@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common code
  *
- * Copyright (c) 2015-2024 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -6875,10 +6875,15 @@ static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	return skb;
 }  /* sw_final_skb */
 
+#ifdef CONFIG_DELAY_REQUEST_INTR
+static int sw_start_interrupt(struct sw_priv *ks, const char *name);
+#endif
+
 static void sw_start(struct ksz_sw *sw, const u8 *addr)
 {
 	int need_tail_tag = false;
 	int need_vlan = false;
+	int setup = true;
 
 	sw->ops->acquire(sw);
 	sw_setup(sw);
@@ -6966,7 +6971,22 @@ static void sw_start(struct ksz_sw *sw, const u8 *addr)
 		sw->ops->acquire(sw);
 		sw_ena_vlan(sw);
 	}
-	sw_ena_intr(sw);
+
+#ifdef CONFIG_DELAY_REQUEST_INTR
+	/* SAM9X75 switch interrupt does not work when requesting early. */
+	do {
+		struct sw_priv *ks = sw->dev;
+		int ret;
+
+		ret = sw_start_interrupt(ks, dev_name(ks->dev));
+		if (ret < 0) {
+			printk(KERN_WARNING "No switch interrupt"NL);
+			setup = false;
+		}
+	} while (0);
+#endif
+	if (setup)
+		sw_ena_intr(sw);
 	sw->ops->release(sw);
 
 #ifdef CONFIG_KSZ_STP
@@ -7082,17 +7102,25 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 					    struct phylink_link_state *s)
 {
 	struct ksz_port *p = container_of(config, struct ksz_port, pl_config);
+	struct ksz_port_info *info;
 	struct ksz_sw *sw = p->sw;
-	struct ksz_port_info *info = get_port_info(sw, sw->HOST_PORT);
+	int index;
 
-	if ((sw->dev_offset && p->port_cnt > 1) ||
-	    (!sw->dev_offset && !sw->phy_offset)) {
-		config->mac_capabilities = MAC_SYM_PAUSE | MAC_10 | MAC_100;
-		__set_bit(PHY_INTERFACE_MODE_MII,
-			  config->supported_interfaces);
-		__set_bit(PHY_INTERFACE_MODE_RMII,
-			  config->supported_interfaces);
-	}
+	if (p->port_cnt == 1)
+		index = p->first_port;
+	else
+		index = 0;
+	info = get_port_info(sw, get_phy_port(sw, index));
+	config->mac_capabilities = MAC_SYM_PAUSE | MAC_10 | MAC_100;
+	__set_bit(PHY_INTERFACE_MODE_MII,
+		  config->supported_interfaces);
+	__set_bit(PHY_INTERFACE_MODE_RMII,
+		  config->supported_interfaces);
+
+	/* The first network device that gets running determines which setting
+	 * to use to start the MAC, so host port has to be used.
+	 */
+	info = get_port_info(sw, sw->HOST_PORT);
 	s->interface = sw->interface;
 	s->speed = info->tx_rate / TX_RATE_UNIT;
 	s->duplex = 1;
@@ -7196,6 +7224,8 @@ static int setup_phylink(struct ksz_port *port)
 	port->pl_config.type = PHYLINK_DEV;
 #endif
 	port->pl_config.get_fixed_state = sw_port_phylink_get_fixed_state;
+
+	sw_port_phylink_get_fixed_state(&port->pl_config, &port->pl_state);
 
 	port->pl = phylink_create(&port->pl_config, of_fwnode_handle(dn), mode,
 				  &sw_port_phylink_mac_ops);
@@ -9951,6 +9981,8 @@ dbg_msg("ports: %x\n", ports);
 	sw->reg->w8(sw, REG_INT_ENABLE, 0);
 	sw->reg->w8(sw, REG_INT_STATUS, ks->intr_mask);
 	mutex_unlock(&ks->lock);
+
+#ifndef CONFIG_DELAY_REQUEST_INTR
 	ret = sw_start_interrupt(ks, dev_name(ks->dev));
 	if (ret < 0)
 		printk(KERN_WARNING "No switch interrupt\n");
@@ -9959,6 +9991,7 @@ dbg_msg("ports: %x\n", ports);
 		sw->reg->w8(sw, REG_INT_ENABLE, ks->intr_mask);
 		mutex_unlock(&ks->lock);
 	}
+#endif
 
 	return 0;
 

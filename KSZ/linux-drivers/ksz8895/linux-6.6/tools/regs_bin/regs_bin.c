@@ -77,10 +77,14 @@ static void display_regs(uint first, size_t size, size_t count,
 	if (!fixed_size)
 		fixed_size = (size <= acc_size);
 	if (fixed_size && size > acc_size && (size == 4 || size == 2)) {
-		if (size == 4)
-			*buf_32 = ntohl(*buf_32);
-		else
+		if (size == 4) {
+			if (acc_size == 2)
+				*buf_32 = (buf_16[0] << 16) | buf_16[1];
+			else
+				*buf_32 = ntohl(*buf_32);
+		} else {
 			*buf_16 = ntohs(*buf_16);
+		}
 	}
 	if (fixed_size) {
 		char fmt[8];
@@ -270,6 +274,7 @@ static void get_cmd(FILE *fp)
 						if (num[0] & 1)
 							size = 1;
 						else if ((num[0] & 2) &&
+							 acc_size > 2 &&
 							 size > 2)
 							size = 2;
 					}
@@ -307,6 +312,7 @@ static void get_cmd(FILE *fp)
 						if (num[0] & 1)
 							size = 1;
 						else if ((num[0] & 2) &&
+							 acc_size > 2 &&
 							 size > 2)
 							size = 2;
 					}

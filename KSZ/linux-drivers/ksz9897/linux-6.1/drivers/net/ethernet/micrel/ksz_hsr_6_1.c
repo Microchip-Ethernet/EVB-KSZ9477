@@ -3522,8 +3522,10 @@ static void prep_hsr_addr(struct ksz_hsr_info *info, const u8 *src)
 {
 	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *)
 		info->master_sup_frame;
+	struct hsr_priv *hsr = &info->hsr;
 	struct hsr_sup_tlv *hsr_stype;
 	struct hsr_sup_payload *hsr_sp;
+	struct hsr_node *node;
 
 	memcpy(info->src_addr, src, ETH_ALEN);
 
@@ -3531,6 +3533,13 @@ static void prep_hsr_addr(struct ksz_hsr_info *info, const u8 *src)
 	hsr_stype = &info->master_hsr_stag->tlv;
 	hsr_sp = (struct hsr_sup_payload *)(hsr_stype + 1);
 	ether_addr_copy(hsr_sp->macaddress_A, info->src_addr);
+
+	node = list_first_or_null_rcu(&hsr->self_node_db, struct hsr_node,
+				      mac_list);
+	if (node) {
+		ether_addr_copy(node->macaddress_A, info->src_addr);
+		ether_addr_copy(node->macaddress_B, info->src_addr);
+	}
 }  /* prep_hsr_addr */
 
 static void prep_hsr_redbox_addr(struct ksz_hsr_info *info)

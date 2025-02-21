@@ -15058,6 +15058,8 @@ dbg_msg(" mode: %d\n", mode);
 err:
 	cnt = 0;
 #if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	if (sw->multi_dev == 0)
+		return 0;
 	dev_err(ks->dev, "Please fix the device tree for correct ports.");
 	cnt = -1;
 #endif
@@ -19063,6 +19065,7 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 	}
 	sw->sgmii_mode = sgmii;
 	sw->interface = PHY_INTERFACE_MODE_MII;
+	sw->multi_dev |= multi_dev;
 	if (setup_device_node(sw)) {
 		ret = -ENODEV;
 		goto err_platform;
@@ -19247,7 +19250,6 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 			sw->phy[i] = &sw->phy_map[i];
 	}
 
-	sw->multi_dev |= multi_dev;
 	sw->stp |= stp;
 	sw->fast_aging |= fast_aging;
 #ifdef CONFIG_KSZ_STP

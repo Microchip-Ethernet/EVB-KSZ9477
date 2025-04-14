@@ -33,6 +33,9 @@
 #if 1
 #define USE_2_STEP_WORKAROUND
 #endif
+#if 0
+#define USE_LONG_PPS
+#endif
 
 static int mhz_gpo;
 static int pps_gpo = DEFAULT_PPS_GPO + 1;
@@ -1336,6 +1339,50 @@ static int ptp_tx_cascade(struct ptp_info *ptp, u8 first, u8 total,
 	return 0;
 }  /* ptp_tx_cascade */
 
+static void ptp_long_pps_event(struct ptp_info *ptp, u8 gpo, u32 sec)
+{
+	u32 ctrl;
+	u32 nsec;
+	u32 pulse = 400000000;
+	u32 cycle = 1000000000;
+	u16 cnt = 0;
+	u8 tso = ptp->pps_tso;
+	u8 event = TRIG_POS_EDGE;
+	struct ksz_sw *sw = ptp->parent;
+
+	tso = ptp->pps_tso - 1;
+	for (cnt = 0; cnt < 2; cnt++) {
+		ptp_tx_off(ptp, tso);
+		ctrl = trig_event_gpo(gpo, event);
+		ctrl |= TRIG_NOTIFY;
+		ctrl |= trig_cascade(TRIG_CASCADE_UPS_M);
+		sw->reg->w32(sw, REG_TRIG_CTRL__4, ctrl);
+		event = TRIG_NEG_EDGE;
+		tso++;
+	}
+
+	/* Config trigger time. */
+	if (ptp->pps_offset >= 0)
+		nsec = ptp->pps_offset;
+	else {
+		nsec = NANOSEC_IN_SEC + ptp->pps_offset;
+		sec--;
+	}
+
+	tso = ptp->pps_tso;
+	for (cnt = 0; cnt < 2; cnt++) {
+		ptp_write_index(ptp, PTP_TOU_INDEX_S, tso);
+		ptp_tx_trigger_time(ptp, tso, sec, nsec + pulse);
+		ptp_tx_cascade_cycle(ptp, tso, cycle);
+		ptp_tx_cascade_on(ptp, tso, ptp->pps_tso - 1, ptp->pps_tso, 0);
+		ptp->cascade_tx |= (1 << tso);
+		ptp->outputs[tso].gpo = gpo;
+		pulse = 0;
+		tso--;
+	}
+	ptp_tx_on(ptp, tso);
+}  /* ptp_long_pps_event */
+
 /* -------------------------------------------------------------------------- */
 
 static void ptp_tx_intr_enable(struct ptp_info *ptp)
@@ -2384,7 +2431,9 @@ static void generate_tx_event(struct ptp_info *ptp, int gpo)
 	t.sec += 1;
 	if (t.nsec >= (NANOSEC_IN_SEC - 5000000))
 		t.sec += 1;
-	if (pps_gpo && (ptp->tso_sys & (1 << ptp->pps_tso)))
+	if (pps_gpo && (ptp->tso_sys & (1 << (ptp->pps_tso - 1))))
+		ptp_long_pps_event(ptp, gpo, t.sec);
+	else if (pps_gpo && (ptp->tso_sys & (1 << ptp->pps_tso)))
 		ptp->reg->pps_event(ptp, gpo, t.sec);
 	if (mhz_gpo && (ptp->tso_sys & (1 << ptp->mhz_tso)))
 		ptp->reg->ptp_10MHz(ptp, ptp->mhz_tso, ptp->mhz_gpo, t.sec);
@@ -2478,6 +2527,10 @@ static void prepare_pps(struct ptp_info *ptp)
 	if (pps_gpo) {
 		ptp->tso_used |= (1 << ptp->pps_tso);
 		ptp->tso_sys |= (1 << ptp->pps_tso);
+#ifdef USE_LONG_PPS
+		ptp->tso_used |= (1 << 1);
+		ptp->tso_sys |= (1 << 1);
+#endif
 	}
 	if (mhz_gpo) {
 		ptp->tso_used |= (1 << ptp->mhz_tso);

@@ -67,7 +67,7 @@ static char *vlan_name[VLAN_TABLE_ENTRIES] = {
 static ssize_t netlan_show(struct device *d, struct device_attribute *attr,
 	char *buf, unsigned long offset)
 {
-	struct ksz_port *port;
+	struct ksz_port *port = NULL;
 	struct ksz_sw *sw;
 	struct semaphore *proc_sem;
 	ssize_t len = -EINVAL;
@@ -102,7 +102,7 @@ netlan_show_done:
 static ssize_t netlan_store(struct device *d, struct device_attribute *attr,
 	const char *buf, size_t count, unsigned long offset)
 {
-	struct ksz_port *port;
+	struct ksz_port *port = NULL;
 	struct ksz_sw *sw;
 	struct semaphore *proc_sem;
 	ssize_t ret = -EINVAL;

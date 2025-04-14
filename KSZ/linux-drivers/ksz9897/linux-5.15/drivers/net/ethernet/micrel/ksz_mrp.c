@@ -2108,7 +2108,7 @@ static int stream_drop(struct mrp_node *prev,
 	struct mrp_info *mrp = param[0];
 	struct mrp_port_info *info = param[1];
 	struct mrp_traffic_info *traffic = param[2];
-	int *port = param[3];
+	u8 *port = param[3];
 	struct SRP_reserv *t_reserv = param[4];
 	int *active = param[5];
 
@@ -2531,7 +2531,7 @@ static int stream_decr_bandwidth(struct mrp_node *prev,
 	struct SRP_reserv *reserv;
 	struct mrp_port_info *info = param[0];
 	struct mrp_traffic_info *traffic = param[1];
-	int *mark = param[2];
+	bool *mark = param[2];
 
 	if (traffic->bandwidth_used > traffic->bandwidth_max) {
 		reserv = data->reserv;
@@ -2569,7 +2569,7 @@ static int stream_stop(struct mrp_node *prev, struct srp_stream_info *data,
 	struct SRP_stream *stream;
 	struct mrp_info *mrp = param[0];
 	struct mrp_traffic_info *traffic = param[1];
-	int *port = param[2];
+	u8 *port = param[2];
 	int result;
 
 	if (data->mark) {
@@ -2633,7 +2633,7 @@ static int stream_start(struct mrp_node *prev,
 	struct mrp_info *mrp = param[0];
 	struct mrp_port_info *info = param[1];
 	struct mrp_traffic_info *traffic = param[2];
-	int *port = param[3];
+	u8 *port = param[3];
 	int result;
 	u32 bandwidth;
 	bool adv = false;
@@ -2741,7 +2741,7 @@ static int stream_drop_other(struct mrp_node *prev,
 	struct SRP_stream *stream;
 	struct mrp_info *mrp = param[0];
 	struct mrp_traffic_info *traffic = param[1];
-	int *port = param[2];
+	u8 *port = param[2];
 	int *avail = param[3];
 	int result;
 
@@ -5993,7 +5993,7 @@ static int mrp_dev_req(struct mrp_info *mrp, char *arg)
 	int subcmd;
 	int output;
 	u8 data[PARAM_DATA_SIZE];
-	u8 cmd_data[4];
+	u8 cmd_data[40];
 	int err = 0;
 	int result = 0;
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) cmd_data;
@@ -6615,6 +6615,7 @@ static void mmrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 	struct ksz_sw *sw = mrp->parent;
 
 	cmd->port = get_log_port(sw, app->port);
+	cmd->type = MRP_TYPE_UNKNOWN;
 	if (MMRP_ATTR_MAC == attr->type) {
 		memcpy(cmd->data.mac.addr, attr->value, ETH_ALEN);
 		cmd->type = MRP_TYPE_MAC;
@@ -6655,6 +6656,7 @@ static void mvrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 	struct ksz_sw *sw = mrp->parent;
 
 	cmd->port = get_log_port(sw, app->port);
+	cmd->type = MRP_TYPE_UNKNOWN;
 	if (MVRP_ATTR_VID == attr->type) {
 		u16 *vid = (u16 *) attr->value;
 
@@ -6745,6 +6747,7 @@ static void msrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 		break;
 	}
 	default:
+		cmd->type = MRP_TYPE_UNKNOWN;
 		break;
 	}
 	attr->notify = MRP_NOTIFY_NONE;

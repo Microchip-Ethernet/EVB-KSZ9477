@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common code
  *
- * Copyright (c) 2015-2024 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -2908,6 +2908,23 @@ static void sw_set_addr(struct ksz_sw *sw, u8 *mac_addr)
 #endif
 	memcpy(sw->info->mac_addr, mac_addr, 6);
 }  /* sw_set_addr */
+
+static void sw_setup_pause(struct ksz_sw *sw)
+{
+	sw->pause_frame[0] = 0x01;
+	sw->pause_frame[1] = 0x80;
+	sw->pause_frame[2] = 0xC2;
+	sw->pause_frame[3] = 0x00;
+	sw->pause_frame[4] = 0x00;
+	sw->pause_frame[5] = 0x01;
+	memcpy(&sw->pause_frame[6], sw->info->mac_addr, ETH_ALEN);
+	sw->pause_frame[12] = 0x88;
+	sw->pause_frame[13] = 0x08;
+	sw->pause_frame[14] = 0x00;
+	sw->pause_frame[15] = 0x01;
+	sw->pause_frame[16] = 0xff;
+	sw->pause_frame[17] = 0xff;
+}
 
 #ifdef CONFIG_KSZ_MRP
 #include "ksz_mrp.c"
@@ -6417,6 +6434,69 @@ static void sw_set_multi(struct ksz_sw *sw, struct net_device *dev,
 	}
 }  /* sw_set_multi */
 
+static bool sw_special_frame(struct ksz_sw *sw, struct sk_buff *skb)
+{
+	u16 proto = ntohs(skb->protocol);
+
+	if (proto == ETH_P_PAUSE)
+		return true;
+	return false;
+}
+
+static int sw_tx_pause(struct ksz_sw *sw, bool pause)
+{
+	const struct net_device_ops *ops = sw->main_dev->netdev_ops;
+	struct net_device **dev;
+	struct sk_buff *skb;
+	netdev_tx_t rc;
+	int len = 18;
+
+	if (pause && sw->last_pause_sent) {
+		if (time_after_eq(sw->last_pause_sent + (250 * HZ) / 1000,
+				  jiffies))
+			return NETDEV_TX_BUSY;
+	}
+	if (!pause && sw->last_pause_sent == 0)
+		return 0;
+
+	/* Add extra for tail tagging. */
+	skb = dev_alloc_skb(60 + 4 + 8);
+	if (!skb)
+		return -ENOMEM;
+
+	if (!pause)
+		len -= 2;
+	memcpy(skb->data, sw->pause_frame, len);
+	memset(&skb->data[len], 0, 60 - len);
+	skb_reset_mac_header(skb);
+	skb_set_network_header(skb, ETH_HLEN);
+
+	skb_put(skb, len);
+	sw->net_ops->add_tail_tag(sw, skb, 0);
+	skb->protocol = htons(ETH_P_PAUSE);
+	dev = (struct net_device **)skb->cb;
+	*dev = sw->main_dev;
+	skb->dev = sw->main_dev;
+
+	/* Guard against sending during receiving. */
+	spin_lock_bh(&sw->rx_lock);
+	rc = ops->ndo_start_xmit(skb, skb->dev);
+	spin_unlock_bh(&sw->rx_lock);
+	if (rc == NETDEV_TX_BUSY) {
+		dev_kfree_skb_any(skb);
+		skb->dev->stats.tx_dropped++;
+		return rc;
+	}
+	if (pause) {
+		sw->last_pause_sent = jiffies;
+		if (sw->last_pause_sent < 1)
+			sw->last_pause_sent = 1;
+	} else {
+		sw->last_pause_sent = 0;
+	}
+	return 0;
+}
+
 static struct net_device *sw_rx_dev(struct ksz_sw *sw, u8 *data, u32 *len,
 	int *tag, int *port)
 {
@@ -6689,7 +6769,24 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 	if (sw->dev_count > 1 && (sw->features & SW_VLAN_DEV)) {
 		u16 vid;
 		struct vlan_ethhdr *vlan;
-		struct ethhdr *eth = (struct ethhdr *) skb->data;
+		struct ethhdr *eth;
+		struct sk_buff *nskb = NULL;
+
+		/*
+		 * Bridge uses clones of socket buffer to send to both
+		 * devices!
+		 */
+		if (!skb_cloned(skb) && skb_headroom(skb) >= VLAN_HLEN)
+			nskb = skb;
+		if (!nskb) {
+			nskb = skb_copy_expand(skb, VLAN_HLEN, skb->len,
+					       GFP_ATOMIC);
+			if (!nskb)
+				return skb;
+			dev_kfree_skb_irq(skb);
+			skb = nskb;
+		}
+		eth = (struct ethhdr *) skb->data;
 
 		vid = sw->info->port_cfg[port].vid;
 		vlan = (struct vlan_ethhdr *) skb_push(skb, VLAN_HLEN);
@@ -6711,6 +6808,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	u8 dest;
 	struct sk_buff *org_skb;
 	int update_dst = (sw->overrides & TAIL_TAGGING);
+	int headlen = 0;
 
 	if (!update_dst)
 		return sw_ins_vlan(sw, priv->first_port, skb);
@@ -6720,6 +6818,8 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		return skb;
 #endif
 
+	if (sw->features & SW_VLAN_DEV)
+		headlen = VLAN_HLEN;
 	org_skb = skb;
 	port = 0;
 
@@ -6785,9 +6885,14 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		need_new_copy = true;
 		len = (skb->len + padlen + 4) & ~3;
 	}
+	if (skb_headroom(skb) < headlen) {
+		need_new_copy = true;
+	}
 	if (need_new_copy) {
 		int headerlen = skb_headroom(skb);
 
+		if (headerlen < headlen)
+			headerlen = headlen;
 		skb = alloc_skb(headerlen + len, GFP_ATOMIC);
 		if (!skb)
 			return NULL;
@@ -6798,6 +6903,8 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		skb_copy_header(skb, org_skb);
 		consume_skb(org_skb);
 	}
+
+	/* skb_put requires tail pointer set first. */
 	skb_set_tail_pointer(skb, skb->len);
 	if (padlen) {
 		if (__skb_put_padto(skb, skb->len + padlen, false))
@@ -6847,7 +6954,9 @@ static struct sk_buff *sw_check_tx(struct ksz_sw *sw, struct net_device *dev,
 static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct net_device *dev, struct ksz_port *port)
 {
+	spin_lock_bh(&sw->tx_lock);
 	skb = sw->net_ops->check_tx(sw, dev, skb, port);
+	spin_unlock_bh(&sw->tx_lock);
 	if (!skb)
 		return NULL;
 	return skb;
@@ -6862,6 +6971,7 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 	sw_setup(sw);
 	sw_enable(sw);
 	sw_set_addr(sw, addr);
+	sw_setup_pause(sw);
 #if 0
 	if (1 == sw->dev_count)
 		sw_cfg_self_filter(sw, true);
@@ -8916,6 +9026,8 @@ static struct ksz_sw_net_ops sw_net_ops = {
 	.final_skb		= sw_final_skb,
 	.drv_rx			= sw_drv_rx,
 	.set_multi		= sw_set_multi,
+	.special_frame		= sw_special_frame,
+	.tx_pause		= sw_tx_pause,
 
 };
 
@@ -9698,6 +9810,8 @@ static int ksz_probe(struct sw_priv *ks)
 	sw->net_ops = &sw_net_ops;
 	sw->ops = &sw_ops;
 	init_waitqueue_head(&sw->queue);
+	spin_lock_init(&sw->rx_lock);
+	spin_lock_init(&sw->tx_lock);
 
 	/* simple check for a valid chip being connected to the bus */
 	mutex_lock(&ks->lock);

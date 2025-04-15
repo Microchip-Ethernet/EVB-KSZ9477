@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8795 switch common header
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -425,6 +425,8 @@ struct ksz_sw_net_ops {
 	int (*drv_rx)(struct ksz_sw *sw, struct sk_buff *skb, uint port);
 	void (*set_multi)(struct ksz_sw *sw, struct net_device *dev,
 		struct ksz_port *priv);
+	bool (*special_frame)(struct ksz_sw *sw, struct sk_buff *skb);
+	int (*tx_pause)(struct ksz_sw *sw, bool pause);
 };
 
 struct ksz_sw_ops {
@@ -616,6 +618,8 @@ struct ksz_sw {
 	phy_interface_t interface;
 	u32 msg_enable;
 	wait_queue_head_t queue;
+	spinlock_t rx_lock;
+	spinlock_t tx_lock;
 	struct mutex *hwlock;
 	struct mutex *reglock;
 	struct mutex acllock;
@@ -689,6 +693,9 @@ struct ksz_sw {
 	int fast_aging;
 	struct ksz_dev_map eth_maps[SWITCH_PORT_NUM];
 	int eth_cnt;
+
+	u8 pause_frame[18];
+	unsigned long last_pause_sent;
 
 #ifdef CONFIG_KSZ_MRP
 	struct delayed_work set_mrp;

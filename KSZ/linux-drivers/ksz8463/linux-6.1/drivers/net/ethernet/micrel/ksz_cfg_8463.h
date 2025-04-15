@@ -23,6 +23,7 @@
 /* Can be defined if KSZ9897 driver is included also. */
 #undef CONFIG_KSZ_DLR
 #undef CONFIG_KSZ_HSR
+#undef CONFIG_KSZ_IBA
 
 /* KSZ8463 and KSZ8863 use same ksz_sw.c code. */
 #undef CONFIG_HAVE_KSZ8863

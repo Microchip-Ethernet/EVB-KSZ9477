@@ -1,7 +1,7 @@
 /**
  * Microchip switch common header
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -106,6 +106,9 @@ struct ksz_mac_table {
 #define FWD_STP_DEV			(1 << 2)
 #define FWD_MAIN_DEV			(1 << 3)
 #define FWD_VLAN_DEV			(1 << 4)
+#define FWD_MCAST			(1 << 5)
+#define FWD_UCAST			(1 << 6)
+#define FWD_KNOWN			(1 << 7)
 
 struct ksz_alu_table {
 	u8 owner;
@@ -379,6 +382,8 @@ struct ksz_sw_net_ops {
 	int (*drv_rx)(struct ksz_sw *sw, struct sk_buff *skb, uint port);
 	void (*set_multi)(struct ksz_sw *sw, struct net_device *dev,
 		struct ksz_port *priv);
+	bool (*special_frame)(struct ksz_sw *sw, struct sk_buff *skb);
+	int (*tx_pause)(struct ksz_sw *sw, bool pause);
 };
 
 struct ksz_sw_ops {
@@ -499,6 +504,7 @@ struct ksz_sw_cached_regs {
 #define PAUSE_FLOW_CTRL			(1 << 0)
 #define FAST_AGING			(1 << 1)
 #define UPDATE_CSUM			(1 << 2)
+#define HAVE_MORE_THAN_2_PORTS		(1 << 3)
 
 #define TAIL_PRP_0			(1 << 24)
 #define TAIL_PRP_1			(1 << 25)
@@ -556,6 +562,8 @@ struct ksz_sw {
 	phy_interface_t interface;
 	u32 msg_enable;
 	wait_queue_head_t queue;
+	spinlock_t rx_lock;
+	spinlock_t tx_lock;
 	struct mutex *hwlock;
 	struct mutex *reglock;
 	struct mutex lock;
@@ -623,6 +631,9 @@ struct ksz_sw {
 	int fast_aging;
 	struct ksz_dev_map eth_maps[SWITCH_PORT_NUM];
 	int eth_cnt;
+
+	u8 pause_frame[18];
+	unsigned long last_pause_sent;
 
 #ifdef CONFIG_MRP
 	struct mrp_info mrp;

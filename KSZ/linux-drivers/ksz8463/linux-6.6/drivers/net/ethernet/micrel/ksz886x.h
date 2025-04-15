@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8862 Register Definitions.
  *
- * Copyright (C) 2015-2021 Microchip Technology Inc.
+ * Copyright (C) 2015-2025 Microchip Technology Inc.
  * Copyright (C) 2010-2015 Micrel, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -787,6 +787,9 @@
 /* select this port as monitored tx pkts */
 #define   PORT_MIRROR_TX             (1 << 5)
 /* enable replace 802.1p priority field */
+#if 1
+#define   PORT_DOUBLE_TAG            (1 << 4)
+#endif
 #define   PORT_802_1P_REMAPPING      (1 << 3)
 /* Port VLAN membership mask */
 #define   PORT_VLAN_MEMBERSHIP       (0x07)

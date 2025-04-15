@@ -313,8 +313,7 @@ static struct ksz_sw_reg_ops sw_reg_ops = {
 
 /* -------------------------------------------------------------------------- */
 
-static int ksz8863_probe(struct i2c_client *i2c,
-	const struct i2c_device_id *i2c_id)
+static int ksz8863_probe(struct i2c_client *i2c)
 {
 	struct i2c_hw_priv *hw_priv;
 	struct sw_priv *priv;

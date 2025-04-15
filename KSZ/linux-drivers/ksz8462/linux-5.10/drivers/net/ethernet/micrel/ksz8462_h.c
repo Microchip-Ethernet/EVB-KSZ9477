@@ -74,6 +74,7 @@
 /* Can be defined if KSZ9897 driver is included also. */
 #undef CONFIG_KSZ_DLR
 #undef CONFIG_KSZ_HSR
+#undef CONFIG_KSZ_IBA
 
 #include "ksz_common.h"
 #include "ksz_req.h"
@@ -1076,6 +1077,7 @@ static void ksz8462_link_update_work(struct work_struct *work)
 #ifdef CONFIG_KSZ_HSR
 	if (sw->features & HSR_HW) {
 		struct ksz_hsr_info *hsr = &sw->info->hsr;
+		uint p;
 
 		p = get_phy_port(sw, port->first_port);
 		if (hsr->ports[0] <= port->first_port &&

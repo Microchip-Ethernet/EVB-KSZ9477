@@ -934,8 +934,6 @@ static void port_r_mib_cnt(struct ksz_sw *sw, uint port, u16 addr, u64 *cnt)
 	for (timeout = 2; timeout > 0; timeout--) {
 		data = sw->reg->r32(sw, REG_IND_DATA_LO);
 
-if (data & 0x3f000000)
-dbg_msg(" mib: %d=%04x %08x\n", port, ctrl_addr, data);
 		if (data & MIB_COUNTER_VALID) {
 			if (data & MIB_COUNTER_OVERFLOW)
 dbg_msg(" overflow: %d %x\n", addr, ctrl_addr);
@@ -3070,6 +3068,23 @@ static void sw_set_addr(struct ksz_sw *sw, const u8 *mac_addr)
 	memcpy(sw->info->mac_addr, mac_addr, 6);
 }
 
+static void sw_setup_pause(struct ksz_sw *sw)
+{
+	sw->pause_frame[0] = 0x01;
+	sw->pause_frame[1] = 0x80;
+	sw->pause_frame[2] = 0xC2;
+	sw->pause_frame[3] = 0x00;
+	sw->pause_frame[4] = 0x00;
+	sw->pause_frame[5] = 0x01;
+	memcpy(&sw->pause_frame[6], sw->info->mac_addr, ETH_ALEN);
+	sw->pause_frame[12] = 0x88;
+	sw->pause_frame[13] = 0x08;
+	sw->pause_frame[14] = 0x00;
+	sw->pause_frame[15] = 0x01;
+	sw->pause_frame[16] = 0xff;
+	sw->pause_frame[17] = 0xff;
+}
+
 #ifdef SWITCH_PORT_PHY_ADDR_MASK
 /**
  * sw_init_phy_addr - initialize switch PHY address
@@ -3104,6 +3119,12 @@ static void sw_set_phy_addr(struct ksz_sw *sw, u8 addr)
 #endif
 
 #define STP_ENTRY			0
+
+#if defined(CONFIG_KSZ_DLR) || defined(CONFIG_KSZ_HSR)
+#define DEV_0_ADDR_ENTRY		0
+#define DEV_1_ADDR_ENTRY		1
+#endif
+
 #define BROADCAST_ENTRY			1
 #define BRIDGE_ADDR_ENTRY		2
 #define IPV6_ADDR_ENTRY			3
@@ -3388,7 +3409,11 @@ static void bridge_change(struct ksz_sw *sw)
 #include "ksz_dlr.c"
 #endif
 #ifdef CONFIG_KSZ_HSR
+#ifdef USE_NEW_HSR
+#include "ksz_hsr_6_1.c"
+#else
 #include "ksz_hsr.c"
+#endif
 #endif
 
 /*
@@ -4290,6 +4315,10 @@ static void sw_setup(struct ksz_sw *sw)
 #ifdef CONFIG_KSZ_DLR
 	if (sw->features & DLR_HW)
 		sw_setup_dlr(sw);
+#endif
+#ifdef CONFIG_KSZ_HSR
+	if (sw->features & HSR_HW)
+		sw_setup_hsr(sw);
 #endif
 }  /* sw_setup */
 
@@ -6858,6 +6887,69 @@ dbg_msg(" forward: %d %x\n", tag, forward);
 #endif
 }  /* sw_forward */
 
+static bool sw_special_frame(struct ksz_sw *sw, struct sk_buff *skb)
+{
+	u16 proto = ntohs(skb->protocol);
+
+	if (proto == ETH_P_PAUSE)
+		return true;
+	return false;
+}
+
+static int sw_tx_pause(struct ksz_sw *sw, bool pause)
+{
+	const struct net_device_ops *ops = sw->main_dev->netdev_ops;
+	struct net_device **dev;
+	struct sk_buff *skb;
+	netdev_tx_t rc;
+	int len = 18;
+
+	if (pause && sw->last_pause_sent) {
+		if (time_after_eq(sw->last_pause_sent + (250 * HZ) / 1000,
+				  jiffies))
+			return NETDEV_TX_BUSY;
+	}
+	if (!pause && sw->last_pause_sent == 0)
+		return 0;
+
+	/* Add extra for tail tagging. */
+	skb = dev_alloc_skb(60 + 4 + 8);
+	if (!skb)
+		return -ENOMEM;
+
+	if (!pause)
+		len -= 2;
+	memcpy(skb->data, sw->pause_frame, len);
+	memset(&skb->data[len], 0, 60 - len);
+	skb_reset_mac_header(skb);
+	skb_set_network_header(skb, ETH_HLEN);
+
+	skb_put(skb, len);
+	sw->net_ops->add_tail_tag(sw, skb, 0);
+	skb->protocol = htons(ETH_P_PAUSE);
+	dev = (struct net_device **)skb->cb;
+	*dev = sw->main_dev;
+	skb->dev = sw->main_dev;
+
+	/* Guard against sending during receiving. */
+	spin_lock_bh(&sw->rx_lock);
+	rc = ops->ndo_start_xmit(skb, skb->dev);
+	spin_unlock_bh(&sw->rx_lock);
+	if (rc == NETDEV_TX_BUSY) {
+		dev_kfree_skb_any(skb);
+		skb->dev->stats.tx_dropped++;
+		return rc;
+	}
+	if (pause) {
+		sw->last_pause_sent = jiffies;
+		if (sw->last_pause_sent < 1)
+			sw->last_pause_sent = 1;
+	} else {
+		sw->last_pause_sent = 0;
+	}
+	return 0;
+}
+
 static struct net_device *sw_rx_dev(struct ksz_sw *sw, u8 *data, u32 *len,
 	int *tag, int *port)
 {
@@ -7168,7 +7260,40 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 		u16 vid;
 		struct vlan_ethhdr *vlan;
 		struct ethhdr *eth = (struct ethhdr *) skb->data;
+		int headerlen = skb_headroom(skb);
+		int padlen = 0;
 
+		/* Socket buffer length will be increased by 4 but the VLAN
+		 * tag will be removed by the switch, so make sure socket
+		 * buffer has minimum Ethernet length after that removal.
+		 * Note switch may keep minimum length so this code is not
+		 * necessary.
+		 */
+		if (skb->len < ETH_ZLEN)
+			padlen = ETH_ZLEN - skb->len;
+
+		/* PTP message sent in KSZ8863 but not KSZ8463 can have
+		 * headroom of 2.
+		 */
+		if (headerlen < VLAN_HLEN) {
+			struct sk_buff *org_skb = skb;
+			int len = skb->len + padlen;
+
+			headerlen = VLAN_HLEN;
+
+			/* ip_summed is not modified. */
+			skb = skb_copy_expand(org_skb, headerlen, len,
+					      GFP_ATOMIC);
+			if (!skb)
+				return NULL;
+			consume_skb(org_skb);
+		}
+#if 1
+		if (padlen) {
+			if (__skb_put_padto(skb, skb->len + padlen, false))
+				return NULL;
+		}
+#endif
 		vid = sw->info->port_cfg[port].vid;
 		vlan = (struct vlan_ethhdr *) skb_push(skb, VLAN_HLEN);
 		memmove(vlan, eth, 12);
@@ -7179,14 +7304,14 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 }  /* sw_ins_vlan */
 
 #ifdef CONFIG_KSZ_HSR
-static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint port,
+static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 	struct sk_buff *skb, u8 *ports)
 {
 	int i;
 	uint p;
 
 	p = get_phy_port(sw, n);
-	i = sw->info->port_cfg[port].index;
+	i = sw->info->port_cfg[p].index;
 	if (sw->eth_cnt && (sw->eth_maps[i].proto & HSR_HW)) {
 		struct ksz_hsr_info *info = &sw->info->hsr;
 		struct hsr_port *from =
@@ -7316,6 +7441,11 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	/* Check the socket buffer length is enough to hold the tail tag. */
 	if (skb->len < ETH_ZLEN)
 		padlen = ETH_ZLEN - skb->len;
+
+	/* The length can be just 1514 for TCP packet with no extra room.
+	 * Therefore it is better to disable scatter/gather so that no new
+	 * socket buffer is allocated.
+	 */
 	len = skb_tailroom(skb);
 	if (len < 1 + padlen) {
 		need_new_copy = true;
@@ -7329,10 +7459,15 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 
 		if (headerlen < headlen)
 			headerlen = headlen;
+
+		/* ip_summed is not modified. */
 		skb = skb_copy_expand(org_skb, headerlen, len, GFP_ATOMIC);
 		if (!skb)
 			return NULL;
 		consume_skb(org_skb);
+	} else {
+		/* Make sure socket buffer does not have fragments. */
+		skb_linearize(skb);
 	}
 
 	/* skb_put requires tail pointer set first. */
@@ -7399,9 +7534,10 @@ static struct sk_buff *sw_check_tx(struct ksz_sw *sw, struct net_device *dev,
 static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct net_device *dev, struct ksz_port *port)
 {
+	spin_lock_bh(&sw->tx_lock);
 	skb = sw->net_ops->check_tx(sw, dev, skb, port);
 	if (!skb)
-		return NULL;
+		goto done;
 
 #ifdef CONFIG_1588_PTP
 	if (sw->features & PTP_HW) {
@@ -7411,6 +7547,9 @@ static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			ptp->ops->get_tx_tstamp(ptp, skb);
 	}
 #endif
+
+done:
+	spin_unlock_bh(&sw->tx_lock);
 	return skb;
 }  /* sw_final_skb */
 
@@ -7428,6 +7567,7 @@ static void sw_start(struct ksz_sw *sw, const u8 *addr)
 	sw_setup(sw);
 	sw_enable(sw);
 	sw_set_addr(sw, addr);
+	sw_setup_pause(sw);
 	if (1 == sw->dev_count)
 		sw_setup_src_filter(sw, addr);
 #ifdef CONFIG_KSZ_DLR
@@ -7491,6 +7631,10 @@ static void sw_start(struct ksz_sw *sw, const u8 *addr)
 			port_cfg_rmv_tag(sw, sw->HOST_PORT, true);
 		else
 			port_cfg_ins_tag(sw, sw->HOST_PORT, true);
+#ifdef PORT_DOUBLE_TAG
+		if (!need_tail_tag)
+			sw_vlan_cfg_double_tag(sw, sw->HOST_PORT, true);
+#endif
 		need_vlan = true;
 	}
 	if (sw->features & STP_SUPPORT)
@@ -8882,12 +9026,15 @@ static int stp;
  */
 static int fast_aging;
 
+static int eth1_vlan;
+static int eth2_vlan;
+
 static void sw_setup_zone(struct ksz_sw *sw)
 {
 #ifdef CONFIG_KSZ_DLR
 	sw->eth_maps[0].cnt = 2;
 	sw->eth_maps[0].mask = 3;
-	sw->eth_maps[0].port = 0;
+	sw->eth_maps[0].first = 1;
 	sw->eth_maps[0].phy_id = 1;
 	sw->eth_maps[0].vlan = 1;
 	sw->eth_maps[0].proto = DLR_HW;
@@ -8897,13 +9044,40 @@ static void sw_setup_zone(struct ksz_sw *sw)
 #ifdef CONFIG_KSZ_HSR
 	sw->eth_maps[0].cnt = 2;
 	sw->eth_maps[0].mask = 3;
-	sw->eth_maps[0].port = 0;
+	sw->eth_maps[0].first = 1;
 	sw->eth_maps[0].phy_id = 1;
 	sw->eth_maps[0].vlan = 1;
 	sw->eth_maps[0].proto = HSR_HW;
 	sw->eth_cnt = 1;
 	sw->features |= HSR_HW;
 #endif
+	if (multi_dev == 1 && eth1_vlan) {
+		sw->eth_maps[0].cnt = 1;
+		sw->eth_maps[0].mask = 1;
+		sw->eth_maps[0].first = 1;
+		sw->eth_maps[0].phy_id = 1;
+		sw->eth_maps[0].vlan = eth1_vlan;
+		sw->eth_maps[1].cnt = 1;
+		sw->eth_maps[1].mask = 2;
+		sw->eth_maps[1].first = 2;
+		sw->eth_maps[1].phy_id = 2;
+		if (!eth2_vlan)
+			eth2_vlan = eth1_vlan + 1;
+		sw->eth_maps[1].vlan = eth2_vlan;
+		sw->eth_cnt = 2;
+		sw->features |= SW_VLAN_DEV;
+	}
+	do {
+		struct ksz_dev_map *map;
+		uint p;
+
+		for (p = 0; p < sw->eth_cnt; p++) {
+			map = &sw->eth_maps[p];
+			dbg_msg("%d: %d:%d:%d m=%04x v=%03x %08x"NL,
+				p, map->first, map->cnt, map->phy_id,
+				map->mask, map->vlan, map->proto);
+		}
+	} while (0);
 }  /* sw_setup_zone */
 
 static void sw_setup_logical_ports(struct ksz_sw *sw)
@@ -9068,12 +9242,24 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		mib_port_cnt = port_cnt;
 	}
 
+	port->flow_ctrl = PHY_FLOW_CTRL;
+
+#ifdef CONFIG_KSZ_DLR
+	/* Cannot flow control because of beacon timeout. */
+	if (sw->eth_cnt && (sw->eth_maps[i].proto & DLR_HW)) {
+		port_cnt = sw->eth_maps[i].cnt;
+		p = sw->eth_maps[i].first - 1;
+		mib_port_cnt = port_cnt;
+		port->flow_ctrl = PHY_TX_ONLY;
+		prep_dlr_mcast(dev);
+	}
+#endif
 #ifdef CONFIG_KSZ_HSR
 	if (sw->eth_cnt && (sw->eth_maps[i].proto & HSR_HW)) {
 		port_cnt = sw->eth_maps[i].cnt;
-		p = sw->eth_maps[i].port;
+		p = sw->eth_maps[i].first - 1;
 		mib_port_cnt = port_cnt;
-		setup_hsr(&sw->info->hsr, dev);
+		setup_hsr(&sw->info->hsr, dev, i);
 		dev->hard_header_len += HSR_HLEN;
 	}
 #endif
@@ -9081,7 +9267,6 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	port->port_cnt = port_cnt;
 	port->mib_port_cnt = mib_port_cnt;
 	port->first_port = p + 1;
-	port->flow_ctrl = PHY_FLOW_CTRL;
 
 #ifdef CONFIG_KSZ_STP
 	if (!i && sw->features & STP_SUPPORT)
@@ -9261,6 +9446,8 @@ static struct ksz_sw_net_ops sw_net_ops = {
 	.final_skb		= sw_final_skb,
 	.drv_rx			= sw_drv_rx,
 	.set_multi		= sw_set_multi,
+	.special_frame		= sw_special_frame,
+	.tx_pause		= sw_tx_pause,
 
 };
 
@@ -10195,6 +10382,8 @@ dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 	sw_init_mib(sw);
 
 	init_waitqueue_head(&sw->queue);
+	spin_lock_init(&sw->rx_lock);
+	spin_lock_init(&sw->tx_lock);
 	for (i = 0; i < TOTAL_PORT_NUM; i++)
 		init_waitqueue_head(&ks->counter[i].counter);
 
@@ -10217,6 +10406,10 @@ dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 	if (sw->info) {
 #ifdef CONFIG_KSZ_STP
 		ksz_stp_init(&sw->info->rstp, sw);
+#endif
+#ifdef CONFIG_KSZ_DLR
+		if (sw->features & DLR_HW)
+			ksz_dlr_init(&sw->info->dlr, sw);
 #endif
 #ifdef CONFIG_KSZ_HSR
 		if (sw->features & HSR_HW)
@@ -10282,6 +10475,14 @@ static void ksz_remove_first(struct sw_priv *ks)
 #ifdef CONFIG_KSZ_STP
 		ksz_stp_exit(&sw->info->rstp);
 #endif
+#ifdef CONFIG_KSZ_DLR
+		if (sw->features & DLR_HW)
+			ksz_dlr_exit(&sw->info->dlr);
+#endif
+#ifdef CONFIG_KSZ_HSR
+		if (sw->features & HSR_HW)
+			ksz_hsr_exit(&sw->info->hsr);
+#endif
 	}
 
 	delete_debugfs(ks);
@@ -10315,4 +10516,9 @@ module_param(stp, int, 0);
 MODULE_PARM_DESC(fast_aging, "Fast aging");
 MODULE_PARM_DESC(multi_dev, "Multiple device interfaces");
 MODULE_PARM_DESC(stp, "STP support");
+
+module_param(eth1_vlan, int, 0);
+module_param(eth2_vlan, int, 0);
+MODULE_PARM_DESC(eth1_vlan, "VLAN to use on device 1.");
+MODULE_PARM_DESC(eth2_vlan, "VLAN to use on device 2.");
 

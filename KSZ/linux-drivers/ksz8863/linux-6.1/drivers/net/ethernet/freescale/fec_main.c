@@ -73,6 +73,29 @@
 
 #include "fec.h"
 
+#ifdef CONFIG_KSZ_SWITCH
+#if 1
+/* This will never be supported by the switch if tail tagging is used.
+ * Note NO_CSUM will turn off TSO support but not NO_SG.
+ */
+#define NO_TSO
+#endif
+#if 1
+/* Since TCP packet with 1514 bytes has no tailroom thus requiring socket
+ * buffer re-allocation when tail tagging is used, it is better to completely
+ * disable scatter/gather.
+ */
+#define NO_SG
+#endif
+#if 1
+/* Since the MAC seems to have a problem calculating TCP checksum when tail
+ * tagging is used it may be better to disable hardware checksumming as
+ * scatter/gather may already be disabled above.
+ */
+#define NO_CSUM
+#endif
+#endif
+
 #if defined(CONFIG_KSZ_SWITCH_EMBEDDED)
 #include <linux/of_irq.h>
 #include <linux/spi/spi.h>
@@ -4998,8 +5021,14 @@ static int fec_enet_init(struct net_device *ndev)
 
 	spin_lock_init(&fep->tx_lock);
 
-#if defined(CONFIG_KSZ_IBA_ONLY)
+#ifdef NO_TSO
 	ndev->features &= ~NETIF_F_TSO;
+#endif
+#ifdef NO_SG
+	ndev->features &= ~NETIF_F_SG;
+#endif
+#ifdef NO_CSUM
+	ndev->features &= ~(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM);
 #endif
 #endif
 

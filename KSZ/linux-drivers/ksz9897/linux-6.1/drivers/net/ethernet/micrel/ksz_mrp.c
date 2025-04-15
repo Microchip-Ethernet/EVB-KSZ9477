@@ -1,7 +1,7 @@
 /**
  * Microchip MRP driver code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2014-2015 Micrel, Inc.
@@ -5671,7 +5671,10 @@ dbg_msg("  tx close: %d %x %x"NL, p, sw->tx_ports[0], mrp->tx_ports);
 	ports |= TAIL_TAG_SET_QUEUE;
 	sw->net_ops->add_tail_tag(sw, skb, ports);
 	do {
+		/* Guard against sending during receiving. */
+		spin_lock_bh(&sw->rx_lock);
 		rc = ops->ndo_start_xmit(skb, skb->dev);
+		spin_unlock_bh(&sw->rx_lock);
 		if (NETDEV_TX_BUSY == rc) {
 			rc = wait_event_interruptible_timeout(sw->queue,
 				!netif_queue_stopped(sw->main_dev),
@@ -5681,7 +5684,7 @@ dbg_msg("  tx close: %d %x %x"NL, p, sw->tx_ports[0], mrp->tx_ports);
 		}
 	} while (NETDEV_TX_BUSY == rc);
 	return result;
-}  /* proc_mrp_mrp_xmit */
+}  /* proc_mrp_xmit */
 #endif
 
 static void proc_mrp_cmd(struct mrp_info *mrp, struct mrp_work *parent)

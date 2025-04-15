@@ -19,6 +19,19 @@
 #define CONFIG_DELAY_REQUEST_INTR
 #endif
 
+#ifdef CONFIG_KSZ_DLR
+/* Have ACL to handle beacon timeout. */
+#define CONFIG_HAVE_ACL_HW
+
+/* Have DLR to transmit beacons. */
+#define CONFIG_HAVE_DLR_HW
+#endif
+
+#ifdef CONFIG_KSZ_HSR
+#define CONFIG_HAVE_HSR_HW
+#define CONFIG_KSZ_HSR_REDBOX
+#endif
+
 
 #include "ksz_common.h"
 

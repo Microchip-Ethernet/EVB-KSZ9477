@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 I2C driver
  *
- * Copyright (c) 2015-2024 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -63,18 +63,6 @@
 #include "ksz_cfg_9897.h"
 
 
-#ifdef CONFIG_KSZ_DLR
-/* Have ACL to handle beacon timeout. */
-#define CONFIG_HAVE_ACL_HW
-
-/* Have DLR to transmit beacons. */
-#define CONFIG_HAVE_DLR_HW
-#endif
-
-#ifdef CONFIG_KSZ_HSR
-#define CONFIG_HAVE_HSR_HW
-#endif
-
 #if 0
 #define USE_MII_PHY
 #endif
@@ -107,8 +95,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Nov 26, 2024"
-#define SW_DRV_VERSION			"1.2.9"
+#define SW_DRV_RELDATE			"Apr 15, 2025"
+#define SW_DRV_VERSION			"1.2.10"
 
 /* -------------------------------------------------------------------------- */
 

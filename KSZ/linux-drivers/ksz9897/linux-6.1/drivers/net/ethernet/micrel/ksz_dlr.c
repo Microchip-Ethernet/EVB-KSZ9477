@@ -1,7 +1,7 @@
 /**
  * Microchip DLR code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -458,8 +458,10 @@ static void sw_setup_dlr(struct ksz_sw *sw)
 			sw->ops->release(sw);
 		}
 	}
+#ifdef CONFIG_HAVE_ACL_HW
 	dlr_setup_acl(dlr, dlr->ports[0]);
 	dlr_setup_acl(dlr, dlr->ports[1]);
+#endif
 
 	/* Do not need to process beacons. */
 	if (DLR_ANNOUNCE_NODE == sw->info->dlr.node)
@@ -536,7 +538,10 @@ static int dlr_dev_xmit(struct ksz_dlr_info *info, u8 *data, int len,
 	do {
 		struct ksz_sw *sw = info->sw_dev;
 
+		/* Guard against sending during receiving. */
+		spin_lock_bh(&sw->rx_lock);
 		rc = ops->ndo_start_xmit(skb, skb->dev);
+		spin_unlock_bh(&sw->rx_lock);
 		if (NETDEV_TX_BUSY == rc) {
 			rc = wait_event_interruptible_timeout(sw->queue,
 				!netif_queue_stopped(info->dev),

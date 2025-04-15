@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common code
  *
- * Copyright (c) 2015-2024 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -2041,6 +2041,8 @@ static int sw_g_hsr_table(struct ksz_sw *sw, u16 *addr,
 	do {
 		ctrl = sw->reg->r32(sw, REG_HSR_ALU_CTRL__4);
 	} while (!(ctrl & HSR_VALID) && (ctrl & HSR_START));
+	if (ctrl & HSR_SEARCH_END)
+dbg_msg("hsr end\n");
 	if (ctrl & HSR_VALID) {
 		ctrl >>= HSR_VALID_CNT_S;
 		ctrl &= HSR_VALID_CNT_M;
@@ -5900,6 +5902,17 @@ static void sw_setup_prio(struct ksz_sw *sw)
 	uint q;
 	struct ksz_port_cfg *cfg;
 
+	/* Put in a 1000 Mbps transmit rate limit on the host port when using
+	 * Redbox as there may be no flow control against incoming traffic.
+	 */
+	if (sw->features & HSR_REDBOX) {
+		port = get_phy_port(sw, 0);
+		cfg = get_port_cfg(sw, port);
+		for (q = 0; q < PRIO_QUEUES; q++) {
+			cfg->tx_rate[q] = 1000000;
+		}
+	}
+
 	/* All QoS functions disabled. */
 	for (n = 0; n <= sw->mib_port_cnt; n++) {
 		port = get_phy_port(sw, n);
@@ -5912,8 +5925,12 @@ static void sw_setup_prio(struct ksz_sw *sw)
 		sw_cfg_port_based(sw, port, cfg->port_prio);
 
 		sw_ena_802_1p(sw, port);
-		for (q = 0; q < PRIO_QUEUES; q++)
+		for (q = 0; q < PRIO_QUEUES; q++) {
 			port_set_tx_ratio(sw, port, q, 1 << q);
+			if (cfg->tx_rate[q])
+				hw_cfg_tx_prio_rate(sw, cfg, port, q,
+						    cfg->tx_rate[q]);
+		}
 		if (sw->features & AVB_SUPPORT) {
 			cfg->tc_map[0] = 0x11113200;
 			port_set_tc_map(sw, port, 0, cfg->tc_map[0]);
@@ -6132,6 +6149,23 @@ static void sw_set_addr(struct ksz_sw *sw, u8 *mac_addr)
 #endif
 #endif
 }  /* sw_set_addr */
+
+static void sw_setup_pause(struct ksz_sw *sw)
+{
+	sw->pause_frame[0] = 0x01;
+	sw->pause_frame[1] = 0x80;
+	sw->pause_frame[2] = 0xC2;
+	sw->pause_frame[3] = 0x00;
+	sw->pause_frame[4] = 0x00;
+	sw->pause_frame[5] = 0x01;
+	memcpy(&sw->pause_frame[6], sw->info->mac_addr, ETH_ALEN);
+	sw->pause_frame[12] = 0x88;
+	sw->pause_frame[13] = 0x08;
+	sw->pause_frame[14] = 0x00;
+	sw->pause_frame[15] = 0x01;
+	sw->pause_frame[16] = 0xff;
+	sw->pause_frame[17] = 0xff;
+}
 
 static void sw_setup_reserved_multicast(struct ksz_sw *sw)
 {
@@ -13445,7 +13479,10 @@ static void sw_tx_fwd(struct work_struct *work)
 		if (!skb)
 			continue;
 		do {
+			/* Guard against sending during receiving. */
+			spin_lock_bh(&sw->rx_lock);
 			rc = ops->ndo_start_xmit(skb, skb->dev);
+			spin_unlock_bh(&sw->rx_lock);
 			if (NETDEV_TX_BUSY == rc) {
 				rc = wait_event_interruptible_timeout(sw->queue,
 					!netif_queue_stopped(sw->main_dev),
@@ -13456,6 +13493,69 @@ static void sw_tx_fwd(struct work_struct *work)
 		} while (NETDEV_TX_BUSY == rc);
 	}
 }  /* sw_tx_fwd */
+
+static bool sw_special_frame(struct ksz_sw *sw, struct sk_buff *skb)
+{
+	u16 proto = ntohs(skb->protocol);
+
+	if (proto == IBA_TAG_TYPE || proto == ETH_P_PAUSE)
+		return true;
+	return false;
+}
+
+static int sw_tx_pause(struct ksz_sw *sw, bool pause)
+{
+	const struct net_device_ops *ops = sw->main_dev->netdev_ops;
+	struct net_device **dev;
+	struct sk_buff *skb;
+	netdev_tx_t rc;
+	int len = 18;
+
+	if (pause && sw->last_pause_sent) {
+		if (time_after_eq(sw->last_pause_sent + (250 * HZ) / 1000,
+				  jiffies))
+			return NETDEV_TX_BUSY;
+	}
+	if (!pause && sw->last_pause_sent == 0)
+		return 0;
+
+	/* Add extra for tail tagging. */
+	skb = dev_alloc_skb(60 + 4 + 8);
+	if (!skb)
+		return -ENOMEM;
+
+	if (!pause)
+		len -= 2;
+	memcpy(skb->data, sw->pause_frame, len);
+	memset(&skb->data[len], 0, 60 - len);
+	skb_reset_mac_header(skb);
+	skb_set_network_header(skb, ETH_HLEN);
+
+	skb_put(skb, len);
+	sw->net_ops->add_tail_tag(sw, skb, 0);
+	skb->protocol = htons(ETH_P_PAUSE);
+	dev = (struct net_device **)skb->cb;
+	*dev = sw->main_dev;
+	skb->dev = sw->main_dev;
+
+	/* Guard against sending during receiving. */
+	spin_lock_bh(&sw->rx_lock);
+	rc = ops->ndo_start_xmit(skb, skb->dev);
+	spin_unlock_bh(&sw->rx_lock);
+	if (rc == NETDEV_TX_BUSY) {
+		dev_kfree_skb_any(skb);
+		skb->dev->stats.tx_dropped++;
+		return rc;
+	}
+	if (pause) {
+		sw->last_pause_sent = jiffies;
+		if (sw->last_pause_sent < 1)
+			sw->last_pause_sent = 1;
+	} else {
+		sw->last_pause_sent = 0;
+	}
+	return 0;
+}
 
 #if 1
 static u8 last_addr[6];
@@ -14190,6 +14290,14 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 
 	if (skb->protocol == htons(ETH_P_TRAILER))
 		return skb;
+#if 1
+	if (skb->protocol == htons(ETH_P_PAUSE)) {
+		struct net_device **dev = (struct net_device **)skb->cb;
+
+		if (*dev == skb->dev)
+			return skb;
+	}
+#endif
 #ifdef CONFIG_KSZ_STP
 	if (skb->protocol == htons(STP_TAG_TYPE))
 		return skb;
@@ -14472,9 +14580,10 @@ static struct sk_buff *sw_check_tx(struct ksz_sw *sw, struct net_device *dev,
 static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct net_device *dev, struct ksz_port *port)
 {
+	spin_lock_bh(&sw->tx_lock);
 	skb = sw->net_ops->check_tx(sw, dev, skb, port);
 	if (!skb)
-		return NULL;
+		goto done;
 
 #ifdef CONFIG_1588_PTP
 	if (sw->features & PTP_HW) {
@@ -14484,6 +14593,9 @@ static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			ptp->ops->get_tx_tstamp(ptp, skb);
 	}
 #endif
+
+done:
+	spin_unlock_bh(&sw->tx_lock);
 	return skb;
 }  /* sw_final_skb */
 
@@ -14503,6 +14615,7 @@ static void sw_start(struct ksz_sw *sw, u8 *addr)
 	sw_enable(sw);
 
 	sw_set_addr(sw, addr);
+	sw_setup_pause(sw);
 
 	/* STP has its own mechanism to handle looping. */
 	if (!(sw->features & STP_SUPPORT))
@@ -16670,6 +16783,7 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 			sw->ops->acquire(sw);
 			sw_set_addr(sw, dev->dev_addr);
 			sw->ops->release(sw);
+			sw_setup_pause(sw);
 		}
 	}
 
@@ -16944,6 +17058,8 @@ static struct ksz_sw_net_ops sw_net_ops = {
 	.final_skb		= sw_final_skb,
 	.drv_rx			= sw_drv_rx,
 	.set_multi		= sw_set_multi,
+	.special_frame		= sw_special_frame,
+	.tx_pause		= sw_tx_pause,
 
 };
 
@@ -19303,6 +19419,8 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	INIT_WORK(&sw->set_addr, sw_delayed_set_addr);
 	INIT_WORK(&sw->tx_fwd, sw_tx_fwd);
 	skb_queue_head_init(&sw->txq);
+	spin_lock_init(&sw->rx_lock);
+	spin_lock_init(&sw->tx_lock);
 
 	INIT_WORK(&ks->mib_read, ksz9897_mib_read_work);
 

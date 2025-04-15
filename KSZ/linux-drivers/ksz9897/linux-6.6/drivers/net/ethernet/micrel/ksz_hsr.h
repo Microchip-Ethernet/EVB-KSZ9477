@@ -1,7 +1,7 @@
 /**
  * Microchip HSR driver header
  *
- * Copyright (c) 2016-2023 Microchip Technology Inc.
+ * Copyright (c) 2016-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -34,8 +34,15 @@
 
 #ifdef CONFIG_KSZ_SWITCH
 struct hsr_dev_info {
+#if 0
+	/* If dev_queue_xmit is used then this is required to preserve the
+	 * information.
+	 */
+	u32 dummy[4];
+#endif
 	struct net_device *dev;
-	u8 member;
+	u16 proto;
+	u8 forward;
 };
 #endif
 
@@ -57,8 +64,10 @@ struct hsr_node {
 	bool			removed;
 	struct rcu_head		rcu_head;
 #ifdef CONFIG_KSZ_SWITCH
+	bool			hsr_dev;
 	bool			is_same_addr;
 	int			slave;
+	u16			seq_num;
 #endif
 };
 #endif
@@ -74,7 +83,6 @@ struct hsr_frame_info {
 	struct sk_buff *skb_out;
 	struct hsr_node *node_dst;
 	u8 out;
-	u8 skb_cnt;
 #ifndef USE_NEW_HSR
 	u16 *proto;
 	struct hsr_tag *hsr_tag;
@@ -93,6 +101,7 @@ struct hsr_frame_info {
 };
 
 
+#ifdef CONFIG_KSZ_SWITCH
 struct ksz_hsr_info;
 
 struct hsr_ops {
@@ -122,7 +131,6 @@ struct ksz_hsr_info {
 #else
 	struct hsr_port hsr_ports[HSR_PT_PORTS];
 #endif
-	struct hsr_node *center;
 
 	u8 master_sup_frame[80];
 	u8 slave_sup_frame[80];
@@ -131,23 +139,36 @@ struct ksz_hsr_info {
 	struct hsr_sup_tag *master_hsr_stag;
 	struct hsr_sup_tag *slave_hsr_stag;
 	struct hsr_frame_info frame;
+#if defined(USE_NEW_HSR) && defined(CONFIG_KSZ_SWITCH)
+	struct hsr_dev_info dev_info;
+#endif
 	int master_len;
 	int slave_len;
 	int len;
 	int state;
 	u8 ports[2];
-	u8 fwd_cnt;
 	u8 hsr_index;
 	u8 redbox_index;
 	u32 cap;
 	u16 member;
+	u16 dev_cnt;
 	u16 part_cnt;
 	struct sk_buff_head txq;
 	struct work_struct tx_proc;
+#ifdef CONFIG_HAVE_HSR_HW
+	struct hsr_node *center;
+	struct hsr_node *node_check;
 	struct delayed_work chk_ring;
+	unsigned long last_jiffies;
+	unsigned long last_center_jiffies;
+	u64 last_rx_p1[3];
+	u64 last_rx_p2[3];
+	u64 rx_p1[3];
+	u64 rx_p2[3];
+#endif
 	u16 redbox_vlan;
-	u16 seq_num;
 	u16 check:1;
+	u16 check_all:1;
 	u16 ring:1;
 	u16 p1_down:1;
 	u16 p2_down:1;
@@ -157,6 +178,7 @@ struct ksz_hsr_info {
 	u16 fwd_lane_b:1;
 	u16 use_lane_b:1;
 	u16 redbox_fwd:1;
+	u16 redbox_sup:1;
 	u16 redbox_up:1;
 	u16 hsr_up:1;
 
@@ -166,5 +188,6 @@ struct ksz_hsr_info {
 
 	const struct hsr_ops *ops;
 };
+#endif
 
 #endif

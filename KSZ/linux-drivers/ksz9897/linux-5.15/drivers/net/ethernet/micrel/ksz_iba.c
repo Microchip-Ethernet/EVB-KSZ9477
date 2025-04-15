@@ -1,7 +1,7 @@
 /**
  * Microchip IBA code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -366,7 +366,10 @@ static int iba_xmit(struct ksz_iba_info *info)
 	do {
 		struct ksz_sw *sw = info->sw_dev;
 
+		/* Guard against sending during receiving. */
+		spin_lock_bh(&sw->rx_lock);
 		rc = ops->ndo_start_xmit(skb, skb->dev);
+		spin_unlock_bh(&sw->rx_lock);
 		if (NETDEV_TX_BUSY == rc) {
 			rc = wait_event_interruptible_timeout(sw->queue,
 				!netif_queue_stopped(netdev),

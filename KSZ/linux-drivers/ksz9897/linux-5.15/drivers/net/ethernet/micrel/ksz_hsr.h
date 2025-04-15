@@ -1,7 +1,7 @@
 /**
  * Microchip HSR driver header
  *
- * Copyright (c) 2016-2023 Microchip Technology Inc.
+ * Copyright (c) 2016-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -37,6 +37,7 @@ struct hsr_frame_info {
 };
 
 
+#ifdef CONFIG_KSZ_SWITCH
 struct ksz_hsr_info;
 
 struct hsr_ops {
@@ -62,7 +63,6 @@ struct ksz_hsr_info {
 	struct net_device *redbox;
 	struct hsr_priv hsr;
 	struct hsr_port hsr_ports[HSR_PT_PORTS];
-	struct hsr_node *center;
 
 	u8 master_sup_frame[80];
 	u8 slave_sup_frame[80];
@@ -83,9 +83,11 @@ struct ksz_hsr_info {
 	u16 part_cnt;
 	struct sk_buff_head txq;
 	struct work_struct tx_proc;
+#ifdef CONFIG_HAVE_HSR_HW
+	struct hsr_node *center;
 	struct delayed_work chk_ring;
+#endif
 	u16 redbox_vlan;
-	u16 seq_num;
 	u16 check:1;
 	u16 ring:1;
 	u16 p1_down:1;
@@ -102,5 +104,6 @@ struct ksz_hsr_info {
 
 	const struct hsr_ops *ops;
 };
+#endif
 
 #endif

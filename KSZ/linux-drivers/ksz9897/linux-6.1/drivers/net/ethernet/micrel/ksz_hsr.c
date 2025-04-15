@@ -1,7 +1,7 @@
 /**
  * Microchip HSR code
  *
- * Copyright (c) 2016-2024 Microchip Technology Inc.
+ * Copyright (c) 2016-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright 2011-2014 Autronica Fire and Security AS
@@ -28,6 +28,34 @@
 #endif
 #if 1
 #define REDBOX_NOT_REPLACE_MAC_ADDR
+#endif
+
+#ifdef CONFIG_HAVE_HSR_HW
+#if 0
+/* This feature cannot work reliably in all cases. */
+#define CHECK_HSR_RING
+#endif
+#ifdef CHECK_HSR_RING
+#if 0
+#define MONITOR_HSR
+#endif
+#endif
+#endif
+
+#if 0
+#define DBG_FRAME_IN
+#define MONITOR_FLOW
+#define MONITOR_SEQID
+#endif
+
+#ifdef DBG_FRAME_IN
+static u16 last_in;
+#endif
+
+#ifdef MONITOR_SEQID
+static u16 last_nr[2][2];
+static u16 next_nr;
+static int next_nr_chk;
 #endif
 
 struct hsr_cfg_work {
@@ -117,6 +145,7 @@ struct hsr_node {
 	struct rcu_head		rcu_head;
 #ifdef CONFIG_KSZ_SWITCH
 	int			slave;
+	u16			seq_num;
 #endif
 };
 
@@ -285,6 +314,7 @@ struct hsr_node *hsr_add_node(struct list_head *node_db, unsigned char addr[],
 #endif
 
 #ifdef CONFIG_KSZ_SWITCH
+#ifdef CONFIG_KSZ_HSR_REDBOX
 static
 struct hsr_node *hsr_add_slave(struct list_head *node_db,
 	unsigned char addr[], u16 seq_out)
@@ -299,6 +329,7 @@ struct hsr_node *hsr_add_slave(struct list_head *node_db,
 
 	return node;
 }
+#endif
 #endif
 
 /* Get the hsr_node from which 'skb' was sent.
@@ -544,6 +575,28 @@ addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 
 #ifdef CONFIG_KSZ_SWITCH
 static
+void hsr_update_frame_in(struct hsr_port *port, struct hsr_node *node)
+{
+	node->time_in[port->type] = jiffies;
+	node->time_in_stale[port->type] = false;
+}
+
+static
+void hsr_update_frame_out(struct hsr_port *port, struct hsr_node *node,
+	u16 sequence_nr)
+{
+#ifdef MONITOR_FLOW
+	dbg_msg("O: %x:%d=%x\n", (int)node, port->type, sequence_nr);
+#endif
+	node->seq_out[port->type] = sequence_nr;
+}
+
+static int dbg_frame_out;
+#endif
+
+#if 0
+#ifdef CONFIG_KSZ_SWITCH
+static
 #endif
 void hsr_register_frame_in(struct hsr_node *node, struct hsr_port *port,
 			   u16 sequence_nr)
@@ -552,6 +605,21 @@ void hsr_register_frame_in(struct hsr_node *node, struct hsr_port *port,
 	 * ensures entries of restarted nodes gets pruned so that they can
 	 * re-register and resume communications.
 	 */
+#ifdef MONITOR_FLOW
+	dbg_msg("i: %x:%d=%x %x\n", (int)node, port->type,
+		node->seq_out[port->type], sequence_nr);
+#endif
+#ifdef DBG_FRAME_IN
+	if (seq_nr_before(sequence_nr, node->seq_out[port->type])) {
+		if (!last_in) {
+			dbg_msg("in: %d=%x %x\n", port->type,
+				node->seq_out[port->type], sequence_nr);
+			last_in = sequence_nr;
+			if (!last_in)
+				last_in = 1;
+		}
+	}
+#endif
 	if (seq_nr_before(sequence_nr, node->seq_out[port->type]))
 	{
 		unsigned long diff = jiffies - node->time_in[port->type];
@@ -560,20 +628,17 @@ void hsr_register_frame_in(struct hsr_node *node, struct hsr_port *port,
 			return;
 	}
 
+#ifdef DBG_FRAME_IN
+	if (last_in) {
+		dbg_msg("re: %d=%x %x\n", port->type,
+			node->seq_out[port->type], sequence_nr);
+		last_in = 0;
+	}
+#endif
 	node->time_in[port->type] = jiffies;
 	node->time_in_stale[port->type] = false;
 }
-
-#ifdef CONFIG_KSZ_SWITCH
-static
 #endif
-void hsr_update_frame_out(struct hsr_port *port, struct hsr_node *node,
-	u16 sequence_nr)
-{
-	node->seq_out[port->type] = sequence_nr;
-}
-
-static int dbg_frame_out;
 
 /* 'skb' is a HSR Ethernet frame (with a HSR tag inserted), with a valid
  * ethhdr->h_source address and skb->mac_header set.
@@ -593,11 +658,36 @@ int hsr_register_frame_out(struct hsr_port *port, struct hsr_node *node,
 	{
 		unsigned long diff = jiffies - node->time_out[port->type];
 
+#ifdef MONITOR_SEQID
+		if (next_nr && next_nr == node->seq_out[port->type])
+			dbg_msg("d: %x %x\n",
+				sequence_nr, node->seq_out[port->type]);
+#endif
 		if (diff <= msecs_to_jiffies(HSR_ENTRY_FORGET_TIME))
 			return 1;
 	}
 	node->time_out[port->type] = jiffies;
 
+#ifdef MONITOR_SEQID
+#if 1
+	/* Check for drop in receive queue. */
+	if ((u16)(node->seq_out[port->type] + 2) == sequence_nr) {
+#else
+	/* Check for out of sequence Supervision frame. */
+	if ((u16)(node->seq_out[port->type] + 1) != sequence_nr) {
+#endif
+		dbg_msg("out: %d %x %x %x; %x %x; %x %x; %x\n",
+			port->type, (int)node,
+			node->seq_out[port->type], sequence_nr,
+			last_nr[0][0], last_nr[0][1],
+			last_nr[1][0], last_nr[1][1], node->seq_out[0]);
+		next_nr = sequence_nr;
+		next_nr_chk = 10;
+	}
+#endif
+#ifdef MONITOR_FLOW
+	dbg_msg("o: %x:%d=%x\n", (int)node, port->type, sequence_nr);
+#endif
 	node->seq_out[port->type] = sequence_nr;
 	return 0;
 }
@@ -667,7 +757,7 @@ dbg_msg(" hsr: %u %u:%u %u:%u\n", info->ring,
 	}
 }  /* hsr_notify_link_lost */
 
-#ifdef CONFIG_HAVE_HSR_HW
+#ifdef CHECK_HSR_RING
 static void hsr_chk_ring(struct work_struct *work)
 {
 	struct hsr_node *node;
@@ -704,10 +794,20 @@ static void hsr_chk_ring(struct work_struct *work)
 				win[0] = entry.exp_seq[0] - entry.start_seq[0];
 				win[1] = entry.exp_seq[1] - entry.start_seq[1];
 				if (!win[0] && !win[1] &&
-				    info->seq_num != entry.exp_seq[0]) {
+				    node->seq_num != entry.exp_seq[0]) {
 					no_drop_win = true;
 					info->center = node;
 				}
+				if (entry.exp_seq[0] >= entry.exp_seq[1])
+					node->seq_num = entry.exp_seq[0];
+				else
+					node->seq_num = entry.exp_seq[1];
+
+				/* Only work for quiet period when Supervision
+				 * frames are sent every 2 seconds.
+				 * Unicast frames sent to one node will cause
+				 * the drop window to increase.
+				 */
 				if (info->center == node) {
 					exp_seq[0] = entry.exp_seq[0];
 					exp_seq[1] = entry.exp_seq[1];
@@ -724,7 +824,8 @@ static void hsr_chk_ring(struct work_struct *work)
 		if (info->center) {
 			int p;
 
-dbg_msg("%04x:%04x %04x:%04x\n", start_seq[0], start_seq[1],
+dbg_msg("%04x %04x:%04x %04x:%04x\n", info->center->seq_out[0],
+start_seq[0], start_seq[1],
 exp_seq[0], exp_seq[1]);
 			if (start_seq[0] == exp_seq[0]) {
 				info->p1_lost = 1;
@@ -733,15 +834,15 @@ exp_seq[0], exp_seq[1]);
 				info->p2_lost = 1;
 				p = 0;
 			}
-			info->seq_num = exp_seq[p];
 		}
 		info->ring = 0;
 		change = 1;
 	} else if (!info->ring && no_drop_win) {
-		info->ring = 1;
-		info->p1_down = info->p2_down =
-		info->p1_lost = info->p2_lost = 0;
-		change = 1;
+		if (!info->p1_down && !info->p2_down) {
+			info->ring = 1;
+			info->p1_lost = info->p2_lost = 0;
+			change = 1;
+		}
 	}
 	if (change)
 		hsr_notify_link_lost(info);
@@ -770,6 +871,14 @@ void hsr_prune_nodes(struct timer_list *t)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(node, &hsr->node_db, mac_list) {
+		/* Don't prune own node. Neither time_in[HSR_PT_SLAVE_A]
+		 * nor time_in[HSR_PT_SLAVE_B], will ever be updated for
+		 * the master port. Thus the master node will be repeatedly
+		 * pruned leading to packet loss.
+		 */
+		if (hsr_addr_is_self(hsr, node->MacAddressA))
+			continue;
+
 		/* Shorthand */
 		time_a = node->time_in[HSR_PT_SLAVE_A];
 		time_b = node->time_in[HSR_PT_SLAVE_B];
@@ -840,11 +949,12 @@ node->MacAddressA[4],
 node->MacAddressA[5],
 time_a, time_b, timestamp, jiffies - timestamp);
 #endif
+#ifdef CHECK_HSR_RING
 			if (node == info->center) {
 				info->center = NULL;
-				info->seq_num = 0;
 				info->ring = 0;
 			}
+#endif
 #endif
 #if 0
 			hsr_nl_nodedown(hsr, node->MacAddressA);
@@ -863,6 +973,7 @@ time_a, time_b, timestamp, jiffies - timestamp);
 }
 
 #ifdef CONFIG_KSZ_SWITCH
+#ifdef CONFIG_KSZ_HSR_REDBOX
 static
 void hsr_rmv_slaves(struct ksz_hsr_info *info)
 {
@@ -881,6 +992,7 @@ void hsr_rmv_slaves(struct ksz_hsr_info *info)
 	}
 	rcu_read_unlock();
 }
+#endif
 #endif
 
 
@@ -981,11 +1093,17 @@ static int hsr_dev_xmit(struct ksz_hsr_info *info, struct net_device *dev,
 	int rc;
 	const struct net_device_ops *ops = dev->netdev_ops;
 	struct net_device **netdev = (struct net_device **)skb->cb;
+	struct ksz_sw *sw = info->sw_dev;
 
 	*netdev = dev;
 	skb->dev = dev;
+
+	/* Guard against sending during receiving. */
+	spin_lock_bh(&sw->rx_lock);
 	rc = ops->ndo_start_xmit(skb, skb->dev);
+	spin_unlock_bh(&sw->rx_lock);
 	if (NETDEV_TX_BUSY == rc) {
+		info->dev->stats.tx_dropped++;
 		dev_kfree_skb_irq(skb);
 	}
 	return rc;
@@ -1409,11 +1527,13 @@ static void hsr_forward_do(struct hsr_frame_info *frame)
 		hsr_update_frame_out(other, frame->node_src,
 			frame->sequence_nr);
 
+#if 0
 		/* Simulate incoming frame so that node is not removed. */
 		if (frame->is_supervision && !frame->node_src->slave) {
 			hsr_register_frame_in(frame->node_src, port,
 				frame->sequence_nr);
 		}
+#endif
 
 		skb = frame_get_tagged_skb(frame, port);
 		skb->protocol = htons(ETH_P_HSR);
@@ -1464,7 +1584,15 @@ static void hsr_forward_do(struct hsr_frame_info *frame)
 					     frame->node_src,
 					     frame->port_rcv);
 
-#ifdef CONFIG_HAVE_HSR_HW
+#ifdef MONITOR_SEQID
+			/* Kernel HSR driver sends Supervison frame out of
+			 * sequence probably because of queuing in the MAC
+			 * driver.
+			 */
+#endif
+			frame->node_src->seq_out[0] = frame->sequence_nr;
+
+#ifdef CHECK_HSR_RING
 			if (!info->check) {
 				info->check = 1;
 				schedule_delayed_work(&info->chk_ring,
@@ -1571,6 +1699,30 @@ static int hsr_fill_frame_info(struct hsr_frame_info *frame,
 		frame->skb_hsr = skb;
 		frame->sequence_nr = hsr_get_skb_sequence_nr(skb);
 
+#ifdef MONITOR_SEQID
+		do {
+			int p = 0;
+
+			if (port->type == HSR_PT_SLAVE_B)
+				p = 1;
+			last_nr[p][1] = last_nr[p][0];
+			last_nr[p][0] = frame->sequence_nr;
+			if (next_nr_chk) {
+				--next_nr_chk;
+				if ((u16)(frame->sequence_nr + 1) == next_nr ||
+				    (u16)(next_nr + 1) == frame->sequence_nr) {
+					dbg_msg("n: %d %x %x; %x %x\n",
+						next_nr_chk,
+						last_nr[0][0], last_nr[0][1],
+						last_nr[1][0], last_nr[1][1]);
+					next_nr_chk = 0;
+				}
+				if (!next_nr_chk)
+					next_nr = 0;
+			}
+		} while (0);
+#endif
+
 	/* Received frame without HSR tag will not come here. */
 	} else {
 		frame->skb_std = skb;
@@ -1629,7 +1781,29 @@ int hsr_forward_skb(struct sk_buff *skb, struct hsr_port *port)
 	}
 	if (hsr_fill_frame_info(frame, skb, port) < 0)
 		goto out_drop;
+#ifdef CONFIG_KSZ_SWITCH
+	if (port->type == HSR_PT_SLAVE_A || port->type == HSR_PT_SLAVE_B)
+#ifdef DBG_FRAME_IN
+		hsr_register_frame_in(frame->node_src, port,
+				      frame->sequence_nr);
+#else
+		hsr_update_frame_in(port, frame->node_src);
+#endif
+#else
+	/* In kernel HSR driver this does not apply to host as its seq_out is
+	 * never updated, but then its node will never be released.
+	 * The count is only updated when forwarding non-local frame to the
+	 * other port, so sending unicast frames to the host like running a
+	 * throughput test will get frames rejected ant not updating the
+	 * time_in value, but then the forget time is 60 seconds so the
+	 * Supervision frame sent every 2 seconds will keep the node live.
+	 * It is expected that both ports will keep receiving same frame to
+	 * update the other port, but this condition may not exist for
+	 * hardware duplicate drop.  This may lead to the node to be
+	 * forgotten if its time stays stale.
+	 */
 	hsr_register_frame_in(frame->node_src, port, frame->sequence_nr);
+#endif
 	hsr_forward_do(frame);
 
 	/* Frame is supervision or was dropped. */
@@ -1686,6 +1860,7 @@ static void *check_hsr_frame(u8 *data, struct hsr_frame_info *frame)
 	return NULL;
 }  /* check_hsr_frame */
 
+#ifdef CONFIG_KSZ_HSR_REDBOX
 static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 {
 	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *) skb->data;
@@ -1749,11 +1924,10 @@ static int hsr_chk(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 		if (!node->slave)
 			proc_hsr_cfg(info, node->MacAddressA, 0);
 		node->slave = 1;
-		node->time_in[HSR_PT_SLAVE_A] = jiffies;
-		node->time_in_stale[HSR_PT_SLAVE_A] = false;
+		port = hsr_port_get_hsr(&info->hsr, HSR_PT_SLAVE_A);
+		hsr_update_frame_in(port, node);
 
 		/* Update so that sequence number may not be too far apart. */
-		port = hsr_port_get_hsr(&info->hsr, HSR_PT_SLAVE_A);
 		hsr_update_frame_out(port, node, info->hsr.sequence_nr - 1);
 	}
 
@@ -1804,8 +1978,27 @@ static void hsr_tx_proc(struct work_struct *work)
 	}
 }  /* hsr_tx_proc */
 
+#define TXQ_PAUSE	2000
+#define TXQ_MAX		(TXQ_PAUSE + 100)
+
 static void proc_hsr_tx(struct ksz_hsr_info *info, struct sk_buff *skb)
 {
+	u32 cnt = skb_queue_len(&info->txq);
+
+	/* Cannot keep waiting in queue for transmit when receive keeps
+	 * coming.
+	 */
+	if (cnt >= TXQ_PAUSE) {
+		struct ksz_sw *sw = info->sw_dev;
+		int rc;
+
+		rc = sw->net_ops->tx_pause(sw, true);
+		if (rc == NETDEV_TX_BUSY && cnt >= TXQ_MAX) {
+			info->dev->stats.tx_dropped++;
+			dev_kfree_skb_any(skb);
+			return;
+		}
+	}
 	skb_queue_tail(&info->txq, skb);
 	schedule_work(&info->tx_proc);
 }  /* proc_hsr_tx */
@@ -1862,6 +2055,7 @@ fwd_next:
 	}
 	return forward;
 }  /* hsr_fwd */
+#endif
 
 static int hsr_rcv(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 {
@@ -2121,6 +2315,7 @@ static void setup_hsr(struct ksz_hsr_info *info, struct net_device *dev, int i)
 		prep_hsr_supervision_slave_frame(info);
 }  /* setup_hsr */
 
+#ifdef CONFIG_KSZ_HSR_REDBOX
 static void setup_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev,
 			     int i, bool fwd)
 {
@@ -2132,6 +2327,7 @@ static void setup_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev,
 	if (info->dev)
 		prep_hsr_supervision_slave_frame(info);
 }  /* setup_hsr_redbox */
+#endif
 
 static int hsr_get_attrib(struct ksz_hsr_info *info, int subcmd, int size,
 	int *req_size, size_t *len, u8 *data, int *output)
@@ -2315,8 +2511,9 @@ static void prep_hsr(struct ksz_hsr_info *info, struct net_device *dev,
 	struct ksz_sw *sw = info->sw_dev;
 
 	info->dev = dev;
+#ifdef CHECK_HSR_RING
 	info->center = NULL;
-	info->seq_num = 0;
+#endif
 	info->ring = 0;
 	prep_hsr_addr(info, src);
 	prep_hsr_redbox_addr(info);
@@ -2328,6 +2525,7 @@ static void prep_hsr(struct ksz_hsr_info *info, struct net_device *dev,
 		vlan = (struct vlan_ethhdr *) info->slave_sup_frame;
 		vlan->h_vlan_TCI = htons(info->vid);
 	}
+#ifdef CONFIG_KSZ_HSR_REDBOX
 	if (info->redbox) {
 		int i;
 
@@ -2338,14 +2536,17 @@ static void prep_hsr(struct ksz_hsr_info *info, struct net_device *dev,
 			}
 		}
 	}
+#endif
 	sw->ops->cfg_mac(sw, BRIDGE_ADDR_ENTRY, info->src_addr, sw->HOST_MASK,
 			 false, false, 0);
+#ifdef CONFIG_KSZ_HSR_REDBOX
 	if (info->redbox_vlan)
 		sw->ops->cfg_mac(sw, DEV_1_ADDR_ENTRY, info->src_addr,
 				 sw->HOST_MASK, false, true,
 				 info->redbox_vlan);
 	skb_queue_head_init(&info->txq);
 	INIT_WORK(&info->tx_proc, hsr_tx_proc);
+#endif
 	hsr_dev_finalize(info);
 }  /* prep_hsr */
 
@@ -2360,7 +2561,6 @@ static void sw_setup_hsr(struct ksz_sw *sw)
  * address also does not work, even though HSR_LEARN_MCAST_DISABLE bit in
  * register 0x644 can be used to control that.
  */
-	SW_D data;
 	int n;
 	u16 mask = 0;
 
@@ -2370,10 +2570,18 @@ static void sw_setup_hsr(struct ksz_sw *sw)
 			break;
 		}
 	}
-	sw->reg->w32(sw, REG_HSR_PORT_MAP__4, mask);
-	data = SW_R(sw, REG_HSR_ALU_CTRL_0__1);
-	data &= ~HSR_NODE_UNICAST;
-	SW_W(sw, REG_HSR_ALU_CTRL_0__1, data);
+
+#ifdef CONFIG_HAVE_HSR_HW
+	/* Have HSR hardware. */
+	if (sw->features & REDUNDANCY_SUPPORT) {
+		SW_D data;
+
+		sw->reg->w32(sw, REG_HSR_PORT_MAP__4, mask);
+		data = SW_R(sw, REG_HSR_ALU_CTRL_0__1);
+		data &= ~HSR_NODE_UNICAST;
+		SW_W(sw, REG_HSR_ALU_CTRL_0__1, data);
+	}
+#endif
 	if ((sw->overrides & HAVE_MORE_THAN_2_PORTS) && 1 == sw->eth_cnt)
 		sw_cfg_port_base_vlan(sw, sw->HOST_PORT, mask | sw->HOST_MASK);
 }  /* sw_setup_hsr */
@@ -2384,9 +2592,16 @@ static void stop_hsr(struct ksz_hsr_info *info)
 
 	/* Redbox should not be running .*/
 	info->redbox_up = false;
+#ifdef CONFIG_KSZ_HSR_REDBOX
+	flush_work(&info->tx_proc);
+#endif
+#ifdef CHECK_HSR_RING
+	cancel_delayed_work_sync(&info->chk_ring);
+#endif
 	hsr_dev_destroy(info);
 }
 
+#ifdef CONFIG_KSZ_HSR_REDBOX
 static void start_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
 {
 	info->redbox_up = netif_carrier_ok(dev);
@@ -2396,16 +2611,14 @@ static void stop_hsr_redbox(struct ksz_hsr_info *info, struct net_device *dev)
 {
 	info->redbox_up = 0;
 }
+#endif
 
 static void ksz_hsr_exit(struct ksz_hsr_info *info)
 {
+#ifdef CONFIG_KSZ_HSR_REDBOX
 	struct sk_buff *skb;
 	bool last;
 
-	flush_work(&info->tx_proc);
-#ifdef CONFIG_HAVE_HSR_HW
-	cancel_delayed_work_sync(&info->chk_ring);
-#endif
 	last = skb_queue_empty(&info->txq);
 	while (!last) {
 		skb = skb_dequeue(&info->txq);
@@ -2413,6 +2626,7 @@ static void ksz_hsr_exit(struct ksz_hsr_info *info)
 			kfree_skb(skb);
 		last = skb_queue_empty(&info->txq);
 	}
+#endif
 }  /* ksz_hsr_exit */
 
 static void ksz_hsr_init(struct ksz_hsr_info *info, struct ksz_sw *sw)
@@ -2425,7 +2639,7 @@ static void ksz_hsr_init(struct ksz_hsr_info *info, struct ksz_sw *sw)
 	info->sw_dev = sw;
 	info->ops = &hsr_ops;
 
-#ifdef CONFIG_HAVE_HSR_HW
+#ifdef CHECK_HSR_RING
 	INIT_DELAYED_WORK(&info->chk_ring, hsr_chk_ring);
 #endif
 }  /* ksz_hsr_init */

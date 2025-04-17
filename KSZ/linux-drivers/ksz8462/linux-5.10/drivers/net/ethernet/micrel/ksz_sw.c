@@ -7505,7 +7505,10 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		if (!*csum_loc) {
 			__sum16 new_csum;
 
-			new_csum = dest << 8;
+			if (skb->len & 1)
+				new_csum = dest << 8;
+			else
+				new_csum = dest;
 			*csum_loc = ~htons(new_csum);
 		}
 	}
@@ -7533,7 +7536,7 @@ static struct sk_buff *sw_check_tx(struct ksz_sw *sw, struct net_device *dev,
 static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct net_device *dev, struct ksz_port *port)
 {
-	spin_lock_bh(&sw->tx_lock);
+	sw_lock_tx(sw);
 	skb = sw->net_ops->check_tx(sw, dev, skb, port);
 	if (!skb)
 		goto done;
@@ -7548,7 +7551,7 @@ static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 #endif
 
 done:
-	spin_unlock_bh(&sw->tx_lock);
+	sw_unlock_tx(sw);
 	return skb;
 }  /* sw_final_skb */
 
@@ -9748,7 +9751,9 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 					break;
 				}
 			}
-dbg_msg(" %d f:%d l:%d\n", phy_id, first, last);
+#if 0
+dbg_msg(" %d f:%d l:%d; %x %04x\n", phy_id, first, last, regnum, val);
+#endif
 		}
 
 		/* PHY device driver resets or powers down the PHY. */
@@ -10175,6 +10180,8 @@ static int ksz_probe(struct sw_priv *ks)
 
 	sw = &ks->sw;
 	mutex_init(&sw->lock);
+	spin_lock_init(&sw->rx_lock);
+	spin_lock_init(&sw->tx_lock);
 	sw->hwlock = &ks->hwlock;
 	sw->reglock = &ks->lock;
 	sw->dev = ks;
@@ -10319,8 +10326,6 @@ dbg_msg("mask: %x %x\n", sw->HOST_MASK, sw->PORT_MASK);
 	sw_init_mib(sw);
 
 	init_waitqueue_head(&sw->queue);
-	spin_lock_init(&sw->rx_lock);
-	spin_lock_init(&sw->tx_lock);
 	for (i = 0; i < TOTAL_PORT_NUM; i++)
 		init_waitqueue_head(&ks->counter[i].counter);
 

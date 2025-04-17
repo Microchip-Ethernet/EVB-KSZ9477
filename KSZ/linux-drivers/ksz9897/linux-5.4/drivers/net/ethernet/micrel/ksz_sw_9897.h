@@ -762,6 +762,7 @@ struct phy_priv {
 #define UNK_MCAST_BLOCK			BIT(5)
 #define UPDATE_CSUM			BIT(6)
 #define DELAY_UPDATE_LINK		BIT(7)
+#define NO_TX_LOCK			BIT(8)
 
 #define IBA_TEST			BIT(16)
 #define ACL_INTR_MONITOR		BIT(17)
@@ -1024,6 +1025,23 @@ struct ksz_port {
 static inline void sw_update_csum(struct ksz_sw *sw)
 {
 	sw->overrides |= UPDATE_CSUM;
+}
+
+static inline void sw_no_tx_lock(struct ksz_sw *sw)
+{
+	sw->overrides |= NO_TX_LOCK;
+}
+
+static inline void sw_lock_tx(struct ksz_sw *sw)
+{
+	if (!(sw->overrides & NO_TX_LOCK))
+		spin_lock_bh(&sw->tx_lock);
+}
+
+static inline void sw_unlock_tx(struct ksz_sw *sw)
+{
+	if (!(sw->overrides & NO_TX_LOCK))
+		spin_unlock_bh(&sw->tx_lock);
 }
 
 static inline uint get_rx_tag_ports(struct ksz_sw_tx_tag *tag)

@@ -505,6 +505,7 @@ struct ksz_sw_cached_regs {
 #define FAST_AGING			(1 << 1)
 #define UPDATE_CSUM			(1 << 2)
 #define HAVE_MORE_THAN_2_PORTS		(1 << 3)
+#define NO_TX_LOCK			(1 << 8)
 
 #define TAIL_PRP_0			(1 << 24)
 #define TAIL_PRP_1			(1 << 25)
@@ -706,6 +707,23 @@ struct ksz_port {
 static inline void sw_update_csum(struct ksz_sw *sw)
 {
 	sw->overrides |= UPDATE_CSUM;
+}
+
+static inline void sw_no_tx_lock(struct ksz_sw *sw)
+{
+	sw->overrides |= NO_TX_LOCK;
+}
+
+static inline void sw_lock_tx(struct ksz_sw *sw)
+{
+	if (!(sw->overrides & NO_TX_LOCK))
+		spin_lock_bh(&sw->tx_lock);
+}
+
+static inline void sw_unlock_tx(struct ksz_sw *sw)
+{
+	if (!(sw->overrides & NO_TX_LOCK))
+		spin_unlock_bh(&sw->tx_lock);
 }
 
 #ifdef CONFIG_KSZ_HSR

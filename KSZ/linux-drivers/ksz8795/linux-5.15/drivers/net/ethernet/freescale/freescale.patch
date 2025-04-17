@@ -58,7 +58,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec.h linux-5.15.
  };
 diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-5.15.103/drivers/net/ethernet/freescale/fec_main.c
 --- linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c	2023-03-17 00:49:05.000000000 -0700
-+++ linux-5.15.103/drivers/net/ethernet/freescale/fec_main.c	2025-04-14 17:37:50.113633847 -0700
++++ linux-5.15.103/drivers/net/ethernet/freescale/fec_main.c	2025-04-16 16:02:34.041879974 -0700
 @@ -71,6 +71,413 @@
  
  #include "fec.h"
@@ -1070,7 +1070,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  static void fec_enet_free_buffers(struct net_device *ndev)
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
-@@ -3182,6 +3875,459 @@ static int fec_enet_alloc_buffers(struct
+@@ -3182,6 +3875,462 @@ static int fec_enet_alloc_buffers(struct
  	return 0;
  }
  
@@ -1203,6 +1203,9 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
 +	sw->net_ops->setup_special(sw, port_count, mib_port_count, dev_count,
 +				   NULL);
 +	sw_update_csum(sw);
++
++	/* This is already set when using IBA. */
++	sw_no_tx_lock(sw);
 +}  /* prep_sw_first */
 +
 +static void prep_sw_dev(struct ksz_sw *sw, struct fec_enet_private *fep, int i,
@@ -1530,7 +1533,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  static int
  fec_enet_open(struct net_device *ndev)
  {
-@@ -3189,6 +4335,27 @@ fec_enet_open(struct net_device *ndev)
+@@ -3189,6 +4338,27 @@ fec_enet_open(struct net_device *ndev)
  	int ret;
  	bool reset_again;
  
@@ -1558,7 +1561,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	ret = pm_runtime_resume_and_get(&fep->pdev->dev);
  	if (ret < 0)
  		return ret;
-@@ -3235,12 +4402,51 @@ fec_enet_open(struct net_device *ndev)
+@@ -3235,12 +4405,57 @@ fec_enet_open(struct net_device *ndev)
  		imx6q_cpuidle_fec_irqs_used();
  
  	napi_enable(&fep->napi);
@@ -1603,14 +1606,20 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  				 FEC_WOL_FLAG_ENABLE);
  
 +#if defined(CONFIG_KSZ_IBA_ONLY)
-+	if (!sw_is_switch(sw))
++	if (!sw_is_switch(sw)) {
 +		create_sw_dev(ndev, fep);
++
++		/* MAC driver was already modified to use a tx lock. */
++		sw = fep->port.sw;
++		if (sw)
++			sw_no_tx_lock(sw);
++	}
 +#endif
 +
  	return 0;
  
  err_enet_mii_probe:
-@@ -3259,6 +4465,60 @@ fec_enet_close(struct net_device *ndev)
+@@ -3259,6 +4474,60 @@ fec_enet_close(struct net_device *ndev)
  {
  	struct fec_enet_private *fep = netdev_priv(ndev);
  
@@ -1671,7 +1680,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	phy_stop(ndev->phydev);
  
  	if (netif_device_present(ndev)) {
-@@ -3267,6 +4527,9 @@ fec_enet_close(struct net_device *ndev)
+@@ -3267,6 +4536,9 @@ fec_enet_close(struct net_device *ndev)
  		fec_stop(ndev);
  	}
  
@@ -1681,7 +1690,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	phy_disconnect(ndev->phydev);
  
  	if (fep->quirks & FEC_QUIRK_ERR006687)
-@@ -3304,6 +4567,35 @@ static void set_multicast_list(struct ne
+@@ -3304,6 +4576,35 @@ static void set_multicast_list(struct ne
  	unsigned char hash;
  	unsigned int hash_high = 0, hash_low = 0;
  
@@ -1717,7 +1726,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	if (ndev->flags & IFF_PROMISC) {
  		tmp = readl(fep->hwp + FEC_R_CNTRL);
  		tmp |= 0x8;
-@@ -3325,6 +4617,10 @@ static void set_multicast_list(struct ne
+@@ -3325,6 +4626,10 @@ static void set_multicast_list(struct ne
  		return;
  	}
  
@@ -1728,7 +1737,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	/* Add the addresses in hash register */
  	netdev_for_each_mc_addr(ha, ndev) {
  		/* calculate crc32 value of mac address */
-@@ -3356,6 +4652,11 @@ fec_set_mac_address(struct net_device *n
+@@ -3356,6 +4661,11 @@ fec_set_mac_address(struct net_device *n
  		if (!is_valid_ether_addr(addr->sa_data))
  			return -EADDRNOTAVAIL;
  		memcpy(ndev->dev_addr, addr->sa_data, ndev->addr_len);
@@ -1740,7 +1749,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	}
  
  	/* Add netif status check here to avoid system hang in below case:
-@@ -3474,11 +4775,18 @@ static const struct net_device_ops fec_n
+@@ -3474,11 +4784,18 @@ static const struct net_device_ops fec_n
  	.ndo_validate_addr	= eth_validate_addr,
  	.ndo_tx_timeout		= fec_timeout,
  	.ndo_set_mac_address	= fec_set_mac_address,
@@ -1759,7 +1768,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  };
  
  static const unsigned short offset_des_active_rxq[] = {
-@@ -3607,6 +4915,24 @@ static int fec_enet_init(struct net_devi
+@@ -3607,6 +4924,24 @@ static int fec_enet_init(struct net_devi
  		fep->rx_align = 0x3f;
  	}
  
@@ -1784,7 +1793,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	ndev->hw_features = ndev->features;
  
  	fec_restart(ndev);
-@@ -3959,8 +5285,10 @@ fec_probe(struct platform_device *pdev)
+@@ -3959,8 +5294,10 @@ fec_probe(struct platform_device *pdev)
  		goto failed_reset;
  
  	irq_cnt = fec_enet_get_irq_cnt(pdev);
@@ -1795,7 +1804,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  
  	ret = fec_enet_init(ndev);
  	if (ret)
-@@ -3990,6 +5318,40 @@ fec_probe(struct platform_device *pdev)
+@@ -3990,6 +5327,40 @@ fec_probe(struct platform_device *pdev)
  	if (ret)
  		goto failed_mii_init;
  
@@ -1836,7 +1845,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	/* Carrier starts down, phylib will bring it up */
  	netif_carrier_off(ndev);
  	fec_enet_clk_enable(ndev, false);
-@@ -4004,12 +5366,21 @@ fec_probe(struct platform_device *pdev)
+@@ -4004,12 +5375,21 @@ fec_probe(struct platform_device *pdev)
  	device_init_wakeup(&ndev->dev, fep->wol_flag &
  			   FEC_WOL_HAS_MAGIC_PACKET);
  
@@ -1858,7 +1867,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	pm_runtime_mark_last_busy(&pdev->dev);
  	pm_runtime_put_autosuspend(&pdev->dev);
  
-@@ -4046,6 +5417,91 @@ failed_ioremap:
+@@ -4046,6 +5426,91 @@ failed_ioremap:
  	return ret;
  }
  
@@ -1950,7 +1959,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  static int
  fec_drv_remove(struct platform_device *pdev)
  {
-@@ -4058,6 +5514,10 @@ fec_drv_remove(struct platform_device *p
+@@ -4058,6 +5523,10 @@ fec_drv_remove(struct platform_device *p
  	if (ret < 0)
  		return ret;
  
@@ -1961,7 +1970,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
  	cancel_work_sync(&fep->tx_timeout_work);
  	fec_ptp_stop(pdev);
  	unregister_netdev(ndev);
-@@ -4205,6 +5665,9 @@ static struct platform_driver fec_driver
+@@ -4205,6 +5674,9 @@ static struct platform_driver fec_driver
  	.id_table = fec_devtype,
  	.probe	= fec_probe,
  	.remove	= fec_drv_remove,

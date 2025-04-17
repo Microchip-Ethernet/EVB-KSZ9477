@@ -14423,6 +14423,9 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 		if (!skb)
 			return NULL;
 		consume_skb(org_skb);
+	} else {
+		/* Make sure socket buffer does not have fragments. */
+		skb_linearize(skb);
 	}
 
 	/* skb_put requires tail pointer set first. */
@@ -14542,18 +14545,26 @@ add_tag:
 
 		/* Checksum is cleared by driver to be filled by hardware. */
 		if (!*csum_loc) {
-			u16 *tag_csum = (u16 *) &tag_data;
 			__sum16 new_csum;
-			int csum = 0;
-			int i;
 
-			/* Length may be odd. */
-			tag_start++;
-			for (i = 0; i < tag_start / 2; i++)
-				csum += ntohs(tag_csum[i]);
-			csum = (csum >> 16) + (csum & 0xffff);
-			csum += (csum >> 16);
-			new_csum = (__sum16) csum;
+			if (tag_len == 1) {
+				if (skb->len & 1)
+					new_csum = tag_data[0] << 8;
+				else
+					new_csum = tag_data[1];
+			} else {
+				u16 *tag_csum = (u16 *) &tag_data;
+				int csum = 0;
+				int i;
+
+				/* Length may be odd. */
+				tag_start++;
+				for (i = 0; i < tag_start / 2; i++)
+					csum += ntohs(tag_csum[i]);
+				csum = (csum >> 16) + (csum & 0xffff);
+				csum += (csum >> 16);
+				new_csum = (__sum16) csum;
+			}
 			*csum_loc = ~htons(new_csum);
 		}
 	}
@@ -14580,7 +14591,7 @@ static struct sk_buff *sw_check_tx(struct ksz_sw *sw, struct net_device *dev,
 static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct net_device *dev, struct ksz_port *port)
 {
-	spin_lock_bh(&sw->tx_lock);
+	sw_lock_tx(sw);
 	skb = sw->net_ops->check_tx(sw, dev, skb, port);
 	if (!skb)
 		goto done;
@@ -14595,7 +14606,7 @@ static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 #endif
 
 done:
-	spin_unlock_bh(&sw->tx_lock);
+	sw_unlock_tx(sw);
 	return skb;
 }  /* sw_final_skb */
 
@@ -16579,10 +16590,18 @@ static void set_phy_support(struct ksz_port *port, struct phy_device *phydev)
 #if defined(USE_HSR_REDBOX) || defined(USE_DLR_FORWARD)
 static int multi_dev = 1;
 #else
+#ifdef CONFIG_KSZ_IBA_ONLY
+static int multi_dev = 0;
+#else
 static int multi_dev = -1;
 #endif
+#endif
 
+#ifdef CONFIG_KSZ_IBA_ONLY
+static int stp = 0;
+#else
 static int stp = -1;
+#endif
 
 /*
  * This enables fast aging in the switch.  Not sure what situation requires
@@ -17838,7 +17857,9 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 					break;
 				}
 			}
-dbg_msg(" %d f:%d l:%d"NL, phy_id, first, last);
+#if 0
+dbg_msg(" %d f:%d l:%d; %x %04x"NL, phy_id, first, last, regnum, val);
+#endif
 		}
 
 		/* PHY device driver resets or powers down the PHY. */
@@ -18283,6 +18304,8 @@ static int ksz_probe_prep(struct sw_priv *ks, void *dev)
 	mutex_init(&sw->alulock);
 	mutex_init(&sw->vlanlock);
 	mutex_init(&sw->hsrlock);
+	spin_lock_init(&sw->rx_lock);
+	spin_lock_init(&sw->tx_lock);
 	sw->hwlock = &ks->hwlock;
 	sw->reglock = &ks->lock;
 	sw->dev = ks;
@@ -19471,8 +19494,6 @@ info->tx_rate / TX_RATE_UNIT, info->duplex);
 	INIT_WORK(&sw->set_addr, sw_delayed_set_addr);
 	INIT_WORK(&sw->tx_fwd, sw_tx_fwd);
 	skb_queue_head_init(&sw->txq);
-	spin_lock_init(&sw->rx_lock);
-	spin_lock_init(&sw->tx_lock);
 
 	INIT_WORK(&ks->mib_read, ksz9897_mib_read_work);
 

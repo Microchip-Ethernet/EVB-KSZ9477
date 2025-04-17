@@ -4004,6 +4004,9 @@ static void prep_sw_first(struct ksz_sw *sw, int *port_count,
 	sw->net_ops->setup_special(sw, port_count, mib_port_count, dev_count,
 				   NULL);
 	sw_update_csum(sw);
+
+	/* This is already set when using IBA. */
+	sw_no_tx_lock(sw);
 }  /* prep_sw_first */
 
 static void prep_sw_dev(struct ksz_sw *sw, struct fec_enet_private *fep, int i,
@@ -4443,8 +4446,14 @@ skip_hw:
 				 FEC_WOL_FLAG_ENABLE);
 
 #if defined(CONFIG_KSZ_IBA_ONLY)
-	if (!sw_is_switch(sw))
+	if (!sw_is_switch(sw)) {
 		create_sw_dev(ndev, fep);
+
+		/* MAC driver was already modified to use a tx lock. */
+		sw = fep->port.sw;
+		if (sw)
+			sw_no_tx_lock(sw);
+	}
 #endif
 
 	return 0;

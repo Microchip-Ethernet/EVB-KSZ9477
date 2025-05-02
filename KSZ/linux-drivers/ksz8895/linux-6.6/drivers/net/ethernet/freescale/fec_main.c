@@ -975,6 +975,58 @@ dma_mapping_error:
 	return ERR_PTR(-ENOMEM);
 }
 
+#ifdef CONFIG_KSZ_SWITCH
+/* There is a situation that tail tag put in by switch driver stays in the
+ * socket buffer and so additional bytes at the end of TCP packet will cause
+ * TCP checksum error when hardware checksumming is enabled.
+ */
+static void check_tcp_len(struct sk_buff *skb)
+{
+	struct vlan_ethhdr *vlan = (struct vlan_ethhdr *)skb->data;
+	struct ethhdr *eth = (struct ethhdr *)skb->data;
+	struct ipv6hdr *ip6h = NULL;
+	struct iphdr *iph = NULL;
+	bool ipv6;
+	int len;
+
+	if (skb->ip_summed != CHECKSUM_PARTIAL)
+		return;
+	if (eth->h_proto == htons(ETH_P_8021Q)) {
+		if (vlan->h_vlan_encapsulated_proto == htons(ETH_P_8021Q)) {
+			unsigned char *ptr = (unsigned char *)vlan;
+
+			ptr += VLAN_HLEN;
+			vlan = (struct vlan_ethhdr *)ptr;
+		}
+		ipv6 = vlan->h_vlan_encapsulated_proto == htons(ETH_P_IPV6);
+		if (!ipv6 &&
+		    vlan->h_vlan_encapsulated_proto != htons(ETH_P_IP))
+			return;
+		ip6h = (struct ipv6hdr *)(vlan + 1);
+		iph = (struct iphdr *)(vlan + 1);
+	} else {
+		ipv6 = eth->h_proto == htons(ETH_P_IPV6);
+		if (eth->h_proto != htons(ETH_P_IP) && !ipv6)
+			return;
+		ip6h = (struct ipv6hdr *)(eth + 1);
+		iph = (struct iphdr *)(eth + 1);
+	}
+	if (ipv6) {
+		len = ntohs(ip6h->payload_len);
+		if (ip6h->nexthdr != IPPROTO_TCP)
+			return;
+		if (len + 54 != skb->len)
+			skb->len = len + 54;
+	} else {
+		len = ntohs(iph->tot_len);
+		if (iph->protocol != IPPROTO_TCP)
+			return;
+		if (len + 14 != skb->len)
+			skb->len = len + 14;
+	}
+}
+#endif
+
 static int fec_enet_txq_submit_skb(struct fec_enet_priv_tx_q *txq,
 				   struct sk_buff *skb, struct net_device *ndev)
 {
@@ -1035,6 +1087,7 @@ static int fec_enet_txq_submit_skb(struct fec_enet_priv_tx_q *txq,
 
 #ifdef CONFIG_KSZ_SWITCH
 	if (sw_is_switch(sw)) {
+		check_tcp_len(skb);
 		skb = sw->net_ops->final_skb(sw, skb, ndev, &fep->port);
 		if (!skb)
 			return NETDEV_TX_OK;
@@ -4643,6 +4696,7 @@ skip_hw:
 		if (sw)
 			sw_no_tx_lock(sw);
 	}
+#endif
 #endif
 
 	return 0;

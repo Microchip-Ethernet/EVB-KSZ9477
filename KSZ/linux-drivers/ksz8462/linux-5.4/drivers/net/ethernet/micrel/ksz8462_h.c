@@ -75,6 +75,7 @@
 #undef CONFIG_KSZ_DLR
 #undef CONFIG_KSZ_HSR
 #undef CONFIG_KSZ_IBA
+#undef CONFIG_KSZ_SWITCH_EMBEDDED
 
 #include "ksz_common.h"
 #include "ksz_req.h"

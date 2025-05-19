@@ -184,7 +184,7 @@ static void get_sysfs_data_(struct net_device *dev,
 #endif
 
 #ifdef CONFIG_1588_PTP
-#if defined(CONFIG_HAVE_KSZ9897)
+#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_KSZ8463)
 #include "../micrel/ksz_ptp_sysfs.c"
 #elif defined(CONFIG_HAVE_LAN937X)
 #include "../microchip/lan937x_ptp_sysfs.c"

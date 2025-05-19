@@ -58,7 +58,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec.h linux-5.15.
  };
 diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-5.15.103/drivers/net/ethernet/freescale/fec_main.c
 --- linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c	2023-03-17 00:49:05.000000000 -0700
-+++ linux-5.15.103/drivers/net/ethernet/freescale/fec_main.c	2025-04-16 16:02:34.041879974 -0700
++++ linux-5.15.103/drivers/net/ethernet/freescale/fec_main.c	2025-05-16 15:39:47.914594272 -0700
 @@ -71,6 +71,413 @@
  
  #include "fec.h"
@@ -176,7 +176,7 @@ diff -Napur linux-5.15.103-orig/drivers/net/ethernet/freescale/fec_main.c linux-
 +#endif
 +
 +#ifdef CONFIG_1588_PTP
-+#if defined(CONFIG_HAVE_KSZ9897)
++#if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_KSZ8463)
 +#include "../micrel/ksz_ptp_sysfs.c"
 +#elif defined(CONFIG_HAVE_LAN937X)
 +#include "../microchip/lan937x_ptp_sysfs.c"

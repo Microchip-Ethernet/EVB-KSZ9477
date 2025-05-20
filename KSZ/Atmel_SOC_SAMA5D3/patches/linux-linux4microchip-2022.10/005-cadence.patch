@@ -60,7 +60,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  #ifdef CONFIG_MACB_USE_HWSTAMP
 diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb_main.c linux-linux4microchip-2022.10/drivers/net/ethernet/cadence/macb_main.c
 --- linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb_main.c	2022-11-09 04:48:42.000000000 -0800
-+++ linux-linux4microchip-2022.10/drivers/net/ethernet/cadence/macb_main.c	2024-04-26 16:37:32.005522618 -0700
++++ linux-linux4microchip-2022.10/drivers/net/ethernet/cadence/macb_main.c	2025-05-19 14:31:17.867627100 -0700
 @@ -38,8 +38,153 @@
  #include <linux/pm_runtime.h>
  #include <linux/ptp_classify.h>
@@ -1027,7 +1027,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	netdev_dbg(bp->dev, "open\n");
  
  	err = pm_runtime_get_sync(&bp->pdev->dev);
-@@ -2855,15 +3569,44 @@ static int macb_open(struct net_device *
+@@ -2855,18 +3569,55 @@ static int macb_open(struct net_device *
  	if (err)
  		goto reset_hw;
  
@@ -1072,7 +1072,18 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	return 0;
  
  phy_off:
-@@ -2886,6 +3629,50 @@ static int macb_close(struct net_device
++#ifdef CONFIG_KSZ_SWITCH
++	/* Switch driver may not have a phylink so just fail this device. */
++	if (sw_is_switch(sw)) {
++		bp = priv->hw_priv->dev;
++		if (priv->hw_priv->opened > 0)
++			return err;
++	}
++#endif
+ 	phy_power_off(bp->sgmii_phy);
+ 
+ reset_hw:
+@@ -2886,6 +3637,50 @@ static int macb_close(struct net_device
  	unsigned long flags;
  	unsigned int q;
  
@@ -1123,16 +1134,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	netif_tx_stop_all_queues(dev);
  
  	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
-@@ -2894,8 +3681,6 @@ static int macb_close(struct net_device
- 	phylink_stop(bp->phylink);
- 	phylink_disconnect_phy(bp->phylink);
- 
--	phy_power_off(bp->sgmii_phy);
--
- 	spin_lock_irqsave(&bp->lock, flags);
- 	macb_reset_hw(bp);
- 	netif_carrier_off(dev);
-@@ -2903,6 +3688,22 @@ static int macb_close(struct net_device
+@@ -2903,6 +3698,22 @@ static int macb_close(struct net_device
  
  	macb_free_consistent(bp);
  
@@ -1155,7 +1157,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (bp->ptp_info)
  		bp->ptp_info->ptp_remove(dev);
  
-@@ -2913,8 +3714,44 @@ static int macb_close(struct net_device
+@@ -2913,8 +3724,44 @@ static int macb_close(struct net_device
  
  static int macb_change_mtu(struct net_device *dev, int new_mtu)
  {
@@ -1200,7 +1202,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  
  	dev->mtu = new_mtu;
  
-@@ -2997,6 +3834,9 @@ static void gem_get_ethtool_stats(struct
+@@ -2997,6 +3844,9 @@ static void gem_get_ethtool_stats(struct
  	struct macb *bp;
  
  	bp = netdev_priv(dev);
@@ -1210,7 +1212,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	gem_update_stats(bp);
  	memcpy(data, &bp->ethtool_stats, sizeof(u64)
  			* (GEM_STATS_LEN + QUEUE_STATS_LEN * MACB_MAX_QUEUES));
-@@ -3045,6 +3885,12 @@ static struct net_device_stats *macb_get
+@@ -3045,6 +3895,12 @@ static struct net_device_stats *macb_get
  	struct net_device_stats *nstat = &bp->dev->stats;
  	struct macb_stats *hwstat = &bp->hw_stats.macb;
  
@@ -1223,7 +1225,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (macb_is_gem(bp))
  		return gem_get_stats(bp);
  
-@@ -3086,6 +3932,38 @@ static struct net_device_stats *macb_get
+@@ -3086,6 +3942,38 @@ static struct net_device_stats *macb_get
  	return nstat;
  }
  
@@ -1262,7 +1264,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  static int macb_get_regs_len(struct net_device *netdev)
  {
  	return MACB_GREGS_NBR * sizeof(u32);
-@@ -3098,6 +3976,9 @@ static void macb_get_regs(struct net_dev
+@@ -3098,6 +3986,9 @@ static void macb_get_regs(struct net_dev
  	unsigned int tail, head;
  	u32 *regs_buff = p;
  
@@ -1272,7 +1274,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	regs->version = (macb_readl(bp, MID) & ((1 << MACB_REV_SIZE) - 1))
  			| MACB_GREGS_VERSION;
  
-@@ -3128,6 +4009,9 @@ static void macb_get_wol(struct net_devi
+@@ -3128,6 +4019,9 @@ static void macb_get_wol(struct net_devi
  {
  	struct macb *bp = netdev_priv(netdev);
  
@@ -1282,7 +1284,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (bp->wol & MACB_WOL_HAS_MAGIC_PACKET) {
  		phylink_ethtool_get_wol(bp->phylink, wol);
  		wol->supported |= WAKE_MAGIC;
-@@ -3142,6 +4026,11 @@ static int macb_set_wol(struct net_devic
+@@ -3142,6 +4036,11 @@ static int macb_set_wol(struct net_devic
  	struct macb *bp = netdev_priv(netdev);
  	int ret;
  
@@ -1294,7 +1296,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	/* Pass the order to phylink layer */
  	ret = phylink_ethtool_set_wol(bp->phylink, wol);
  	/* Don't manage WoL on MAC if handled by the PHY
-@@ -3185,6 +4074,9 @@ static void macb_get_ringparam(struct ne
+@@ -3185,6 +4084,9 @@ static void macb_get_ringparam(struct ne
  {
  	struct macb *bp = netdev_priv(netdev);
  
@@ -1304,7 +1306,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	ring->rx_max_pending = MAX_RX_RING_SIZE;
  	ring->tx_max_pending = MAX_TX_RING_SIZE;
  
-@@ -3199,6 +4091,11 @@ static int macb_set_ringparam(struct net
+@@ -3199,6 +4101,11 @@ static int macb_set_ringparam(struct net
  	u32 new_rx_size, new_tx_size;
  	unsigned int reset = 0;
  
@@ -1316,7 +1318,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if ((ring->rx_mini_pending) || (ring->rx_jumbo_pending))
  		return -EINVAL;
  
-@@ -3299,6 +4196,15 @@ static int macb_get_ts_info(struct net_d
+@@ -3299,6 +4206,15 @@ static int macb_get_ts_info(struct net_d
  {
  	struct macb *bp = netdev_priv(netdev);
  
@@ -1332,7 +1334,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (bp->ptp_info)
  		return bp->ptp_info->get_ts_info(netdev, info);
  
-@@ -3564,6 +4470,9 @@ static int gem_get_rxnfc(struct net_devi
+@@ -3564,6 +4480,9 @@ static int gem_get_rxnfc(struct net_devi
  	struct macb *bp = netdev_priv(netdev);
  	int ret = 0;
  
@@ -1342,7 +1344,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	switch (cmd->cmd) {
  	case ETHTOOL_GRXRINGS:
  		cmd->data = bp->num_queues;
-@@ -3591,6 +4500,11 @@ static int gem_set_rxnfc(struct net_devi
+@@ -3591,6 +4510,11 @@ static int gem_set_rxnfc(struct net_devi
  	struct macb *bp = netdev_priv(netdev);
  	int ret;
  
@@ -1354,7 +1356,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	switch (cmd->cmd) {
  	case ETHTOOL_SRXCLSRLINS:
  		if ((cmd->fs.location >= bp->max_tuples)
-@@ -3616,7 +4530,14 @@ static const struct ethtool_ops macb_eth
+@@ -3616,7 +4540,14 @@ static const struct ethtool_ops macb_eth
  	.get_regs_len		= macb_get_regs_len,
  	.get_regs		= macb_get_regs,
  	.get_link		= ethtool_op_get_link,
@@ -1369,7 +1371,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	.get_wol		= macb_get_wol,
  	.set_wol		= macb_set_wol,
  	.get_link_ksettings     = macb_get_link_ksettings,
-@@ -3647,6 +4568,14 @@ static int macb_ioctl(struct net_device
+@@ -3647,6 +4578,14 @@ static int macb_ioctl(struct net_device
  {
  	struct macb *bp = netdev_priv(dev);
  
@@ -1384,7 +1386,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (!netif_running(dev))
  		return -EINVAL;
  
-@@ -3662,6 +4591,17 @@ static int macb_ioctl(struct net_device
+@@ -3662,6 +4601,17 @@ static int macb_ioctl(struct net_device
  	return phylink_mii_ioctl(bp->phylink, rq, cmd);
  }
  
@@ -1402,7 +1404,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  static inline void macb_set_txcsum_feature(struct macb *bp,
  					   netdev_features_t features)
  {
-@@ -3712,6 +4652,12 @@ static int macb_set_features(struct net_
+@@ -3712,6 +4662,12 @@ static int macb_set_features(struct net_
  	struct macb *bp = netdev_priv(netdev);
  	netdev_features_t changed = features ^ netdev->features;
  
@@ -1415,7 +1417,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	/* TX checksum offload */
  	if (changed & NETIF_F_HW_CSUM)
  		macb_set_txcsum_feature(bp, features);
-@@ -3733,6 +4679,12 @@ static void macb_restore_features(struct
+@@ -3733,6 +4689,12 @@ static void macb_restore_features(struct
  	netdev_features_t features = netdev->features;
  	struct ethtool_rx_fs_item *item;
  
@@ -1428,7 +1430,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	/* TX checksum offload */
  	macb_set_txcsum_feature(bp, features);
  
-@@ -3755,12 +4707,21 @@ static const struct net_device_ops macb_
+@@ -3755,12 +4717,21 @@ static const struct net_device_ops macb_
  	.ndo_eth_ioctl		= macb_ioctl,
  	.ndo_validate_addr	= eth_validate_addr,
  	.ndo_change_mtu		= macb_change_mtu,
@@ -1450,7 +1452,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  };
  
  /* Configure peripheral capabilities according to device tree
-@@ -3788,6 +4749,10 @@ static void macb_configure_caps(struct m
+@@ -3788,6 +4759,10 @@ static void macb_configure_caps(struct m
  		dcfg = gem_readl(bp, DCFG2);
  		if ((dcfg & (GEM_BIT(RX_PKT_BUFF) | GEM_BIT(TX_PKT_BUFF))) == 0)
  			bp->caps |= MACB_CAPS_FIFO_MODE;
@@ -1461,7 +1463,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  #ifdef CONFIG_MACB_USE_HWSTAMP
  		if (gem_has_ptp(bp)) {
  			if (!GEM_BFEXT(TSU, gem_readl(bp, DCFG5)))
-@@ -4028,6 +4993,13 @@ static int macb_init(struct platform_dev
+@@ -4028,6 +5003,13 @@ static int macb_init(struct platform_dev
  		dev->hw_features |= NETIF_F_HW_CSUM | NETIF_F_RXCSUM;
  	if (bp->caps & MACB_CAPS_SG_DISABLED)
  		dev->hw_features &= ~NETIF_F_SG;
@@ -1475,7 +1477,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	dev->features = dev->hw_features;
  
  	/* Check RX Flow Filters support.
-@@ -4778,6 +5750,136 @@ static const struct macb_config default_
+@@ -4778,6 +5760,136 @@ static const struct macb_config default_
  	.jumbo_max_len = 10240,
  };
  
@@ -1612,7 +1614,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  static int macb_probe(struct platform_device *pdev)
  {
  	const struct macb_config *macb_config = &default_gem_config;
-@@ -4858,6 +5960,25 @@ static int macb_probe(struct platform_de
+@@ -4858,6 +5970,25 @@ static int macb_probe(struct platform_de
  	if (macb_config)
  		bp->jumbo_max_len = macb_config->jumbo_max_len;
  
@@ -1638,7 +1640,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	bp->wol = 0;
  	if (of_get_property(np, "magic-packet", NULL))
  		bp->wol |= MACB_WOL_HAS_MAGIC_PACKET;
-@@ -4891,6 +6012,15 @@ static int macb_probe(struct platform_de
+@@ -4891,6 +6022,15 @@ static int macb_probe(struct platform_de
  	else
  		dev->max_mtu = ETH_DATA_LEN;
  
@@ -1654,7 +1656,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (bp->caps & MACB_CAPS_BD_RD_PREFETCH) {
  		val = GEM_BFEXT(RXBD_RDBUFF, gem_readl(bp, DCFG10));
  		if (val)
-@@ -4925,6 +6055,10 @@ static int macb_probe(struct platform_de
+@@ -4925,6 +6065,10 @@ static int macb_probe(struct platform_de
  	if (err)
  		goto err_out_free_netdev;
  
@@ -1665,7 +1667,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	err = macb_mii_init(bp);
  	if (err)
  		goto err_out_phy_exit;
-@@ -4939,6 +6073,18 @@ static int macb_probe(struct platform_de
+@@ -4939,6 +6083,18 @@ static int macb_probe(struct platform_de
  
  	tasklet_setup(&bp->hresp_err_tasklet, macb_hresp_error_task);
  
@@ -1684,7 +1686,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	netdev_info(dev, "Cadence %s rev 0x%08x at 0x%08lx irq %d (%pM)\n",
  		    macb_is_gem(bp) ? "GEM" : "MACB", macb_readl(bp, MID),
  		    dev->base_addr, dev->irq, dev->dev_addr);
-@@ -4967,6 +6113,42 @@ err_disable_clocks:
+@@ -4967,6 +6123,42 @@ err_disable_clocks:
  	return err;
  }
  
@@ -1727,7 +1729,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  static int macb_remove(struct platform_device *pdev)
  {
  	struct net_device *dev;
-@@ -4976,19 +6158,35 @@ static int macb_remove(struct platform_d
+@@ -4976,19 +6168,35 @@ static int macb_remove(struct platform_d
  
  	if (dev) {
  		bp = netdev_priv(dev);
@@ -1763,7 +1765,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  		phylink_destroy(bp->phylink);
  		free_netdev(dev);
  	}
-@@ -5008,6 +6206,11 @@ static int __maybe_unused macb_suspend(s
+@@ -5008,6 +6216,11 @@ static int __maybe_unused macb_suspend(s
  	if (!netif_running(netdev))
  		return 0;
  
@@ -1775,7 +1777,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (bp->wol & MACB_WOL_ENABLED) {
  		spin_lock_irqsave(&bp->lock, flags);
  		/* Flush all status bits */
-@@ -5098,6 +6301,11 @@ static int __maybe_unused macb_resume(st
+@@ -5098,6 +6311,11 @@ static int __maybe_unused macb_resume(st
  	if (!device_may_wakeup(dev))
  		pm_runtime_force_resume(dev);
  
@@ -1787,7 +1789,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (bp->wol & MACB_WOL_ENABLED) {
  		spin_lock_irqsave(&bp->lock, flags);
  		/* Disable WoL */
-@@ -5166,6 +6374,10 @@ static int __maybe_unused macb_runtime_s
+@@ -5166,6 +6384,10 @@ static int __maybe_unused macb_runtime_s
  	struct net_device *netdev = dev_get_drvdata(dev);
  	struct macb *bp = netdev_priv(netdev);
  
@@ -1798,7 +1800,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (!(device_may_wakeup(dev)))
  		macb_clks_disable(bp->pclk, bp->hclk, bp->tx_clk, bp->rx_clk, bp->tsu_clk);
  	else
-@@ -5179,6 +6391,10 @@ static int __maybe_unused macb_runtime_r
+@@ -5179,6 +6401,10 @@ static int __maybe_unused macb_runtime_r
  	struct net_device *netdev = dev_get_drvdata(dev);
  	struct macb *bp = netdev_priv(netdev);
  
@@ -1809,7 +1811,7 @@ diff -Napur linux-linux4microchip-2022.10-orig/drivers/net/ethernet/cadence/macb
  	if (!(device_may_wakeup(dev))) {
  		clk_prepare_enable(bp->pclk);
  		clk_prepare_enable(bp->hclk);
-@@ -5198,6 +6414,9 @@ static const struct dev_pm_ops macb_pm_o
+@@ -5198,6 +6424,9 @@ static const struct dev_pm_ops macb_pm_o
  static struct platform_driver macb_driver = {
  	.probe		= macb_probe,
  	.remove		= macb_remove,

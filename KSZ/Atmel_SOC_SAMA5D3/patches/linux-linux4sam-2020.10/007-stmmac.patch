@@ -73,7 +73,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  enum stmmac_state {
 diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c linux-at91-linux4sam-2020.10/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 --- linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2021-01-14 04:54:56.000000000 -0800
-+++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2021-11-01 15:07:08.918096414 -0700
++++ linux-at91-linux4sam-2020.10/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2025-05-19 16:59:37.686705571 -0700
 @@ -39,6 +39,59 @@
  #include <net/pkt_cls.h>
  #include "stmmac_ptp.h"
@@ -134,7 +134,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  #include <linux/reset.h>
  #include <linux/of_mdio.h>
  #include "dwmac1000.h"
-@@ -112,6 +165,361 @@ static void stmmac_exit_fs(struct net_de
+@@ -112,6 +165,349 @@ static void stmmac_exit_fs(struct net_de
  
  #define STMMAC_COAL_TIMER(x) (jiffies + usecs_to_jiffies(x))
  
@@ -337,9 +337,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +}  /* priv_match_multi */
 +#endif
 +
-+static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb,
-+	int *ptp_tag, struct net_device **parent_dev,
-+	struct sk_buff **parent_skb)
++static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb)
 +{
 +	struct net_device *dev;
 +	struct stmmac_priv *priv;
@@ -349,16 +347,11 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +	int forward = 0;
 +	int tag = 0;
 +	void *ptr = NULL;
-+	void (*rx_tstamp)(void *ptr, struct sk_buff *skb) = NULL;
-+#endif
-+#if defined(CONFIG_KSZ_SWITCH)
-+	int extra_skb;
 +#endif
 +#ifdef CONFIG_1588_PTP
 +	struct ptp_info *ptp = &sw->ptp_hw;
++	int ptp_tag;
 +#endif
-+
-+	*parent_skb = NULL;
 +
 +	dev = sw->net_ops->rx_dev(sw, skb->data, &len, &tag, &rx_port);
 +	if (!dev) {
@@ -400,13 +393,11 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +#ifdef CONFIG_1588_PTP
 +	ptr = ptp;
 +	if (sw->features & PTP_HW) {
-+		if (ptp->ops->drop_pkt(ptp, skb, sw->vlan_id, &tag, ptp_tag,
++		if (ptp->ops->drop_pkt(ptp, skb, sw->vlan_id, &tag, &ptp_tag,
 +				       &forward)) {
 +			dev_kfree_skb_any(skb);
 +			return NULL;
 +		}
-+		if (*ptp_tag)
-+			rx_tstamp = ptp->ops->get_rx_tstamp;
 +	}
 +#endif
 +
@@ -422,18 +413,15 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +	/* No VLAN port forwarding; need to send to parent. */
 +	if ((forward & FWD_VLAN_DEV) && !tag)
 +		forward &= ~FWD_VLAN_DEV;
-+	dev = sw->net_ops->parent_rx(sw, dev, skb, &forward, parent_dev,
-+		parent_skb);
++	dev = sw->net_ops->parent_rx(sw, dev, &forward);
 +
 +	/* dev may change. */
 +	if (dev != skb->dev) {
 +		skb->dev = dev;
 +		priv = netdev_priv(dev);
 +	}
-+	extra_skb = (parent_skb != NULL);
 +
-+	extra_skb |= sw->net_ops->port_vlan_rx(sw, dev, *parent_dev, skb,
-+		forward, tag, ptr, rx_tstamp);
++	sw->net_ops->port_vlan_rx(skb, forward, tag);
 +#endif
 +	return priv;
 +}  /* sw_rx_proc */
@@ -448,7 +436,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +
 +static void dev_set_multicast(struct stmmac_priv *priv, int multicast)
 +{
-+	if (multicast != priv->multi) {
++	if ((!multicast && priv->multi) || (multicast && !priv->multi)) {
 +		struct stmmac_priv *hw_priv = priv->hw_priv;
 +		u8 hw_multi = hw_priv->hw_multi;
 +
@@ -496,7 +484,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  /**
   * stmmac_verify_args - verify the driver parameters.
   * Description: it checks the driver parameters and set a default in case of
-@@ -918,6 +1326,21 @@ static void stmmac_mac_link_down(struct
+@@ -918,6 +1314,21 @@ static void stmmac_mac_link_down(struct
  {
  	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
  
@@ -518,7 +506,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	stmmac_mac_set(priv, priv->ioaddr, false);
  	priv->eee_active = false;
  	stmmac_eee_init(priv);
-@@ -930,6 +1353,17 @@ static void stmmac_mac_link_up(struct ph
+@@ -930,6 +1341,17 @@ static void stmmac_mac_link_up(struct ph
  {
  	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
  
@@ -536,7 +524,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	stmmac_mac_set(priv, priv->ioaddr, true);
  	if (phy && priv->dma_cap.eee) {
  		priv->eee_active = phy_init_eee(phy, 1) >= 0;
-@@ -986,6 +1420,19 @@ static int stmmac_init_phy(struct net_de
+@@ -986,6 +1408,19 @@ static int stmmac_init_phy(struct net_de
  	struct device_node *node;
  	int ret;
  
@@ -556,7 +544,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	node = priv->plat->phylink_node;
  
  	if (node)
-@@ -1010,6 +1457,12 @@ static int stmmac_init_phy(struct net_de
+@@ -1010,6 +1445,12 @@ static int stmmac_init_phy(struct net_de
  	return ret;
  }
  
@@ -569,7 +557,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  static int stmmac_phy_setup(struct stmmac_priv *priv)
  {
  	struct fwnode_handle *fwnode = of_fwnode_handle(priv->plat->phylink_node);
-@@ -1019,6 +1472,25 @@ static int stmmac_phy_setup(struct stmma
+@@ -1019,6 +1460,25 @@ static int stmmac_phy_setup(struct stmma
  	priv->phylink_config.dev = &priv->dev->dev;
  	priv->phylink_config.type = PHYLINK_NETDEV;
  
@@ -595,7 +583,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	phylink = phylink_create(&priv->phylink_config, fwnode,
  				 mode, &stmmac_phylink_mac_ops);
  	if (IS_ERR(phylink))
-@@ -1931,6 +2403,11 @@ static int stmmac_tx_clean(struct stmmac
+@@ -1931,6 +2391,11 @@ static int stmmac_tx_clean(struct stmmac
  		netif_dbg(priv, tx_done, priv->dev,
  			  "%s: restart transmit\n", __func__);
  		netif_tx_wake_queue(netdev_get_tx_queue(priv->dev, queue));
@@ -607,7 +595,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	}
  
  	if ((priv->eee_enabled) && (!priv->tx_path_in_lpi_mode)) {
-@@ -1978,6 +2455,11 @@ static void stmmac_tx_err(struct stmmac_
+@@ -1978,6 +2443,11 @@ static void stmmac_tx_err(struct stmmac_
  
  	priv->dev->stats.tx_errors++;
  	netif_tx_wake_queue(netdev_get_tx_queue(priv->dev, chan));
@@ -619,7 +607,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  }
  
  /**
-@@ -2485,6 +2967,305 @@ static void stmmac_safety_feat_configura
+@@ -2485,6 +2955,305 @@ static void stmmac_safety_feat_configura
  	}
  }
  
@@ -909,7 +897,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +		if (!dev)
 +			continue;
 +		priv = netdev_priv(dev);
-+		flush_work(&priv->port.link_update);
++		cancel_delayed_work_sync(&priv->port.link_update);
 +		if (priv->phylink) {
 +			if (priv->port.pl == priv->phylink)
 +				priv->port.pl = NULL;
@@ -925,7 +913,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  /**
   * stmmac_hw_setup - setup mac in a usable state.
   *  @dev : pointer to the device structure.
-@@ -2624,6 +3405,31 @@ static int stmmac_open(struct net_device
+@@ -2624,6 +3393,31 @@ static int stmmac_open(struct net_device
  	u32 chan;
  	int ret;
  
@@ -957,7 +945,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	if (priv->hw->pcs != STMMAC_PCS_RGMII &&
  	    priv->hw->pcs != STMMAC_PCS_TBI &&
  	    priv->hw->pcs != STMMAC_PCS_RTBI) {
-@@ -2647,6 +3453,11 @@ static int stmmac_open(struct net_device
+@@ -2647,6 +3441,11 @@ static int stmmac_open(struct net_device
  	if (bfsize < BUF_SIZE_16KiB)
  		bfsize = stmmac_set_bfsize(dev->mtu, priv->dma_buf_sz);
  
@@ -969,7 +957,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	priv->dma_buf_sz = bfsize;
  	buf_sz = bfsize;
  
-@@ -2711,8 +3522,51 @@ static int stmmac_open(struct net_device
+@@ -2711,8 +3510,51 @@ static int stmmac_open(struct net_device
  	}
  
  	stmmac_enable_all_queues(priv);
@@ -1021,7 +1009,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	return 0;
  
  lpiirq_error:
-@@ -2734,6 +3588,52 @@ dma_desc_error:
+@@ -2734,6 +3576,52 @@ dma_desc_error:
  	return ret;
  }
  
@@ -1074,7 +1062,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  /**
   *  stmmac_release - close entry point of the driver
   *  @dev : device pointer.
-@@ -2752,6 +3652,11 @@ static int stmmac_release(struct net_dev
+@@ -2752,6 +3640,11 @@ static int stmmac_release(struct net_dev
  	phylink_stop(priv->phylink);
  	phylink_disconnect_phy(priv->phylink);
  
@@ -1086,7 +1074,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	stmmac_disable_all_queues(priv);
  
  	for (chan = 0; chan < priv->plat->tx_queues_to_use; chan++)
-@@ -3111,11 +4016,39 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -3111,11 +4004,39 @@ static netdev_tx_t stmmac_xmit(struct sk
  	bool has_vlan;
  	int entry;
  
@@ -1126,7 +1114,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	/* Manage oversized TCP frames for GMAC4 device */
  	if (skb_is_gso(skb) && priv->tso) {
  		if (skb_shinfo(skb)->gso_type & (SKB_GSO_TCPV4 | SKB_GSO_TCPV6))
-@@ -3126,6 +4059,11 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -3126,6 +4047,11 @@ static netdev_tx_t stmmac_xmit(struct sk
  		if (!netif_tx_queue_stopped(netdev_get_tx_queue(dev, queue))) {
  			netif_tx_stop_queue(netdev_get_tx_queue(priv->dev,
  								queue));
@@ -1138,21 +1126,18 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  			/* This is a hard error, log it. */
  			netdev_err(priv->dev,
  				   "%s: Tx Ring full when queue awake\n",
-@@ -3434,6 +4372,13 @@ static int stmmac_rx(struct stmmac_priv
+@@ -3434,6 +4360,10 @@ static int stmmac_rx(struct stmmac_priv
  	unsigned int next_entry = rx_q->cur_rx;
  	struct sk_buff *skb = NULL;
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	struct net_device *parent_dev = NULL;
-+	struct sk_buff *parent_skb = NULL;
 +	struct ksz_sw *sw = priv->port.sw;
-+	int ptp_tag = 0;
 +#endif
 +
  	if (netif_msg_rx_status(priv)) {
  		void *rx_head;
  
-@@ -3602,6 +4547,24 @@ read_again:
+@@ -3602,6 +4532,19 @@ read_again:
  
  		stmmac_get_rx_hwtstamp(priv, p, np, skb);
  		stmmac_rx_vlan(priv->dev, skb);
@@ -1161,12 +1146,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +		if (sw_is_switch(sw)) {
 +			struct stmmac_priv *hw_priv;
 +
-+			/* Initialize variables. */
-+			parent_dev = NULL;
-+			parent_skb = NULL;
-+			ptp_tag = 0;
-+			hw_priv = sw_rx_proc(sw, skb, &ptp_tag, &parent_dev,
-+				&parent_skb);
++			hw_priv = sw_rx_proc(sw, skb);
 +			if (!hw_priv)
 +				continue;
 +
@@ -1177,7 +1157,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  		skb->protocol = eth_type_trans(skb, priv->dev);
  
  		if (unlikely(!coe))
-@@ -3618,6 +4581,12 @@ read_again:
+@@ -3618,6 +4561,12 @@ read_again:
  		priv->dev->stats.rx_packets++;
  		priv->dev->stats.rx_bytes += len;
  		count++;
@@ -1190,7 +1170,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	}
  
  	if (status & rx_not_ls) {
-@@ -3706,6 +4675,36 @@ static void stmmac_set_rx_mode(struct ne
+@@ -3706,6 +4655,36 @@ static void stmmac_set_rx_mode(struct ne
  {
  	struct stmmac_priv *priv = netdev_priv(dev);
  
@@ -1227,7 +1207,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	stmmac_set_filter(priv, priv->hw, dev);
  }
  
-@@ -3753,6 +4752,12 @@ static netdev_features_t stmmac_fix_feat
+@@ -3753,6 +4732,12 @@ static netdev_features_t stmmac_fix_feat
  {
  	struct stmmac_priv *priv = netdev_priv(dev);
  
@@ -1240,7 +1220,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	if (priv->plat->rx_coe == STMMAC_RX_COE_NONE)
  		features &= ~NETIF_F_RXCSUM;
  
-@@ -3785,6 +4790,12 @@ static int stmmac_set_features(struct ne
+@@ -3785,6 +4770,12 @@ static int stmmac_set_features(struct ne
  	bool sph_en;
  	u32 chan;
  
@@ -1253,7 +1233,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	/* Keep the COE Type in case of csum is supporting */
  	if (features & NETIF_F_RXCSUM)
  		priv->hw->rx_csum = priv->plat->rx_coe;
-@@ -3890,6 +4901,10 @@ static void stmmac_poll_controller(struc
+@@ -3890,6 +4881,10 @@ static void stmmac_poll_controller(struc
  }
  #endif
  
@@ -1264,7 +1244,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  /**
   *  stmmac_ioctl - Entry point for the Ioctl
   *  @dev: Device pointer.
-@@ -3904,6 +4919,56 @@ static int stmmac_ioctl(struct net_devic
+@@ -3904,6 +4899,62 @@ static int stmmac_ioctl(struct net_devic
  	struct stmmac_priv *priv = netdev_priv (dev);
  	int ret = -EOPNOTSUPP;
  
@@ -1283,9 +1263,15 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +			u16 ports;
 +
 +			ports = 0;
-+			for (i = 0, p = priv->port.first_port;
-+			     i < priv->port.port_cnt; i++, p++)
-+				ports |= (1 << p);
++			if (priv->port.port_cnt > 1) {
++				p = priv->port.first_port + priv->port.port_cnt
++				       - 1;
++				ports = (1 << p);
++			} else {
++				for (i = 0, p = priv->port.first_port - 1;
++				     i < priv->port.port_cnt; i++, p++)
++					ports |= (1 << p);
++			}
 +			ptp = &sw->ptp_hw;
 +			ret = ptp->ops->hwtstamp_ioctl(ptp, rq, ports);
 +		}
@@ -1321,7 +1307,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	if (!netif_running(dev))
  		return -EINVAL;
  
-@@ -3997,6 +5062,35 @@ static int stmmac_set_mac_address(struct
+@@ -3997,6 +5048,35 @@ static int stmmac_set_mac_address(struct
  	if (ret)
  		return ret;
  
@@ -1357,7 +1343,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	stmmac_set_umac_addr(priv, priv->hw, ndev->dev_addr, 0);
  
  	return ret;
-@@ -4244,6 +5338,13 @@ static int stmmac_vlan_rx_add_vid(struct
+@@ -4244,6 +5324,13 @@ static int stmmac_vlan_rx_add_vid(struct
  	bool is_double = false;
  	int ret;
  
@@ -1371,7 +1357,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	if (!priv->dma_cap.vlhash)
  		return -EOPNOTSUPP;
  	if (be16_to_cpu(proto) == ETH_P_8021AD)
-@@ -4264,6 +5365,13 @@ static int stmmac_vlan_rx_kill_vid(struc
+@@ -4264,6 +5351,13 @@ static int stmmac_vlan_rx_kill_vid(struc
  	struct stmmac_priv *priv = netdev_priv(ndev);
  	bool is_double = false;
  
@@ -1385,7 +1371,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	if (!priv->dma_cap.vlhash)
  		return -EOPNOTSUPP;
  	if (be16_to_cpu(proto) == ETH_P_8021AD)
-@@ -4642,6 +5750,19 @@ int stmmac_dvr_probe(struct device *devi
+@@ -4642,6 +5736,19 @@ int stmmac_dvr_probe(struct device *devi
  		}
  	}
  
@@ -1405,7 +1391,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	ret = stmmac_phy_setup(priv);
  	if (ret) {
  		netdev_err(ndev, "failed to setup phy (%d)\n", ret);
-@@ -4659,6 +5780,17 @@ int stmmac_dvr_probe(struct device *devi
+@@ -4659,6 +5766,17 @@ int stmmac_dvr_probe(struct device *devi
  	stmmac_init_fs(ndev);
  #endif
  
@@ -1423,7 +1409,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	return ret;
  
  error_netdev_register:
-@@ -4684,6 +5816,57 @@ error_hw_init:
+@@ -4684,6 +5802,57 @@ error_hw_init:
  }
  EXPORT_SYMBOL_GPL(stmmac_dvr_probe);
  
@@ -1452,7 +1438,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
 +	}
 +#endif
 +	if (do_exit) {
-+		flush_work(&priv->port.link_update);
++		cancel_delayed_work_sync(&priv->port.link_update);
 +		stmmac_sw_exit(priv);
 +	}
 +#ifdef CONFIG_KSZ_SMI
@@ -1481,7 +1467,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  /**
   * stmmac_dvr_remove
   * @dev: device pointer
-@@ -4697,6 +5880,10 @@ int stmmac_dvr_remove(struct device *dev
+@@ -4697,6 +5866,10 @@ int stmmac_dvr_remove(struct device *dev
  
  	netdev_info(priv->dev, "%s: removing driver", __func__);
  
@@ -1492,7 +1478,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	stmmac_stop_all_dma(priv);
  
  	stmmac_mac_set(priv, priv->ioaddr, false);
-@@ -4737,6 +5924,12 @@ int stmmac_suspend(struct device *dev)
+@@ -4737,6 +5910,12 @@ int stmmac_suspend(struct device *dev)
  	if (!ndev || !netif_running(ndev))
  		return 0;
  
@@ -1505,7 +1491,7 @@ diff -Napur linux-at91-linux4sam-2020.10-orig/drivers/net/ethernet/stmicro/stmma
  	phylink_mac_change(priv->phylink, false);
  
  	mutex_lock(&priv->lock);
-@@ -4817,6 +6010,12 @@ int stmmac_resume(struct device *dev)
+@@ -4817,6 +5996,12 @@ int stmmac_resume(struct device *dev)
  	if (!netif_running(ndev))
  		return 0;
  

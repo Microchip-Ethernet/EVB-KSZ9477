@@ -380,8 +380,6 @@ static struct stmmac_priv *sw_rx_proc(struct ksz_sw *sw, struct sk_buff *skb)
 	int ptp_tag;
 #endif
 
-	*parent_skb = NULL;
-
 	dev = sw->net_ops->rx_dev(sw, skb->data, &len, &tag, &rx_port);
 	if (!dev) {
 		dev_kfree_skb_any(skb);

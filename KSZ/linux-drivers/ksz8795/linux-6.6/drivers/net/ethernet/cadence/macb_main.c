@@ -202,11 +202,7 @@ struct sifive_fu540_macb_mgmt {
 #define MACB_RX_BUFFER_SIZE	128
 #define RX_BUFFER_MULTIPLE	64  /* bytes */
 
-#if defined(CONFIG_SOC_SAM9X7) && defined(CONFIG_KSZ_SWITCH)
-#define DEFAULT_RX_RING_SIZE	1024 /* must be power of 2 */
-#else
 #define DEFAULT_RX_RING_SIZE	512 /* must be power of 2 */
-#endif
 #define MIN_RX_RING_SIZE	64
 #define MAX_RX_RING_SIZE	8192
 #define RX_RING_BYTES(bp)	(macb_dma_desc_get_size(bp)	\
@@ -3709,6 +3705,7 @@ phy_off:
 #ifdef CONFIG_KSZ_SWITCH
 	/* Switch driver may not have a phylink so just fail this device. */
 	if (sw_is_switch(sw)) {
+		bp = priv->hw_priv->dev;
 		if (priv->hw_priv->opened > 0)
 			return err;
 	}
@@ -3787,6 +3784,8 @@ static int macb_close(struct net_device *dev)
 
 	phylink_stop(bp->phylink);
 	phylink_disconnect_phy(bp->phylink);
+
+	phy_power_off(bp->sgmii_phy);
 
 	spin_lock_irqsave(&bp->lock, flags);
 	macb_reset_hw(bp);

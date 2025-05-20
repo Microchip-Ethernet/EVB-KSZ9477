@@ -46,9 +46,16 @@
 
 #include "macb.h"
 
+#if defined(CONFIG_SOC_SAM9X7) && defined(CONFIG_KSZ_SWITCH)
+#if 1
+#define NO_SG
+#endif
+#endif
+#if !defined(CONFIG_SOC_SAM9X7)
 #if 1
 /* No hardware checksumming means no fix for such feature. */
 #define NO_HW_CSUM
+#endif
 #endif
 #if 1
 /* Decide to have this fix or not. */
@@ -196,7 +203,11 @@ struct sifive_fu540_macb_mgmt {
 #define MACB_RX_BUFFER_SIZE	128
 #define RX_BUFFER_MULTIPLE	64  /* bytes */
 
+#if defined(CONFIG_SOC_SAM9X7) && defined(CONFIG_KSZ_SWITCH)
+#define DEFAULT_RX_RING_SIZE	1024 /* must be power of 2 */
+#else
 #define DEFAULT_RX_RING_SIZE	512 /* must be power of 2 */
+#endif
 #define MIN_RX_RING_SIZE	64
 #define MAX_RX_RING_SIZE	8192
 #define RX_RING_BYTES(bp)	(macb_dma_desc_get_size(bp)	\
@@ -949,6 +960,9 @@ static int macb_phylink_connect(struct macb *bp)
 	int ret;
 
 #ifdef CONFIG_KSZ_SWITCH
+	/* Switch driver could not create a phylink due to device tree. */
+	if (IS_ERR(bp->phylink))
+		return -ENODEV;
 	if (bp->phylink) {
 		struct ksz_mac *priv = get_ksz_mac(bp);
 		struct ksz_sw *sw = priv->port.sw;
@@ -1043,7 +1057,10 @@ static int macb_mii_probe(struct net_device *dev)
 		bp->phylink_config.get_fixed_state = macb_get_pcs_fixed_state;
 	}
 
-	bp->phylink_config.mac_capabilities = MAC_ASYM_PAUSE |
+	/* MAC cannot send PAUSE frames so the correct advertisement is
+	 * MAC_SYM_PAUSE | MAC_ASYM_PAUSE.
+	 */
+	bp->phylink_config.mac_capabilities = MAC_ASYM_PAUSE | MAC_SYM_PAUSE |
 		MAC_10 | MAC_100;
 
 	__set_bit(PHY_INTERFACE_MODE_MII,
@@ -3619,6 +3636,14 @@ skip_hw:
 	return 0;
 
 phy_off:
+#ifdef CONFIG_KSZ_SWITCH
+	/* Switch driver may not have a phylink so just fail this device. */
+	if (sw_is_switch(sw)) {
+		bp = priv->hw_priv->dev;
+		if (priv->hw_priv->opened > 0)
+			return err;
+	}
+#endif
 	phy_power_off(bp->sgmii_phy);
 
 reset_hw:
@@ -3693,6 +3718,8 @@ static int macb_close(struct net_device *dev)
 
 	phylink_stop(bp->phylink);
 	phylink_disconnect_phy(bp->phylink);
+
+	phy_power_off(bp->sgmii_phy);
 
 	spin_lock_irqsave(&bp->lock, flags);
 	macb_reset_hw(bp);
@@ -4767,10 +4794,6 @@ static void macb_configure_caps(struct macb *bp,
 		dcfg = gem_readl(bp, DCFG2);
 		if ((dcfg & (GEM_BIT(RX_PKT_BUFF) | GEM_BIT(TX_PKT_BUFF))) == 0)
 			bp->caps |= MACB_CAPS_FIFO_MODE;
-#ifdef CONFIG_KSZ_SWITCH
-/* MAC used in evaluation board does not really support large jumbo frame. */
-		bp->caps &= ~MACB_CAPS_JUMBO;
-#endif
 #ifdef CONFIG_MACB_USE_HWSTAMP
 		if (gem_has_ptp(bp)) {
 			if (!GEM_BFEXT(TSU, gem_readl(bp, DCFG5)))
@@ -5013,6 +5036,10 @@ static int macb_init(struct platform_device *pdev)
 		dev->hw_features |= NETIF_F_HW_CSUM | NETIF_F_RXCSUM;
 	if (bp->caps & MACB_CAPS_SG_DISABLED)
 		dev->hw_features &= ~NETIF_F_SG;
+#ifdef NO_SG
+	/* TCP TX has better throughput. */
+	dev->hw_features &= ~NETIF_F_SG;
+#endif
 #ifdef NO_HW_CSUM
 	/* No need to have hardware checksumming if scatter/gather is not
 	 * supported.

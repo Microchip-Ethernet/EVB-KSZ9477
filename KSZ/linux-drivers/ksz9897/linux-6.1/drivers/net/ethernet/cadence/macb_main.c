@@ -3639,6 +3639,7 @@ phy_off:
 #ifdef CONFIG_KSZ_SWITCH
 	/* Switch driver may not have a phylink so just fail this device. */
 	if (sw_is_switch(sw)) {
+		bp = priv->hw_priv->dev;
 		if (priv->hw_priv->opened > 0)
 			return err;
 	}
@@ -3717,6 +3718,8 @@ static int macb_close(struct net_device *dev)
 
 	phylink_stop(bp->phylink);
 	phylink_disconnect_phy(bp->phylink);
+
+	phy_power_off(bp->sgmii_phy);
 
 	spin_lock_irqsave(&bp->lock, flags);
 	macb_reset_hw(bp);

@@ -3368,6 +3368,14 @@ skip_hw:
 	return 0;
 
 reset_hw:
+#ifdef CONFIG_KSZ_SWITCH
+	/* Switch driver may not have a phylink so just fail this device. */
+	if (sw_is_switch(sw)) {
+		bp = priv->hw_priv->dev;
+		if (priv->hw_priv->opened > 0)
+			return err;
+	}
+#endif
 	macb_reset_hw(bp);
 	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
 		napi_disable(&queue->napi);
@@ -5669,7 +5677,7 @@ static int macb_probe(struct platform_device *pdev)
 #endif
 #if defined(CONFIG_NET_DSA) || defined(CONFIG_NET_DSA_MODULE)
 	if (dev->max_mtu <= ETH_DATA_LEN)
-		dev->max_mtu += ETH_DATA_LEN + 8;
+		dev->max_mtu = ETH_DATA_LEN + 8;
 #endif
 
 	if (bp->caps & MACB_CAPS_BD_RD_PREFETCH) {

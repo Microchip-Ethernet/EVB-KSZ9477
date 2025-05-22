@@ -78,6 +78,9 @@ struct ksz_vlan_table;
 #ifdef CONFIG_KSZ_HSR
 #include "ksz_hsr.h"
 #endif
+#ifdef CONFIG_USE_WEB
+#include "ksz_web.h"
+#endif
 
 
 #define LEARNED_MAC_TABLE_ENTRIES	1024
@@ -630,6 +633,13 @@ struct ksz_sw_ops {
 	ssize_t (*sysfs_vlan_read)(struct ksz_sw *sw, int proc_num,
 		ssize_t len, char *buf);
 	int (*sysfs_vlan_write)(struct ksz_sw *sw, int proc_num, int num);
+
+#ifdef CONFIG_USE_WEB
+	ssize_t (*sysfs_web_read)(struct ksz_sw *sw, int proc_num,
+		struct ksz_port *port, ssize_t len, char *buf);
+	int (*sysfs_web_write)(struct ksz_sw *sw, int proc_num,
+		struct ksz_port *port, int num,	const char *buf);
+#endif
 
 #ifdef CONFIG_KSZ_STP
 	ssize_t (*sysfs_stp_read)(struct ksz_sw *sw, int proc_num, ssize_t len,

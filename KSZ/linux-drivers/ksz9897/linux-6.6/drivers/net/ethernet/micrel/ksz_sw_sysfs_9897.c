@@ -1,7 +1,7 @@
 /**
  * Microchip gigabit switch common sysfs code
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2011-2014 Micrel, Inc.
@@ -18,6 +18,9 @@
 
 
 #include "ksz_sysfs.h"
+#ifdef CONFIG_USE_WEB
+#include "ksz_web.c"
+#endif
 
 
 static char *sw_name[] = {
@@ -1041,6 +1044,13 @@ static struct attribute_group lan_group = {
 	.attrs  = lan_attrs,
 };
 
+#ifdef CONFIG_USE_WEB
+static struct attribute_group web_group = {
+	.name  = "web",
+	.attrs  = web_attrs,
+};
+#endif
+
 static struct attribute_group sw_group = {
 	.name  = "sw0",
 	.attrs  = sw_attrs,
@@ -1080,6 +1090,9 @@ static void exit_sw_sysfs(struct ksz_sw *sw, struct ksz_sw_sysfs *info,
 	ksz_sw_dev_attrs_ptr = ksz_sw_dev_attrs;
 
 	sysfs_remove_group(&dev->kobj, &lan_group);
+#ifdef CONFIG_USE_WEB
+	sysfs_remove_group(&dev->kobj, &web_group);
+#endif
 }
 
 static int init_sw_sysfs(struct ksz_sw *sw, struct ksz_sw_sysfs *info,
@@ -1121,6 +1134,9 @@ static int init_sw_sysfs(struct ksz_sw *sw, struct ksz_sw_sysfs *info,
 		if (err)
 			return err;
 	}
+#ifdef CONFIG_USE_WEB
+	err = sysfs_create_group(&dev->kobj, &web_group);
+#endif
 	return err;
 }
 

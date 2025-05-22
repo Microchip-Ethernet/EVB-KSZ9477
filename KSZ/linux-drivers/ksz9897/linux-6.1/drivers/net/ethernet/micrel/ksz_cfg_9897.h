@@ -32,6 +32,9 @@
 #define CONFIG_KSZ_HSR_REDBOX
 #endif
 
+#if 1
+#define CONFIG_USE_WEB
+#endif
 
 #include "ksz_common.h"
 

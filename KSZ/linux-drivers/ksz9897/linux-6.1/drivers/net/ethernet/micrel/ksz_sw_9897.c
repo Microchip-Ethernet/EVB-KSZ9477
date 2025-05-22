@@ -6342,7 +6342,12 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 		phydev->speed = SPEED_10;
 		phydev->dev_flags |= 1;
 #endif
+#ifdef USE_GMII_100_MODE
+		phydev->speed = SPEED_100;
+		phydev->dev_flags |= 1;
+#endif
 #ifdef USE_HALF_DUPLEX
+		duplex = 0;
 		phydev->duplex = DUPLEX_HALF;
 		phydev->dev_flags |= 1;
 #endif
@@ -6455,7 +6460,7 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 		info->tx_rate = speed * TX_RATE_UNIT;
 		info->duplex = duplex + 1;
 		phydev->speed = speed;
-		phydev->duplex = duplex - 1;
+		phydev->duplex = duplex;
 #ifdef USE_RGMII_PHY
 		data |= PORT_RGMII_ID_EG_ENABLE;
 		mode = 3;
@@ -13380,6 +13385,595 @@ static void sw_fwd_unk_vid(struct ksz_sw *sw)
 		sw->HOST_MASK | SW_UNK_VID_ENABLE);
 }  /* sw_fwd_unk_vid */
 
+#ifdef CONFIG_USE_WEB
+static ssize_t get_dev_info(struct ksz_sw *sw, ssize_t len, char *buf)
+{
+	char name[80];
+	u32 id;
+
+	id = sw->reg->r32(sw, REG_CHIP_ID0__1);
+	switch (sw->chip_id) {
+	case KSZ9477_SW_CHIP:
+		strncpy(name, "EVB-KSZ9477 Rev.A (UNG_8071)", sizeof(name));
+		break;
+	case KSZ9897_SW_CHIP:
+		strncpy(name, "EVB-KSZ9897", sizeof(name));
+		break;
+	case KSZ9896_SW_CHIP:
+		strncpy(name, "KSZ9896", sizeof(name));
+		break;
+	case KSZ9567_SW_CHIP:
+		strncpy(name, "KSZ9567", sizeof(name));
+		break;
+	case KSZ8567_SW_CHIP:
+		strncpy(name, "KSZ8567", sizeof(name));
+		break;
+	case KSZ9563_SW_CHIP:
+		strncpy(name, "KSZ9563", sizeof(name));
+		break;
+	case KSZ8563_SW_CHIP:
+		strncpy(name, "KSZ8563", sizeof(name));
+		break;
+	case LAN9646_SW_CHIP:
+		strncpy(name, "EVB-LAN9646", sizeof(name));
+		break;
+	default:
+		strncpy(name, "Unknown", sizeof(name));
+		break;
+	}
+
+	len += sprintf(buf + len, "%08x", id);
+	len += sprintf(buf + len, ":FutureUse");
+	len += sprintf(buf + len, ":%u", sw->mib_port_cnt + 1);
+	len += sprintf(buf + len, ":%s", name);
+	return len;
+}
+
+static ssize_t get_tgt_info(struct ksz_sw *sw, ssize_t len, char *buf)
+{
+	u32 id;
+
+	id = sw->reg->r32(sw, REG_CHIP_ID0__1);
+	len += sprintf(buf + len, "Target Chip Id:\n%08x\n\n", id);
+	len += sprintf(buf + len, "No of Ports:\n%u\n", sw->port_cnt);
+	return len;
+}
+
+static ssize_t web_get_port_status(struct ksz_sw *sw, struct ksz_port *port,
+				   ssize_t len, char *buf)
+{
+	struct ksz_port_info *port_info;
+	int speed;
+	int n, p;
+
+	for (n = 1; n <= sw->phy_port_cnt; n++) {
+		p = get_phy_port(sw, n);
+		port_info = get_port_info(sw, p);
+		speed = port_info->tx_rate / TX_RATE_UNIT;
+		if (port->force_link) {
+			if (speed == 1000)
+				len += sprintf(buf + len, "1000M");
+			else if (speed == 100)
+				len += sprintf(buf + len, "100M");
+			else
+				len += sprintf(buf + len, "10M");
+			if (port_info->duplex == 2)
+				len += sprintf(buf + len, "FD:");
+			else
+				len += sprintf(buf + len, "HD:");
+		} else {
+			len += sprintf(buf + len, "Auto:");
+		}
+		if (port_info->state == media_connected) {
+			len += sprintf(buf + len, "Link Up");
+			len += sprintf(buf + len, " - ");
+			if (speed == 1000)
+				len += sprintf(buf + len, "1G ");
+			else if (speed == 100)
+				len += sprintf(buf + len, "100M ");
+			else
+				len += sprintf(buf + len, "10M ");
+			if (port_info->duplex == 2)
+				len += sprintf(buf + len, "Full");
+			else
+				len += sprintf(buf + len, "Half");
+			len += sprintf(buf + len, " Duplex:");
+		} else {
+			len += sprintf(buf + len, "Link Down:");
+		}
+	}
+	return len;
+}
+
+static ssize_t web_get_pvid(struct ksz_sw *sw, ssize_t len, char *buf)
+{
+	struct ksz_port_cfg *port_cfg;
+	int drop_non, drop_tag;
+	u16 prio, vid;
+	int n, p;
+
+	for (n = 1; n <= sw->mib_port_cnt + 1; n++) {
+		p = get_phy_port(sw, n);
+		port_cfg = get_port_cfg(sw, p);
+		vid = port_cfg->vid & ~0xf000;
+		prio = port_cfg->vid >> 13;
+		len += sprintf(buf + len, "%u:%u:", vid,
+			       port_chk_in_filter(sw, p));
+		drop_non = port_chk_drop_non_vlan(sw, p);
+		drop_tag = port_chk_drop_tag(sw, p);
+		if (!drop_non && !drop_tag)
+			len += sprintf(buf + len, "AA:");
+		else if (drop_non)
+			len += sprintf(buf + len, "AT:");
+		else
+			len += sprintf(buf + len, "AU:");
+		len += sprintf(buf + len, "%u:", prio);
+	}
+	return len;
+}
+
+static ssize_t web_dynamic_table(struct ksz_sw *sw, ssize_t len, char *buf)
+{
+	struct ksz_mac_table mac;
+	u32 ports;
+	u16 i;
+
+	sw_start_dyn_mac_table(sw);
+	i = 0;
+	do {
+		if (sw_g_dyn_mac_table(sw, &i, &mac))
+			break;
+		ports = mac.ports;
+		ports = get_log_mask_from_phy(sw, ports);
+		len += sprintf(buf + len,
+			"%4x: %02X:%02X:%02X:%02X:%02X:%02X  "
+			"%04x  m:%u  t:%u  s:%u  d:%u  o:%u  %02x  [%u]"NL,
+			i, mac.addr[0], mac.addr[1], mac.addr[2],
+			mac.addr[3], mac.addr[4], mac.addr[5],
+			ports, mac.mstp, mac.prio, mac.src, mac.dst,
+			mac.override, mac.fid, mac.valid);
+		i++;
+		if (len >= MAX_SYSFS_BUF_SIZE)
+			break;
+	} while (1);
+	sw_stop_dyn_mac_table(sw, i);
+	return len;
+}  /* web_dynamic_table */
+
+static ssize_t web_static_table(struct ksz_sw *sw, ssize_t len, char *buf)
+{
+	int i, j, n;
+	u16 ports;
+	int seen;
+	struct ksz_mac_table table[8];
+	struct ksz_mac_table *mac;
+	int first_static = true;
+	u16 addr[8];
+
+	for (j = 0; j < 8; j++)
+		addr[j] = get_mcast_reserved_addr(j);
+	sw_r_m_sta_mac_table(sw, addr, 1, 8, table);
+	for (j = 0; j < 8; j++) {
+		mac = &table[j];
+		if (!mac->valid)
+			continue;
+		ports = mac->ports;
+		ports = get_log_mask_from_phy(sw, ports);
+		len += sprintf(buf + len,
+			       "%2x: %02X:%02X:%02X:%02X:%02X:%02X  "
+			       "%04x  m:%u  p:%u  s:%u  d:%u  o:%u  %u:%02x  <",
+			       j,
+			       mac->addr[0], mac->addr[1], mac->addr[2],
+			       mac->addr[3], mac->addr[4], mac->addr[5],
+			       ports, mac->mstp, mac->prio,
+			       mac->src, mac->dst,
+			       mac->override, mac->use_fid, mac->fid);
+		seen = 0;
+		for (i = 0; i < RESERVED_MCAST_TABLE_ENTRIES; i++) {
+			if (j == mcast_reserved_map[i]) {
+				if (!seen) {
+					if (i != mac->addr[5])
+						len += sprintf(buf + len, " ");
+					len += sprintf(buf + len,
+						       "%02X", i);
+					seen = i + 1;
+				}
+			} else if (seen) {
+				if (i != seen)
+					len += sprintf(buf + len,
+						       "..%02X", i - 1);
+				seen = 0;
+			}
+		}
+		if (seen && i != seen)
+			len += sprintf(buf + len, "..%02X", i - 1);
+		len += sprintf(buf + len, ">"NL);
+	}
+	i = 0;
+	n = 8;
+	do {
+		for (j = 0; j < MAX_IBA_MAC_ENTRIES; j++)
+			addr[j] = i + j;
+		sw_r_m_sta_mac_table(sw, addr, 0, MAX_IBA_MAC_ENTRIES,
+			table);
+		for (j = 0; j < MAX_IBA_MAC_ENTRIES; j++) {
+			mac = &table[j];
+			if (!mac->valid)
+				continue;
+			ports = mac->ports;
+			ports = get_log_mask_from_phy(sw, ports);
+			if (first_static) {
+				first_static = false;
+				len += sprintf(buf + len, NL);
+			}
+			len += sprintf(buf + len,
+				       "%2x: %02X:%02X:%02X:%02X:%02X:%02X  "
+				       "%04x  m:%u  p:%u  s:%u  d:%u  o:%u  "
+				       "%u:%02x"NL,
+				       i + j,
+				       mac->addr[0], mac->addr[1], mac->addr[2],
+				       mac->addr[3], mac->addr[4], mac->addr[5],
+				       ports, mac->mstp, mac->prio,
+				       mac->src, mac->dst,
+				       mac->override, mac->use_fid, mac->fid);
+			n++;
+			if (len >= MAX_SYSFS_BUF_SIZE)
+				break;
+		}
+		i += MAX_IBA_MAC_ENTRIES;
+	} while (i < STATIC_MAC_TABLE_ENTRIES);
+	return len;
+}  /* web_static_table */
+
+static ssize_t web_static_table_(struct ksz_sw *sw, ssize_t len, char *buf)
+{
+	int i, j, n, p;
+	u16 ports;
+	struct ksz_mac_table table[8];
+	struct ksz_mac_table *mac;
+	u16 addr[8];
+	char tmp[8];
+
+	len += sprintf(buf + len, "   *");
+	for (j = 0; j < 8; j++)
+		addr[j] = get_mcast_reserved_addr(j);
+	sw_r_m_sta_mac_table(sw, addr, 1, 8, table);
+	for (j = 0; j < 8; j++) {
+		mac = &table[j];
+		if (!mac->valid)
+			continue;
+		ports = mac->ports;
+		ports = get_log_mask_from_phy(sw, ports);
+		len += sprintf(buf + len,
+			       "%2x*%02X:%02X:%02X:%02X:%02X:%02X*",
+			       j,
+			       mac->addr[0], mac->addr[1], mac->addr[2],
+			       mac->addr[3], mac->addr[4], mac->addr[5]);
+		for (p = 0; p < sw->mib_port_cnt + 1; p++) {
+			if (ports & 1)
+				len += sprintf(buf + len, "M-");
+			else
+				len += sprintf(buf + len, "N-");
+			ports >>= 1;
+		}
+		len += sprintf(buf + len, "*");
+	}
+	i = 0;
+	n = 8;
+	do {
+		for (j = 0; j < MAX_IBA_MAC_ENTRIES; j++)
+			addr[j] = i + j;
+		sw_r_m_sta_mac_table(sw, addr, 0, MAX_IBA_MAC_ENTRIES,
+			table);
+		for (j = 0; j < MAX_IBA_MAC_ENTRIES; j++) {
+			mac = &table[j];
+			if (!mac->valid)
+				continue;
+			ports = mac->ports;
+			ports = get_log_mask_from_phy(sw, ports);
+			len += sprintf(buf + len,
+				       "%2x*%02X:%02X:%02X:%02X:%02X:%02X*",
+				       i + j,
+				       mac->addr[0], mac->addr[1], mac->addr[2],
+				       mac->addr[3], mac->addr[4], mac->addr[5]);
+			for (p = 0; p < sw->mib_port_cnt + 1; p++) {
+				if (ports & 1)
+					len += sprintf(buf + len, "M-");
+				else
+					len += sprintf(buf + len, "N-");
+				ports >>= 1;
+			}
+			len += sprintf(buf + len, "*");
+			n++;
+			if (len >= MAX_SYSFS_BUF_SIZE)
+				break;
+		}
+		i += MAX_IBA_MAC_ENTRIES;
+	} while (i < STATIC_MAC_TABLE_ENTRIES);
+	sprintf(tmp, "%3u", n);
+	for (i = 0; i < 3; i++)
+		buf[i] = tmp[i];
+	return len;
+}  /* web_static_table */
+
+static ssize_t web_vlan_table(struct ksz_sw *sw, ssize_t len, char *buf)
+{
+	int j, n, p;
+	u16 i;
+	u16 ports;
+	u16 untag;
+	struct ksz_vlan_table *vlan;
+	struct ksz_vlan_table table[8];
+	char tmp[8];
+
+	len += sprintf(buf + len, "   :Ports:");
+	i = 0;
+	n = 0;
+	do {
+		sw_r_m_vlan_table(sw, i, MAX_IBA_VLAN_ENTRIES, table);
+		for (j = 0; j < MAX_IBA_VLAN_ENTRIES; j++) {
+			vlan = &table[j];
+			if (!vlan->valid)
+				continue;
+			ports = vlan->ports;
+			untag = vlan->untag;
+			ports = get_log_mask_from_phy(sw, ports);
+			untag = get_log_mask_from_phy(sw, untag);
+			len += sprintf(buf + len, "%u:%u:",
+				       vlan->vid, vlan->fid);
+			for (p = 0; p < sw->mib_port_cnt + 1; p++) {
+				if (ports & 1) {
+					if (untag & 1)
+						len += sprintf(buf + len,
+							       " U -");
+					else
+						len += sprintf(buf + len,
+							       " T -");
+				} else {
+					len += sprintf(buf + len, " N -");
+				}
+				ports >>= 1;
+				untag >>= 1;
+			}
+			len += sprintf(buf + len, ":");
+			n++;
+			if (len >= MAX_SYSFS_BUF_SIZE)
+				break;
+		}
+		i += MAX_IBA_VLAN_ENTRIES;
+	} while (i < VLAN_TABLE_ENTRIES);
+	sprintf(tmp, "%3u", n);
+	for (i = 0; i < 3; i++)
+		buf[i] = tmp[i];
+	return len;
+}  /* web_vlan_table */
+
+static ssize_t sysfs_web_read(struct ksz_sw *sw, int proc_num,
+	struct ksz_port *port, ssize_t len, char *buf)
+{
+	bool processed = true;
+
+	sw->ops->acquire(sw);
+	switch (proc_num) {
+	case WEB_GET_DEV_INFO:
+		len = get_dev_info(sw, len, buf);
+		break;
+	case WEB_GET_TGT_INFO:
+		len = get_tgt_info(sw, len, buf);
+		break;
+	case WEB_ENABLE_VLAN:
+		if (sw_chk(sw, REG_SW_LUE_CTRL_0, SW_VLAN_ENABLE))
+			len += sprintf(buf + len, "1:1");
+		else
+			len += sprintf(buf + len, "0:0");
+		break;
+	case WEB_ENABLE_JUMBO_PACKET:
+		if (sw_chk(sw, REG_SW_MAC_CTRL_1, SW_JUMBO_PACKET))
+			len += sprintf(buf + len, "1:1");
+		else
+			len += sprintf(buf + len, "0:0");
+		break;
+	case WEB_SET_MTU:
+	{
+		u16 mtu;
+
+		mtu = sw->reg->r16(sw, REG_SW_MTU__2);
+		sw->mtu = mtu;
+		len += sprintf(buf + len, "%u", mtu);
+		break;
+	}
+	case WEB_SET_PVID:
+		len = web_get_pvid(sw, len, buf);
+		break;
+	default:
+		processed = false;
+		break;
+	}
+	sw->ops->release(sw);
+	if (processed)
+		return len;
+
+	switch (proc_num) {
+	case WEB_DYNAMIC:
+		len = web_dynamic_table(sw, len, buf);
+		break;
+	case WEB_STATIC:
+		len = web_static_table(sw, len, buf);
+		break;
+	case WEB_STATIC_CFG:
+		len = web_static_table_(sw, len, buf);
+		break;
+	case WEB_VLAN:
+		len = web_vlan_table(sw, len, buf);
+		break;
+	case WEB_SET_PORT_STATUS:
+		len = web_get_port_status(sw, port, len, buf);
+		break;
+	}
+	return len;
+}  /* sysfs_web_read */
+
+static int sysfs_web_write(struct ksz_sw *sw, int proc_num,
+	struct ksz_port *port, int num,	const char *buf)
+{
+	bool processed = true;
+	unsigned int val[12];
+	uint n, p;
+	int count;
+
+	sw->ops->acquire(sw);
+	switch (proc_num) {
+	case WEB_DYNAMIC:
+		sw_flush_dyn_mac_table(sw, sw->port_cnt);
+		break;
+	case WEB_STATIC:
+		sw_clr_sta_mac_table(sw);
+		break;
+	case WEB_ENABLE_VLAN:
+		if (!num)
+			sw_dis_vlan(sw);
+		else
+			sw_ena_vlan(sw);
+		break;
+	case WEB_ENABLE_JUMBO_PACKET:
+		sw_cfg(sw, REG_SW_MAC_CTRL_1, SW_JUMBO_PACKET, num);
+		break;
+	case WEB_SET_MTU:
+		if (64 <= num && num <= 9000) {
+			sw->reg->w16(sw, REG_SW_MTU__2, (u16) num);
+			sw->mtu = num;
+		}
+		break;
+	case WEB_SET_PVID:
+	{
+		bool drop_non, drop_tag;
+		char accept[40];
+		u16 pvid;
+
+		count = sscanf(buf, "%u %u %u %u %4s",
+			       &val[0], &val[1], &val[2], &val[3], accept);
+		if (count != 5)
+			break;
+		n = val[0];
+		p = get_phy_port(sw, n);
+		pvid = val[1] | (val[2] & 7) << 13;
+		if (!strncmp(accept, "AA", 2))
+			drop_non = drop_tag = false;
+		else if (!strncmp(accept, "AT", 2))
+			drop_non = true;
+		else
+			drop_tag = true;
+		sw_cfg_def_vid(sw, p, pvid);
+		port_cfg_in_filter(sw, p, !!val[3]);
+		port_cfg_drop_non_vlan(sw, p, drop_non);
+		port_cfg_drop_tag(sw, p, drop_tag);
+		break;
+	}
+	default:
+		processed = false;
+		break;
+	}
+	sw->ops->release(sw);
+	if (processed)
+		return processed;
+
+	processed = true;
+	switch (proc_num) {
+	case WEB_STATIC_CFG:
+	{
+		struct ksz_mac_table *entry = &sw->info->mac_entry;
+		unsigned int a[6];
+		u16 ports;
+
+		count = sscanf(buf,
+			       "%u %u %x:%x:%x:%x:%x:%x %x %u %u %u %u %u %u %u %u",
+			       &val[0], &val[1],
+			       &a[0], &a[1], &a[2], &a[3], &a[4], &a[5],
+			       &val[2], &val[3], &val[4], &val[5], &val[6],
+			       &val[7], &val[8], &val[9], &val[10]);
+		if (count != 17)
+			break;
+		if (0 <= val[8] && val[8] <= ALU_V_FID_M)
+			entry->fid = (u16)val[8];
+		if (val[7])
+			entry->use_fid = 1;
+		else
+			entry->use_fid = 0;
+		if (0 <= val[3] && val[3] <= ALU_V_MSTP_M)
+			entry->mstp = (u8)val[3];
+		if (0 <= val[4] && val[4] <= ALU_V_PRIO_AGE_CNT_M)
+			entry->prio = (u8)val[4];
+		if (val[6])
+			entry->src = 1;
+		else
+			entry->src = 0;
+		if (val[5])
+			entry->dst = 1;
+		else
+			entry->dst = 0;
+		if (val[9])
+			entry->override = 1;
+		else
+			entry->override = 0;
+		if (val[10])
+			entry->valid = 1;
+		else
+			entry->valid = 0;
+		if (0 <= val[2] && val[2] <= sw->PORT_MASK) {
+			ports = val[2];
+			ports = get_phy_mask_from_log(sw, ports);
+			entry->ports = ports;
+		}
+		for (n = 0; n < 6; n++)
+			entry->addr[n] = (u8)a[n];
+		if (0 <= val[1] && val[1] < 3)
+			sw->alu_type = (u8)val[1];
+		if (0 <= val[0] && val[0] < 0x1000)
+			sw->alu_index = (u16)val[0];
+		if (2 == sw->alu_type)
+			sw_w_dyn_mac_table(sw, sw->alu_index,
+				entry->addr, entry->fid, entry);
+		else
+			sw_w_sta_mac_table(sw, sw->alu_index,
+				sw->alu_type, entry);
+		break;
+	}
+	case WEB_VLAN:
+	{
+		struct ksz_vlan_table *entry = &sw->info->vlan_entry;
+
+		count = sscanf(buf, "%u %u %u %u %u",
+			       &val[0], &val[1], &val[2], &val[3], &val[4]);
+		if (count != 5)
+			break;
+		entry->vid = (u16)val[0];
+		entry->fid = (u16)val[1];
+		entry->ports = (u32)val[2];
+		entry->untag = (u32)val[3];
+		entry->valid = !!val[4];
+		entry->ports = get_phy_mask_from_log(sw, entry->ports);
+		entry->untag = get_phy_mask_from_log(sw, entry->untag);
+		sw->vlan_index = entry->vid;
+#ifdef CONFIG_KSZ_MRP
+		if (sw->features & MRP_SUPPORT) {
+			struct mrp_info *mrp = &sw->mrp;
+
+			mrp->ops->setup_vlan(mrp, sw->vlan_index, entry);
+		}
+#endif
+		sw_w_vlan_table(sw, sw->vlan_index, entry);
+		sw->vlan_dirty = 0;
+		sw->overrides |= VLAN_SET;
+		break;
+	}
+	default:
+		processed = false;
+		break;
+	}
+	return processed;
+}  /* sysfs_web_write */
+#endif
+
 static int sw_need_dest(struct ksz_sw *sw, u8 *addr)
 {
 	int need = 0;
@@ -14835,6 +15429,9 @@ dbg_msg(" ! tail tag not set"NL);
 		struct sw_priv *ks = sw->dev;
 		int ret;
 
+		/* Interrupt is already started. */
+		if (ks->irq_work.func)
+			break;
 		ret = sw_start_interrupt(ks, dev_name(ks->dev));
 		if (ret < 0) {
 			printk(KERN_WARNING "No switch interrupt"NL);
@@ -15095,7 +15692,7 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 	info = get_port_info(sw, sw->HOST_PORT);
 	s->interface = sw->interface;
 	s->speed = info->tx_rate / TX_RATE_UNIT;
-	s->duplex = 1;
+	s->duplex = (info->duplex == 2);
 	s->pause = 3;
 	s->link = 1;
 	s->an_enabled = 0;
@@ -17303,6 +17900,11 @@ static struct ksz_sw_ops sw_ops = {
 	.sysfs_mac_write	= sysfs_mac_write,
 	.sysfs_vlan_read	= sysfs_vlan_read,
 	.sysfs_vlan_write	= sysfs_vlan_write,
+
+#ifdef CONFIG_USE_WEB
+	.sysfs_web_read		= sysfs_web_read,
+	.sysfs_web_write	= sysfs_web_write,
+#endif
 
 #ifdef CONFIG_KSZ_STP
 	.sysfs_stp_read		= sysfs_stp_read,

@@ -742,9 +742,11 @@ int ptp_ioctl(void *fd, void *req)
 {
 	struct dev_info *info = (struct dev_info *) fd;
 	struct ifreq dev;
+	int n;
 
 	memset(&dev, 0, sizeof(struct ifreq));
-	strncpy(dev.ifr_name, info->name, sizeof(dev.ifr_name));
+	n = snprintf(dev.ifr_name, sizeof(dev.ifr_name) - 1, "%s", info->name);
+	dev.ifr_name[n] = '\0';
 	dev.ifr_data = (char *) req;
 	return ioctl(info->sock, SIOCDEVPRIVATE + 15, &dev);
 }

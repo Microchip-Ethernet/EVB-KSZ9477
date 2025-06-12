@@ -351,7 +351,7 @@ static const char * check_ip(char *  pv)
 {
         int k;
         int n0,n1,n2,n3;
-        static char ipaddr[32];
+        static char ipaddr[40];
         k=sscanf(pv,"%d.%d.%d.%d",&n0,&n1,&n2,&n3);
         if(k!=4)
                 return NULL;
@@ -362,7 +362,8 @@ static const char * check_ip(char *  pv)
         if(n0<0 || n1<0 || n2<0 || n3<0)
                 return NULL;
         ipaddr[0]='\0';
-        sprintf(ipaddr,"%d.%d.%d.%d",n0,n1,n2,n3);
+        k = snprintf(ipaddr, sizeof(ipaddr) - 1, "%d.%d.%d.%d",n0,n1,n2,n3);
+	ipaddr[k] = '\0';
         return ipaddr;
 }
 
@@ -427,6 +428,7 @@ static Boolean get_ip(char * pv)
 {
         FILE * fp;
         char * pword, * pnext;
+	int n;
         sprintf(cmdbuf,"ifconfig %s | grep inet | cut -d\":\" -f2", devname);
         fp = popen(cmdbuf, "r");
         if (fp == NULL) {
@@ -447,7 +449,11 @@ static Boolean get_ip(char * pv)
                 printf("Error: Fail to detect local network connection\n");
                 return MCHP_FALSE;
         }
+#if 0
         strncpy(pv,pword,IPBUFSIZE);
+#endif
+	n = snprintf(pv, IPBUFSIZE, "%s", pword);
+	pv[n] = '\0';
         return MCHP_TRUE;
 }
 
@@ -639,7 +645,7 @@ static void cmdProcess(CMD_PKT * pcmd, const char * prmtip)
 			case DLR_GET_NET_STATUS:
 				{
 					DLR_NET_STATUS_INFO * pnet;
-					u8 network;
+					u8 network = 0;
 					pcmdsend->cmd=(DLR_HSR_CMD)htonl(DLR_GET_NET_STATUS);
 					//any node can get a network status, 	
 					rc = get_dlr_network(fd, &network);	
@@ -1245,7 +1251,7 @@ struct ksz_dlr_active_node node;
 			argv[0]);
 		return 1;
 	}
-	strncpy(devname, argv[1], sizeof(devname));
+	strncpy(devname, argv[1], sizeof(devname) - 1);
 
   if(argc==3)
   	debugmsg=atoi(argv[2]);

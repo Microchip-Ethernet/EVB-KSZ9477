@@ -626,14 +626,14 @@ static void signal_update(struct thread_info *pthread, u32 *ptr, u32 update)
 
 static void wait_for_resp(struct auth_info *info)
 {
-	struct timeb tb;
 	struct timespec ts;
+	struct timeval tv;
 	struct thread_info *pthread;
 	int n;
 
-	ftime(&tb);
-	ts.tv_sec = tb.time;
-	ts.tv_nsec = (tb.millitm + 100) * 1000 * 1000;
+	gettimeofday(&tv, NULL);
+	ts.tv_sec = tv.tv_sec;
+	ts.tv_nsec = (tv.tv_usec + 100 * 1000) * 1000;
 	if (ts.tv_nsec >= 1000000000) {
 		ts.tv_nsec -= 1000000000;
 		ts.tv_sec++;
@@ -1174,7 +1174,7 @@ static void prep_access_accept_simple_rsp(struct radius_info *info)
 
 	info->password_len = 0;
 
-	snprintf(buf, 90, "Hello, %s", info->name);
+	snprintf(buf, 90 - 1, "Hello, %s", info->name);
 	memcpy(info->msg, buf, info->name_len + 8);
 	info->msg_len = strlen((char *) info->msg);
 
@@ -1196,7 +1196,7 @@ static void prep_access_accept_rsp(struct radius_info *info)
 
 	info->password_len = 0;
 
-	snprintf(buf, 90, "Hello, %s", info->name);
+	snprintf(buf, 90 - 1, "Hello, %s", info->name);
 	memcpy(info->msg, buf, info->name_len + 8);
 	info->msg_len = strlen((char *) info->msg);
 
@@ -1398,13 +1398,13 @@ static int sw_host_port;
 
 static int get_host_port(void)
 {
-	char sysfs[80];
+	char sysfs[100];
 	char buf[20];
 	int fd;
 	int n;
 	int ret = 0;
 
-	sprintf(sysfs, "%s/host_port", drvname);
+	snprintf(sysfs, sizeof(sysfs) - 1, "%s/host_port", drvname);
 	fd = open(sysfs, O_RDONLY);
 	if (fd > 0) {
 		n = read(fd, buf, 20);
@@ -1417,7 +1417,7 @@ static int get_host_port(void)
 
 static void authorize_port(struct auth_info *info, int enable)
 {
-	char sysfs[80];
+	char sysfs[100];
 	char buf[20];
 	int fd;
 	int n;
@@ -1425,7 +1425,7 @@ static void authorize_port(struct auth_info *info, int enable)
 
 	if (sw_host_port && p >= sw_host_port - 1)
 		p++;
-	sprintf(sysfs, "%s%d/%d_authen_mode", drvname, p, p);
+	snprintf(sysfs, sizeof(sysfs) - 1, "%s%d/%d_authen_mode", drvname, p, p);
 	fd = open(sysfs, O_RDWR);
 	if (fd > 0) {
 		if (enable)
@@ -1440,7 +1440,7 @@ static void authorize_port(struct auth_info *info, int enable)
 
 static int chk_port(struct auth_info *info)
 {
-	char sysfs[80];
+	char sysfs[100];
 	char buf[20];
 	int fd;
 	int n;
@@ -1449,7 +1449,7 @@ static int chk_port(struct auth_info *info)
 
 	if (sw_host_port && p >= sw_host_port - 1)
 		p++;
-	sprintf(sysfs, "%s%d/%d_speed", drvname, p, p);
+	snprintf(sysfs, sizeof(sysfs) - 1, "%s%d/%d_speed", drvname, p, p);
 	fd = open(sysfs, O_RDONLY);
 	if (fd > 0) {
 		n = read(fd, buf, 20);
@@ -3682,8 +3682,8 @@ StateTask(void *param)
 	PTTaskParam pTaskParam;
 	struct auth_info *info;
 	struct thread_info *pthread;
-	struct timeb tb;
 	struct timespec ts;
+	struct timeval tv;
 	int n;
 
 	pTaskParam = (PTTaskParam) param;
@@ -3694,9 +3694,9 @@ StateTask(void *param)
 			break;
 		}
 
-		ftime(&tb);
-		ts.tv_sec = tb.time;
-		ts.tv_nsec = (tb.millitm + 100) * 1000 * 1000;
+		gettimeofday(&tv, NULL);
+		ts.tv_sec = tv.tv_sec;
+		ts.tv_nsec = (tv.tv_usec + 100 * 1000) * 1000;
 		if (ts.tv_nsec >= 1000000000) {
 			ts.tv_nsec -= 1000000000;
 			ts.tv_sec++;
@@ -4128,18 +4128,18 @@ int main(int argc, char *argv[])
 	}
 
 	drvname[0] = '\0';
-	strncpy(devname, argv[1], sizeof(devname));
+	strncpy(devname, argv[1], sizeof(devname) - 1);
 	host_ip = strchr(devname, '.');
 	if (host_ip != NULL)
 		*host_ip = 0;
-	sprintf(drvname, "/sys/class/net/%s/sw", devname);
+	snprintf(drvname, sizeof(drvname) - 1, "/sys/class/net/%s/sw", devname);
 	sw_host_port = get_host_port();
-	strncpy(ethnames[0], argv[1], 20);
+	strncpy(ethnames[0], argv[1], 20 - 1);
 	if (auth_ports > 1) {
 		int len = strlen(ethnames[0]);
 
 		for (p = 1; p < auth_ports; p++) {
-			strncpy(ethnames[p], ethnames[0], 20);
+			strcpy(ethnames[p], ethnames[0]);
 			ethnames[p][len - 1] += p;
 		}
 	}

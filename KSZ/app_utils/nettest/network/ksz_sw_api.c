@@ -120,11 +120,11 @@ printf("left: i: %d l: %d; u: %d\n", info->index, info->left, msg->len);
 
 int sw_init(struct dev_info *dev)
 {
-	char device[20];
+	char device[40];
 
 	sprintf(device, "/dev/sw_dev");
 	if (dev->id > 0)
-		sprintf(device, "/dev/sw_dev_%u", dev->id);
+		snprintf(device, sizeof(device) - 1, "/dev/sw_dev_%u", dev->id);
 	dev->fd = open(device, O_RDWR);
 	if (dev->fd < 0) {
 		printf("cannot open sw device\n");
@@ -167,7 +167,7 @@ int sw_ioctl(void *fd, void *req)
 	struct ifreq dev;
 
 	memset(&dev, 0, sizeof(struct ifreq));
-	strncpy(dev.ifr_name, info->name, sizeof(dev.ifr_name));
+	strncpy(dev.ifr_name, info->name, sizeof(dev.ifr_name) - 1);
 	dev.ifr_data = (char *) req;
 	return ioctl(info->sock, SIOCDEVPRIVATE + 13, &dev);
 }

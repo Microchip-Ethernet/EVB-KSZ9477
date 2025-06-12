@@ -1908,7 +1908,7 @@ int main(int argc, char *argv[])
 			++i;
 		}
 	}
-	strncpy(devname, argv[1], sizeof(devname));
+	strncpy(devname, argv[1], sizeof(devname) - 1);
 	host_ip = strchr(devname, '.');
 	if (host_ip != NULL)
 		*host_ip = 0;

@@ -183,13 +183,13 @@ static void signal_wait_(struct thread_info *pthread, int cond,
 
 static void signal_long_wait(struct thread_info *pthread, int cond)
 {
-	struct timeb tb;
 	struct timespec ts;
+	struct timeval tv;
 	int n;
 
-	ftime(&tb);
-	ts.tv_sec = tb.time;
-	ts.tv_nsec = (tb.millitm + 100 - 10) * 1000 * 1000;
+	gettimeofday(&tv, NULL);
+	ts.tv_sec = tv.tv_sec;
+	ts.tv_nsec = (tv.tv_usec + 90 * 1000) * 1000;
 	if (ts.tv_nsec >= 1000000000) {
 		ts.tv_nsec -= 1000000000;
 		ts.tv_sec++;
@@ -201,13 +201,13 @@ static void signal_long_wait(struct thread_info *pthread, int cond)
 
 static void signal_wait(struct thread_info *pthread, int cond)
 {
-	struct timeb tb;
 	struct timespec ts;
+	struct timeval tv;
 	int n;
 
-	ftime(&tb);
-	ts.tv_sec = tb.time;
-	ts.tv_nsec = (tb.millitm + 10) * 1000 * 1000;
+	gettimeofday(&tv, NULL);
+	ts.tv_sec = tv.tv_sec;
+	ts.tv_nsec = (tv.tv_usec + 10 * 1000) * 1000;
 	if (ts.tv_nsec >= 1000000000) {
 		ts.tv_nsec -= 1000000000;
 		ts.tv_sec++;
@@ -781,16 +781,16 @@ int main(int argc, char *argv[])
 			++i;
 		}
 	}
-	strncpy(devname, argv[1], sizeof(devname));
+	strncpy(devname, argv[1], sizeof(devname) - 1);
 	host_ip = strchr(devname, '.');
 	if (host_ip != NULL)
 		*host_ip = 0;
-	strncpy(ethnames[0], argv[1], 20);
+	strncpy(ethnames[0], argv[1], 20 - 1);
 	if (rstp_ports > 1) {
 		int len = strlen(ethnames[0]);
 
 		for (p = 1; p < rstp_ports; p++) {
-			strncpy(ethnames[p], ethnames[0], 20);
+			strcpy(ethnames[p], ethnames[0]);
 			ethnames[p][len - 1] += p;
 		}
 	}

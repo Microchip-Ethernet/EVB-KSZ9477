@@ -3343,12 +3343,13 @@ int main(int argc, char *argv[])
 			++i;
 		}
 	}
-	strncpy(devname, argv[1], sizeof(devname));
+	strncpy(devname, argv[1], sizeof(devname) - 1);
 	host_ip = strchr(devname, '.');
 	if (host_ip != NULL)
 		*host_ip = 0;
 #ifdef _SYS_SOCKET_H
-	strncpy(ptpdev.name, devname, sizeof(ptpdev.name));
+	i = snprintf(ptpdev.name, sizeof(ptpdev.name) - 1, "%s", devname);
+	ptpdev.name[i] = '\0';
 #endif
 	if (host_ip != NULL) {
 		++host_ip;

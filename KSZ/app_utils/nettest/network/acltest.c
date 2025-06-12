@@ -3471,11 +3471,12 @@ int main(int argc, char *argv[])
 			++i;
 		}
 	}
-	strncpy(devname, argv[1], sizeof(devname));
+	strncpy(devname, argv[1], sizeof(devname) - 1);
 	host_ip = strchr(devname, '.');
 	if (host_ip != NULL)
 		*host_ip = 0;
-	strncpy(ptpdev.name, devname, sizeof(ptpdev.name));
+	strncpy(ptpdev.name, devname, sizeof(ptpdev.name) - 1);
+	ptpdev.name[sizeof(ptpdev.name) - 1] = '\0';
 
 	sprintf(acl_sysfs, "/sys/class/net/%s", devname);
 	acl_eth_type = 0x0800;

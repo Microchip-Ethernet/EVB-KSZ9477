@@ -50,7 +50,7 @@ unsigned long dlr_faults_count;
 }DLR_FAULTS_COUNT;
 
 typedef struct{
-char  ipv4[20];
+char  ipv4[32];
 unsigned char mac[6];
 }DLR_NODE_INFO;
 
@@ -124,7 +124,7 @@ long /*DLR_SUPERVISOR_STATUS*/ status;
 }DLR_NODE_REPORT;
 
 typedef struct{
- char	  ipv4[20];
+ char	  ipv4[32];
  unsigned char mac[6];
  unsigned long precedence;
  unsigned long beacon_interval;

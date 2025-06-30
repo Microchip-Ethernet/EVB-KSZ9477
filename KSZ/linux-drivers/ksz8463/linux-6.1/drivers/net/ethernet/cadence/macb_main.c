@@ -203,11 +203,7 @@ struct sifive_fu540_macb_mgmt {
 #define MACB_RX_BUFFER_SIZE	128
 #define RX_BUFFER_MULTIPLE	64  /* bytes */
 
-#if defined(CONFIG_SOC_SAM9X7) && defined(CONFIG_KSZ_SWITCH)
-#define DEFAULT_RX_RING_SIZE	1024 /* must be power of 2 */
-#else
 #define DEFAULT_RX_RING_SIZE	512 /* must be power of 2 */
-#endif
 #define MIN_RX_RING_SIZE	64
 #define MAX_RX_RING_SIZE	8192
 #define RX_RING_BYTES(bp)	(macb_dma_desc_get_size(bp)	\
@@ -3666,6 +3662,8 @@ static int macb_close(struct net_device *dev)
 	unsigned int q;
 
 #ifdef CONFIG_KSZ_SWITCH
+	struct macb *orig = bp;
+	struct macb *hw_priv;
 	int iba = 0;
 
 #ifdef CONFIG_KSZ_SMI
@@ -3697,7 +3695,8 @@ static int macb_close(struct net_device *dev)
 		}
 		return 0;
 	}
-	bp = get_hw_dev(bp);
+	hw_priv = get_hw_dev(bp);
+	bp = hw_priv;
 
 #ifdef CONFIG_KSZ_SMI
 	do {
@@ -3716,8 +3715,14 @@ static int macb_close(struct net_device *dev)
 		napi_disable(&queue->napi_tx);
 	}
 
+#ifdef CONFIG_KSZ_SWITCH
+	bp = orig;
+#endif
 	phylink_stop(bp->phylink);
 	phylink_disconnect_phy(bp->phylink);
+#ifdef CONFIG_KSZ_SWITCH
+	bp = hw_priv;
+#endif
 
 	phy_power_off(bp->sgmii_phy);
 

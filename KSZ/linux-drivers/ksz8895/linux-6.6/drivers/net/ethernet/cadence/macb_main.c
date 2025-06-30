@@ -3732,6 +3732,8 @@ static int macb_close(struct net_device *dev)
 	unsigned int q;
 
 #ifdef CONFIG_KSZ_SWITCH
+	struct macb *orig = bp;
+	struct macb *hw_priv;
 	int iba = 0;
 
 #ifdef CONFIG_KSZ_SMI
@@ -3763,7 +3765,8 @@ static int macb_close(struct net_device *dev)
 		}
 		return 0;
 	}
-	bp = get_hw_dev(bp);
+	hw_priv = get_hw_dev(bp);
+	bp = hw_priv;
 
 #ifdef CONFIG_KSZ_SMI
 	do {
@@ -3782,8 +3785,14 @@ static int macb_close(struct net_device *dev)
 		napi_disable(&queue->napi_tx);
 	}
 
+#ifdef CONFIG_KSZ_SWITCH
+	bp = orig;
+#endif
 	phylink_stop(bp->phylink);
 	phylink_disconnect_phy(bp->phylink);
+#ifdef CONFIG_KSZ_SWITCH
+	bp = hw_priv;
+#endif
 
 	phy_power_off(bp->sgmii_phy);
 

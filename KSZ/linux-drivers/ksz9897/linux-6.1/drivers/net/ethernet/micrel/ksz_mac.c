@@ -57,6 +57,11 @@ static inline int sw_is_switch(struct ksz_sw *sw)
 	return sw != NULL;
 }
 
+static inline bool is_virt_mac(struct ksz_mac *sw_mac)
+{
+	return (sw_mac->hw_priv && sw_mac != sw_mac->hw_priv);
+}
+
 static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb)
 {
 	if (old->ip_summed) {
@@ -174,6 +179,47 @@ static void promisc_reset_work(struct work_struct *work)
 }  /* promisc_reset_work */
 
 #ifndef KSZ_USE_SUBQUEUE
+#ifdef KSZ_USE_TX_QUEUE
+static void stop_dev_queues(struct ksz_sw *sw, struct net_device *hw_dev,
+			    struct netdev_queue *q)
+{
+	if (sw_is_switch(sw)) {
+		int dev_count = sw->dev_count + sw->dev_offset;
+		struct net_device *net;
+		int p;
+
+		for (p = 0; p < dev_count; p++) {
+			net = sw->netdev[p];
+			if (!net || net == hw_dev)
+				continue;
+			if (netif_running(net)) {
+				netif_tx_stop_queue(q);
+			}
+		}
+	}
+}  /* stop_dev_queues */
+
+static void wake_dev_queues(struct ksz_sw *sw, struct net_device *hw_dev,
+			    struct netdev_queue *q)
+{
+	if (sw_is_switch(sw)) {
+		int dev_count = sw->dev_count + sw->dev_offset;
+		struct net_device *net;
+		int p;
+
+		for (p = 0; p < dev_count; p++) {
+			net = sw->netdev[p];
+			if (!net || net == hw_dev)
+				continue;
+			if (netif_running(net)) {
+				if (netif_tx_queue_stopped(q))
+					netif_tx_wake_queue(q);
+			}
+		}
+		wake_up_interruptible(&sw->queue);
+	}
+}  /* wake_dev_queues */
+#else
 static void stop_dev_queues(struct ksz_sw *sw, struct net_device *hw_dev)
 {
 	if (sw_is_switch(sw)) {
@@ -215,6 +261,7 @@ static void wake_dev_queues(struct ksz_sw *sw, struct net_device *hw_dev)
 		wake_up_interruptible(&sw->queue);
 	}
 }  /* wake_dev_queues */
+#endif
 #else
 static void stop_dev_subqueues(struct ksz_sw *sw, struct net_device *hw_dev,
 			       int q)
@@ -654,7 +701,7 @@ static void sw_mac_open_next(struct ksz_sw *sw, struct ksz_mac *hw_priv,
 		}
 		sw->net_ops->open(sw);
 	}
-}  /* sw_mac_open_second */
+}  /* sw_mac_open_next */
 
 static bool sw_mac_open_final(struct ksz_sw *sw, struct net_device *dev,
 			      struct ksz_mac *hw_priv, struct ksz_mac *priv)
@@ -736,6 +783,11 @@ static bool sw_mac_close(struct net_device *dev, struct ksz_mac *priv, int iba)
 	/* Reset ready indication. */
 	hw_priv->port.ready = false;
 
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	if (sw->phylink_ops)
+		return false;
+#endif
+
 	/* Last network device to turn off is not the first. */
 	if (dev != sw->netdev[0]) {
 		if (hw_priv->saved_phy)
@@ -748,6 +800,120 @@ static bool sw_mac_close(struct net_device *dev, struct ksz_mac *priv, int iba)
 	}
 	return false;
 }
+
+#ifdef KSZ_USE_CLOSE_HW
+static void sw_mac_close_for_hw(struct ksz_mac *priv, struct net_device **dev,
+				struct net_device **hw_dev)
+{
+	struct ksz_sw *sw = priv->port.sw;
+	struct net_device *found, *net;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return;
+
+	/* Find which network device is running. */
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		net = sw->netdev[i];
+		if (!net)
+			continue;
+		if (netif_running(net)) {
+			found = net;
+			break;
+		}
+	}
+	priv->hw_priv->do_hw = 1;
+	if (!found)
+		return;
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		net = sw->netdev[i];
+		if (!net)
+			continue;
+		if (net != found && netif_running(net)) {
+			netif_tx_disable(net);
+		}
+	}
+	*dev = found;
+	*hw_dev = sw->netdev[0];
+}
+
+static void sw_mac_open_for_hw(struct ksz_mac *priv, struct net_device *dev)
+{
+	struct ksz_sw *sw = priv->port.sw;
+	struct net_device *net;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return;
+	priv->hw_priv->do_hw = 0;
+
+	/* Find which network device is running. */
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		net = sw->netdev[i];
+		if (!net)
+			continue;
+		if (net != dev && netif_running(net)) {
+			netif_tx_start_all_queues(net);
+		}
+	}
+}
+#endif
+
+#ifdef KSZ_USE_COMPLETED_QUEUE
+static unsigned int dev_bytes[TOTAL_PORT_NUM];
+static unsigned int dev_pkts[TOTAL_PORT_NUM];
+
+static void sw_init_queue_len(struct ksz_mac *priv)
+{
+	struct ksz_sw *sw = priv->port.sw;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return;
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		dev_bytes[i] = dev_pkts[i] = 0;
+	}
+}
+
+static void sw_update_queue_len(struct ksz_mac *priv, struct sk_buff *skb)
+{
+	struct ksz_sw *sw = priv->port.sw;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return;
+
+#ifdef CONFIG_KSZ_IBA
+	if (skb->protocol == htons(IBA_TAG_TYPE))
+		return;
+#endif
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		if (sw->netdev[i] == skb->dev) {
+			dev_pkts[i]++;
+			dev_bytes[i] += skb->len;
+			break;
+		}
+	}
+}
+
+static bool sw_completed_queue(struct ksz_mac *priv, u32 queue)
+{
+	struct ksz_sw *sw = priv->port.sw;
+	struct net_device *net;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return false;
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		net = sw->netdev[i];
+		if (!dev_pkts[i])
+			continue;
+		netdev_tx_completed_queue(netdev_get_tx_queue(net, queue),
+					  dev_pkts[i], dev_bytes[i]);
+	}
+	return true;
+}
+#endif
 
 #ifndef KSZ_USE_PHYLINK
 static void sw_adjust_link(struct net_device *dev)

@@ -38,6 +38,8 @@ struct ksz_mac {
 	int			phy_addr;
 	u32			multi:2;
 	u32			promisc:1;
+	u32			do_hw:1;
+	u32			skip_hw:1;
 	u8			opened;
 	u8			hw_multi;
 	u8			hw_promisc;

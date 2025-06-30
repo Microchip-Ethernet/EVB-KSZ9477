@@ -30,19 +30,7 @@
 #endif
 
 #ifdef CONFIG_KSZ_SWITCH
-#if defined(CONFIG_HAVE_KSZ9897)
-#include "../../micrel/ksz_cfg_9897.h"
-#elif defined(CONFIG_HAVE_KSZ8795)
-#include "../../micrel/ksz_cfg_8795.h"
-#elif defined(CONFIG_HAVE_KSZ8895)
-#include "../../micrel/ksz_cfg_8895.h"
-#elif defined(CONFIG_HAVE_KSZ8863)
-#include "../../micrel/ksz_cfg_8863.h"
-#elif defined(CONFIG_HAVE_KSZ8463)
-#include "../../micrel/ksz_cfg_8463.h"
-#elif defined(CONFIG_HAVE_LAN937X)
-#include "../../microchip/lan937x_cfg.h"
-#endif
+#include "../../micrel/ksz_mac.h"
 #endif
 
 struct stmmac_resources {
@@ -268,23 +256,37 @@ struct stmmac_priv {
 	struct stmmac_rss rss;
 
 #ifdef CONFIG_KSZ_SWITCH
-	struct platform_device	*sw_pdev;
-	struct stmmac_priv	*hw_priv;
-	struct ksz_port		port;
-	int			phy_addr;
-	u32			multi:2;
-	u32			promisc:1;
-	u8			opened;
-	u8			hw_multi;
-	u8			hw_promisc;
-	void			*parent;
-	struct delayed_work	promisc_reset;
-	struct ksz_sw_sysfs	sysfs;
-#ifdef CONFIG_1588_PTP
-	struct ksz_ptp_sysfs	ptp_sysfs;
-#endif
+	struct ksz_mac sw_mac;
 #endif
 };
+
+#ifdef CONFIG_KSZ_SWITCH
+static inline struct ksz_mac *get_ksz_mac(void *ptr)
+{
+	struct stmmac_priv *dev = ptr;
+
+	return &dev->sw_mac;
+}
+
+static inline bool is_virt_dev(struct stmmac_priv *dev)
+{
+	struct ksz_mac *priv = get_ksz_mac(dev);
+
+	if (priv->hw_priv && priv != priv->hw_priv)
+		return true;
+	return false;
+}
+
+static inline struct ksz_sw *get_sw(struct stmmac_priv *dev)
+{
+	return dev->sw_mac.port.sw;
+}
+
+static inline struct stmmac_priv *get_hw_dev(struct stmmac_priv *dev)
+{
+	return dev->sw_mac.hw_priv->dev;
+}
+#endif
 
 enum stmmac_state {
 	STMMAC_DOWN,

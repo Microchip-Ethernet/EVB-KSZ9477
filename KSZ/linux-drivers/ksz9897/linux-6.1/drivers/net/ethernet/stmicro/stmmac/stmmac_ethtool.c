@@ -305,6 +305,12 @@ static int stmmac_ethtool_get_link_ksettings(struct net_device *dev,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+	if (IS_ERR(priv->phylink))
+		return -ENODEV;
+#endif
+
 	if (priv->hw->pcs & STMMAC_PCS_RGMII ||
 	    priv->hw->pcs & STMMAC_PCS_SGMII) {
 		struct rgmii_adv adv;
@@ -391,6 +397,14 @@ stmmac_ethtool_set_link_ksettings(struct net_device *dev,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	/* Operate only on the main device. */
+	if (is_virt_dev(priv))
+		return 0;
+	if (IS_ERR(priv->phylink))
+		return -ENODEV;
+#endif
+
 	if (priv->hw->pcs & STMMAC_PCS_RGMII ||
 	    priv->hw->pcs & STMMAC_PCS_SGMII) {
 		u32 mask = ADVERTISED_Autoneg | ADVERTISED_Pause;
@@ -453,6 +467,9 @@ static void stmmac_ethtool_gregs(struct net_device *dev,
 	struct stmmac_priv *priv = netdev_priv(dev);
 	u32 *reg_space = (u32 *) space;
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	stmmac_dump_mac_regs(priv, priv->hw, reg_space);
 	stmmac_dump_dma_regs(priv, priv->ioaddr, reg_space);
 
@@ -473,6 +490,10 @@ static int stmmac_nway_reset(struct net_device *dev)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	if (IS_ERR(priv->phylink))
+		return -ENODEV;
+#endif
 	return phylink_ethtool_nway_reset(priv->phylink);
 }
 
@@ -483,6 +504,9 @@ static void stmmac_get_ringparam(struct net_device *netdev,
 {
 	struct stmmac_priv *priv = netdev_priv(netdev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	ring->rx_max_pending = DMA_MAX_RX_SIZE;
 	ring->tx_max_pending = DMA_MAX_TX_SIZE;
 	ring->rx_pending = priv->dma_conf.dma_rx_size;
@@ -514,6 +538,11 @@ stmmac_get_pauseparam(struct net_device *netdev,
 	struct stmmac_priv *priv = netdev_priv(netdev);
 	struct rgmii_adv adv_lp;
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+	if (IS_ERR(priv->phylink))
+		return;
+#endif
 	if (priv->hw->pcs && !stmmac_pcs_get_adv_lp(priv, priv->ioaddr, &adv_lp)) {
 		pause->autoneg = 1;
 		if (!adv_lp.pause)
@@ -529,6 +558,14 @@ stmmac_set_pauseparam(struct net_device *netdev,
 {
 	struct stmmac_priv *priv = netdev_priv(netdev);
 	struct rgmii_adv adv_lp;
+
+#ifdef CONFIG_KSZ_SWITCH
+	/* Operate only on the main device. */
+	if (is_virt_dev(priv))
+		return 0;
+	if (IS_ERR(priv->phylink))
+		return -ENODEV;
+#endif
 
 	if (priv->hw->pcs && !stmmac_pcs_get_adv_lp(priv, priv->ioaddr, &adv_lp)) {
 		pause->autoneg = 1;
@@ -574,6 +611,11 @@ static void stmmac_get_ethtool_stats(struct net_device *dev,
 	unsigned long count;
 	int i, j = 0, ret;
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+	if (IS_ERR(priv->phylink))
+		return;
+#endif
 	if (priv->dma_cap.asp) {
 		for (i = 0; i < STMMAC_SAFETY_FEAT_SIZE; i++) {
 			if (!stmmac_safety_feat_dump(priv, &priv->sstats, i,
@@ -625,6 +667,9 @@ static int stmmac_get_sset_count(struct net_device *netdev, int sset)
 	u32 rx_cnt = priv->plat->rx_queues_to_use;
 	int i, len, safety_len = 0;
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	switch (sset) {
 	case ETH_SS_STATS:
 		len = STMMAC_STATS_LEN +
@@ -680,6 +725,9 @@ static void stmmac_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 	u8 *p = data;
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	switch (stringset) {
 	case ETH_SS_STATS:
 		if (priv->dma_cap.asp) {
@@ -720,6 +768,13 @@ static void stmmac_get_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	/* Operate only on the main device. */
+	if (is_virt_dev(priv))
+		return;
+	if (IS_ERR(priv->phylink))
+		return;
+#endif
 	if (!priv->plat->pmt)
 		return phylink_ethtool_get_wol(priv->phylink, wol);
 
@@ -743,8 +798,10 @@ static int stmmac_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 
 #ifdef CONFIG_KSZ_SWITCH
 	/* Operate only on the main device. */
-	if (priv != priv->hw_priv)
+	if (is_virt_dev(priv))
 		return 0;
+	if (IS_ERR(priv->phylink))
+		return -ENODEV;
 #endif
 
 	if (!priv->plat->pmt) {
@@ -785,6 +842,12 @@ static int stmmac_ethtool_op_get_eee(struct net_device *dev,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+	if (IS_ERR(priv->phylink))
+		return -ENODEV;
+#endif
+
 	if (!priv->dma_cap.eee)
 		return -EOPNOTSUPP;
 
@@ -801,6 +864,14 @@ static int stmmac_ethtool_op_set_eee(struct net_device *dev,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 	int ret;
+
+#ifdef CONFIG_KSZ_SWITCH
+	/* Operate only on the main device. */
+	if (is_virt_dev(priv))
+		return 0;
+	if (IS_ERR(priv->phylink))
+		return -ENODEV;
+#endif
 
 	if (!priv->dma_cap.eee)
 		return -EOPNOTSUPP;
@@ -860,6 +931,9 @@ static int __stmmac_get_coalesce(struct net_device *dev,
 	u32 rx_cnt;
 	u32 tx_cnt;
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	rx_cnt = priv->plat->rx_queues_to_use;
 	tx_cnt = priv->plat->tx_queues_to_use;
 	max_cnt = max(rx_cnt, tx_cnt);
@@ -913,6 +987,12 @@ static int __stmmac_set_coalesce(struct net_device *dev,
 	u32 max_cnt;
 	u32 rx_cnt;
 	u32 tx_cnt;
+
+#ifdef CONFIG_KSZ_SWITCH
+	/* Operate only on the main device. */
+	if (is_virt_dev(priv))
+		return 0;
+#endif
 
 	rx_cnt = priv->plat->rx_queues_to_use;
 	tx_cnt = priv->plat->tx_queues_to_use;
@@ -1009,6 +1089,9 @@ static u32 stmmac_get_rxfh_key_size(struct net_device *dev)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	return sizeof(priv->rss.key);
 }
 
@@ -1016,6 +1099,9 @@ static u32 stmmac_get_rxfh_indir_size(struct net_device *dev)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	return ARRAY_SIZE(priv->rss.table);
 }
 
@@ -1025,6 +1111,9 @@ static int stmmac_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
 	struct stmmac_priv *priv = netdev_priv(dev);
 	int i;
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	if (indir) {
 		for (i = 0; i < ARRAY_SIZE(priv->rss.table); i++)
 			indir[i] = priv->rss.table[i];
@@ -1043,6 +1132,12 @@ static int stmmac_set_rxfh(struct net_device *dev, const u32 *indir,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 	int i;
+
+#ifdef CONFIG_KSZ_SWITCH
+	/* Operate only on the main device. */
+	if (is_virt_dev(priv))
+		return 0;
+#endif
 
 	if ((hfunc != ETH_RSS_HASH_NO_CHANGE) && (hfunc != ETH_RSS_HASH_TOP))
 		return -EOPNOTSUPP;
@@ -1064,6 +1159,9 @@ static void stmmac_get_channels(struct net_device *dev,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	chan->rx_count = priv->plat->rx_queues_to_use;
 	chan->tx_count = priv->plat->tx_queues_to_use;
 	chan->max_rx = priv->dma_cap.number_rx_queues;
@@ -1074,6 +1172,12 @@ static int stmmac_set_channels(struct net_device *dev,
 			       struct ethtool_channels *chan)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
+
+#ifdef CONFIG_KSZ_SWITCH
+	/* Operate only on the main device. */
+	if (is_virt_dev(priv))
+		return 0;
+#endif
 
 	if (chan->rx_count > priv->dma_cap.number_rx_queues ||
 	    chan->tx_count > priv->dma_cap.number_tx_queues ||
@@ -1088,6 +1192,9 @@ static int stmmac_get_ts_info(struct net_device *dev,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	if ((priv->dma_cap.time_stamp || priv->dma_cap.atime_stamp)) {
 
 		info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
@@ -1124,6 +1231,9 @@ static int stmmac_get_tunable(struct net_device *dev,
 	struct stmmac_priv *priv = netdev_priv(dev);
 	int ret = 0;
 
+#ifdef CONFIG_KSZ_SWITCH
+	priv = get_hw_dev(priv);
+#endif
 	switch (tuna->id) {
 	case ETHTOOL_RX_COPYBREAK:
 		*(u32 *)data = priv->rx_copybreak;
@@ -1142,6 +1252,12 @@ static int stmmac_set_tunable(struct net_device *dev,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 	int ret = 0;
+
+#ifdef CONFIG_KSZ_SWITCH
+	/* Operate only on the main device. */
+	if (is_virt_dev(priv))
+		return 0;
+#endif
 
 	switch (tuna->id) {
 	case ETHTOOL_RX_COPYBREAK:

@@ -8876,17 +8876,18 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (dest && (sw->overrides & UPDATE_CSUM)) {
 		__sum16 *csum_loc = (__sum16 *)
 			(skb->head + skb->csum_start + skb->csum_offset);
+		int csum = ntohs(*csum_loc);
+		__sum16 new_csum;
 
-		/* Checksum is cleared by driver to be filled by hardware. */
-		if (!*csum_loc) {
-			__sum16 new_csum;
-
-			if (skb->len & 1)
-				new_csum = dest << 8;
-			else
-				new_csum = dest;
-			*csum_loc = ~htons(new_csum);
-		}
+		if (skb->len & 1)
+			new_csum = dest << 8;
+		else
+			new_csum = dest;
+		csum += new_csum;
+		csum = (csum >> 16) + (csum & 0xffff);
+		csum += (csum >> 16);
+		new_csum = (__sum16) csum;
+		*csum_loc = ~htons(new_csum);
 	}
 	return skb;
 }  /* sw_check_skb */

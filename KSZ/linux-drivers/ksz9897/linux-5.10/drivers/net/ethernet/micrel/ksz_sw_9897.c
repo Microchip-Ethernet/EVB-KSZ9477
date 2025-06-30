@@ -6342,7 +6342,12 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 		phydev->speed = SPEED_10;
 		phydev->dev_flags |= 1;
 #endif
+#ifdef USE_GMII_100_MODE
+		phydev->speed = SPEED_100;
+		phydev->dev_flags |= 1;
+#endif
 #ifdef USE_HALF_DUPLEX
+		duplex = 0;
 		phydev->duplex = DUPLEX_HALF;
 		phydev->dev_flags |= 1;
 #endif
@@ -6455,7 +6460,7 @@ static void sw_set_global_ctrl(struct ksz_sw *sw)
 		info->tx_rate = speed * TX_RATE_UNIT;
 		info->duplex = duplex + 1;
 		phydev->speed = speed;
-		phydev->duplex = duplex - 1;
+		phydev->duplex = duplex;
 #ifdef USE_RGMII_PHY
 		data |= PORT_RGMII_ID_EG_ENABLE;
 		mode = 3;
@@ -14542,31 +14547,28 @@ add_tag:
 	if (tag_start && (sw->overrides & UPDATE_CSUM)) {
 		__sum16 *csum_loc = (__sum16 *)
 			(skb->head + skb->csum_start + skb->csum_offset);
+		int csum = ntohs(*csum_loc);
+		__sum16 new_csum;
 
-		/* Checksum is cleared by driver to be filled by hardware. */
-		if (!*csum_loc) {
-			__sum16 new_csum;
+		if (tag_len == 1) {
+			if (skb->len & 1)
+				new_csum = tag_data[0] << 8;
+			else
+				new_csum = tag_data[1];
+			csum += new_csum;
+		} else {
+			u16 *tag_csum = (u16 *) &tag_data;
+			int i;
 
-			if (tag_len == 1) {
-				if (skb->len & 1)
-					new_csum = tag_data[0] << 8;
-				else
-					new_csum = tag_data[1];
-			} else {
-				u16 *tag_csum = (u16 *) &tag_data;
-				int csum = 0;
-				int i;
-
-				/* Length may be odd. */
-				tag_start++;
-				for (i = 0; i < tag_start / 2; i++)
-					csum += ntohs(tag_csum[i]);
-				csum = (csum >> 16) + (csum & 0xffff);
-				csum += (csum >> 16);
-				new_csum = (__sum16) csum;
-			}
-			*csum_loc = ~htons(new_csum);
+			/* Length may be odd. */
+			tag_start++;
+			for (i = 0; i < tag_start / 2; i++)
+				csum += ntohs(tag_csum[i]);
 		}
+		csum = (csum >> 16) + (csum & 0xffff);
+		csum += (csum >> 16);
+		new_csum = (__sum16) csum;
+		*csum_loc = ~htons(new_csum);
 	}
 	return skb;
 }  /* sw_check_skb */
@@ -14952,7 +14954,7 @@ static void sw_port_phylink_get_fixed_state(struct phylink_config *config,
 
 	s->interface = sw->interface;
 	s->speed = info->tx_rate / TX_RATE_UNIT;
-	s->duplex = 1;
+	s->duplex = (info->duplex == 2);
 	s->pause = 3;
 	s->link = 1;
 	s->an_enabled = 0;

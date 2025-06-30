@@ -15230,31 +15230,28 @@ add_tag:
 	if (tag_start && (sw->overrides & UPDATE_CSUM)) {
 		__sum16 *csum_loc = (__sum16 *)
 			(skb->head + skb->csum_start + skb->csum_offset);
+		int csum = ntohs(*csum_loc);
+		__sum16 new_csum;
 
-		/* Checksum is cleared by driver to be filled by hardware. */
-		if (!*csum_loc) {
-			__sum16 new_csum;
+		if (tag_len == 1) {
+			if (skb->len & 1)
+				new_csum = tag_data[0] << 8;
+			else
+				new_csum = tag_data[1];
+			csum += new_csum;
+		} else {
+			u16 *tag_csum = (u16 *) &tag_data;
+			int i;
 
-			if (tag_len == 1) {
-				if (skb->len & 1)
-					new_csum = tag_data[0] << 8;
-				else
-					new_csum = tag_data[1];
-			} else {
-				u16 *tag_csum = (u16 *) &tag_data;
-				int csum = 0;
-				int i;
-
-				/* Length may be odd. */
-				tag_start++;
-				for (i = 0; i < tag_start / 2; i++)
-					csum += ntohs(tag_csum[i]);
-				csum = (csum >> 16) + (csum & 0xffff);
-				csum += (csum >> 16);
-				new_csum = (__sum16) csum;
-			}
-			*csum_loc = ~htons(new_csum);
+			/* Length may be odd. */
+			tag_start++;
+			for (i = 0; i < tag_start / 2; i++)
+				csum += ntohs(tag_csum[i]);
 		}
+		csum = (csum >> 16) + (csum & 0xffff);
+		csum += (csum >> 16);
+		new_csum = (__sum16) csum;
+		*csum_loc = ~htons(new_csum);
 	}
 	return skb;
 }  /* sw_check_skb */

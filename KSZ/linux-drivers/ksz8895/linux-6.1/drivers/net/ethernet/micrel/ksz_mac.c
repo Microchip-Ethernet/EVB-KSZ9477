@@ -142,12 +142,14 @@ static void dev_set_multicast(struct ksz_mac *priv, int multicast)
 			++hw_priv->hw_multi;
 		else
 			--hw_priv->hw_multi;
-		priv->multi = multicast;
 
 		/* Turn on/off all multicast mode. */
 		if (hw_priv->hw_multi <= 1 && hw_multi <= 1)
 			hw_set_multicast(hw_priv->dev, hw_priv->hw_multi);
 	}
+
+	/* Can change to 1 from 2. */
+	priv->multi = multicast;
 }  /* dev_set_multicast */
 
 static void dev_set_promisc(struct ksz_mac *priv, int promisc)
@@ -802,11 +804,10 @@ static bool sw_mac_close(struct net_device *dev, struct ksz_mac *priv, int iba)
 }
 
 #ifdef KSZ_USE_CLOSE_HW
-static void sw_mac_close_for_hw(struct ksz_mac *priv, struct net_device **dev,
-				struct net_device **hw_dev)
+static void sw_mac_close_for_hw(struct ksz_mac *priv, struct net_device **dev)
 {
+	struct net_device *found = NULL, *net;
 	struct ksz_sw *sw = priv->port.sw;
-	struct net_device *found, *net;
 	int i;
 
 	if (!sw_is_switch(sw))
@@ -822,9 +823,9 @@ static void sw_mac_close_for_hw(struct ksz_mac *priv, struct net_device **dev,
 			break;
 		}
 	}
-	priv->hw_priv->do_hw = 1;
 	if (!found)
 		return;
+	priv->hw_priv->do_hw = 1;
 	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
 		net = sw->netdev[i];
 		if (!net)
@@ -834,11 +835,11 @@ static void sw_mac_close_for_hw(struct ksz_mac *priv, struct net_device **dev,
 		}
 	}
 	*dev = found;
-	*hw_dev = sw->netdev[0];
 }
 
 static void sw_mac_open_for_hw(struct ksz_mac *priv, struct net_device *dev)
 {
+	struct ksz_port *port = &priv->port;
 	struct ksz_sw *sw = priv->port.sw;
 	struct net_device *net;
 	int i;
@@ -856,6 +857,29 @@ static void sw_mac_open_for_hw(struct ksz_mac *priv, struct net_device *dev)
 			netif_tx_start_all_queues(net);
 		}
 	}
+
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	if (sw->phylink_ops) {
+		const struct phylink_mac_ops *ops = sw->phylink_ops;
+		struct phylink_link_state *state;
+		unsigned int mode = MLO_AN_PHY;
+		struct phylink_config *config;
+		bool rx_pause = true;
+		bool tx_pause = true;
+
+		config = &port->pl_config;
+		state = &port->pl_state;
+		port->pl_config.get_fixed_state(config, state);
+		ops->mac_link_up(config, port->phydev, mode,
+				 sw->interface,
+				 state->speed, state->duplex,
+				 tx_pause, rx_pause);
+	}
+#endif
+
+	/* netif_carrier_off was called so need to check link to turn it on. */
+	port->report = true;
+	schedule_delayed_work(&port->link_update, 0);
 }
 #endif
 

@@ -4176,16 +4176,14 @@ static int __stmmac_open(struct net_device *dev,
 
 #ifdef CONFIG_KSZ_SWITCH
 skip_hw:
+	priv = orig_priv;
 	if (sw_is_switch(sw) && !hw_priv->do_hw) {
-		sw_mac->skip_hw = 0;
-		dev = orig_dev;
-		sw_mac_open_next(sw, sw_mac->hw_priv, rx_mode);
-		if (sw_mac_open_final(sw, dev, hw_priv, sw_mac)) {
+		/* Need to start PHY before opening the port. */
+		if (sw_mac->skip_hw) {
 			struct phy_device *phydev;
 
 			phydev = sw_mac->port.phydev;
 
-			priv = orig_priv;
 			phylink_start(priv->phylink);
 			phylink_speed_up(priv->phylink);
 			/* Do not want polling done. */
@@ -4194,11 +4192,15 @@ skip_hw:
 #else
 			phy_stop_machine(phydev);
 #endif
+		}
+		sw_mac->skip_hw = 0;
+		dev = orig_dev;
+		sw_mac_open_next(sw, sw_mac->hw_priv, rx_mode);
+		if (sw_mac_open_final(sw, dev, hw_priv, sw_mac)) {
 			netif_tx_start_all_queues(priv->dev);
 			return 0;
 		}
 	}
-	priv = orig_priv;
 #endif
 
 	netif_tx_start_all_queues(priv->dev);
@@ -6046,8 +6048,22 @@ static void stmmac_set_rx_mode(struct net_device *dev)
 	struct stmmac_priv *priv = netdev_priv(dev);
 
 #ifdef CONFIG_KSZ_SWITCH
-	if (sw_set_rx_mode(dev))
+	priv = get_hw_dev(priv);
+	if (sw_set_rx_mode(dev)) {
+		struct ksz_mac *hw_priv = get_ksz_mac(priv);
+
+		dev = hw_priv->net;
+		if (hw_priv->hw_promisc)
+			dev->flags |= IFF_PROMISC;
+		else
+			dev->flags &= ~IFF_PROMISC;
+		if (hw_priv->hw_multi)
+			dev->flags |= IFF_ALLMULTI;
+		else
+			dev->flags &= ~IFF_ALLMULTI;
+		stmmac_set_filter(priv, priv->hw, dev);
 		return;
+	}
 #endif
 
 	stmmac_set_filter(priv, priv->hw, dev);
@@ -6073,10 +6089,9 @@ static int stmmac_change_mtu(struct net_device *dev, int new_mtu)
 	int ret;
 
 #ifdef CONFIG_KSZ_SWITCH
-	struct ksz_mac *sw_mac = get_ksz_mac(priv);
-	struct net_device *hw_dev = dev;
+	struct net_device *orig_dev = dev;
 
-	if (is_virt_mac(sw_mac)) {
+	if (is_virt_mac(get_ksz_mac(priv))) {
 		new_mtu = STMMAC_ALIGN(new_mtu);
 		dev->mtu = mtu;
 		netdev_update_features(dev);
@@ -6101,7 +6116,8 @@ static int stmmac_change_mtu(struct net_device *dev, int new_mtu)
 		return -EINVAL;
 
 #ifdef CONFIG_KSZ_SWITCH
-	sw_mac_close_for_hw(sw_mac, &dev, &hw_dev);
+	sw_mac_close_for_hw(get_ksz_mac(priv), &dev);
+	priv = netdev_priv(dev);
 #endif
 	if (netif_running(dev)) {
 		netdev_dbg(priv->dev, "restarting interface to change its MTU\n");
@@ -6125,7 +6141,8 @@ static int stmmac_change_mtu(struct net_device *dev, int new_mtu)
 		stmmac_set_rx_mode(dev);
 
 #ifdef CONFIG_KSZ_SWITCH
-		sw_mac_open_for_hw(sw_mac, dev);
+		sw_mac_open_for_hw(get_ksz_mac(priv), dev);
+		dev = orig_dev;
 #endif
 	}
 
@@ -7538,11 +7555,10 @@ int stmmac_reinit_queues(struct net_device *dev, u32 rx_cnt, u32 tx_cnt)
 	int ret = 0;
 
 #ifdef CONFIG_KSZ_SWITCH
-	struct ksz_mac *sw_mac = get_ksz_mac(priv);
 	struct net_device *orig_dev = dev;
 	struct net_device *hw_dev = dev;
 
-	sw_mac_close_for_hw(sw_mac, &dev, &hw_dev);
+	sw_mac_close_for_hw(get_ksz_mac(priv), &dev);
 	orig_dev = dev;
 #endif
 
@@ -7566,7 +7582,10 @@ int stmmac_reinit_queues(struct net_device *dev, u32 rx_cnt, u32 tx_cnt)
 		ret = stmmac_open(dev);
 
 #ifdef CONFIG_KSZ_SWITCH
-	sw_mac_open_for_hw(sw_mac, dev);
+	if (netif_running(dev)) {
+		priv = netdev_priv(dev);
+		sw_mac_open_for_hw(get_ksz_mac(priv), dev);
+	}
 #endif
 
 	return ret;
@@ -7578,10 +7597,7 @@ int stmmac_reinit_ringparam(struct net_device *dev, u32 rx_size, u32 tx_size)
 	int ret = 0;
 
 #ifdef CONFIG_KSZ_SWITCH
-	struct ksz_mac *sw_mac = get_ksz_mac(priv);
-	struct net_device *hw_dev = dev;
-
-	sw_mac_close_for_hw(sw_mac, &dev, &hw_dev);
+	sw_mac_close_for_hw(get_ksz_mac(priv), &dev);
 	priv = get_hw_dev(priv);
 #endif
 	if (netif_running(dev))
@@ -7594,7 +7610,10 @@ int stmmac_reinit_ringparam(struct net_device *dev, u32 rx_size, u32 tx_size)
 		ret = stmmac_open(dev);
 
 #ifdef CONFIG_KSZ_SWITCH
-	sw_mac_open_for_hw(sw_mac, dev);
+	if (netif_running(dev)) {
+		priv = netdev_priv(dev);
+		sw_mac_open_for_hw(get_ksz_mac(priv), dev);
+	}
 #endif
 
 	return ret;

@@ -361,7 +361,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac.h linux
  	STMMAC_RESET_REQUESTED,
 diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c linux-6.1.20/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 --- linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2023-03-17 00:50:33.000000000 -0700
-+++ linux-6.1.20/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2025-06-30 00:41:52.841497928 -0700
++++ linux-6.1.20/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c	2025-07-18 15:46:56.465518033 -0700
 @@ -42,6 +42,10 @@
  #include <net/pkt_cls.h>
  #include <net/xdp_sock_drv.h>
@@ -799,7 +799,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	/* Extra statistics */
  	memset(&priv->xstats, 0, sizeof(struct stmmac_extra_stats));
  	priv->xstats.threshold = tc;
-@@ -3834,22 +4145,76 @@ static int __stmmac_open(struct net_devi
+@@ -3834,22 +4145,78 @@ static int __stmmac_open(struct net_devi
  
  	stmmac_init_coalesce(priv);
  
@@ -834,16 +834,14 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
 +
 +#ifdef CONFIG_KSZ_SWITCH
 +skip_hw:
++	priv = orig_priv;
 +	if (sw_is_switch(sw) && !hw_priv->do_hw) {
-+		sw_mac->skip_hw = 0;
-+		dev = orig_dev;
-+		sw_mac_open_next(sw, sw_mac->hw_priv, rx_mode);
-+		if (sw_mac_open_final(sw, dev, hw_priv, sw_mac)) {
++		/* Need to start PHY before opening the port. */
++		if (sw_mac->skip_hw) {
 +			struct phy_device *phydev;
 +
 +			phydev = sw_mac->port.phydev;
 +
-+			priv = orig_priv;
 +			phylink_start(priv->phylink);
 +			phylink_speed_up(priv->phylink);
 +			/* Do not want polling done. */
@@ -852,11 +850,15 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
 +#else
 +			phy_stop_machine(phydev);
 +#endif
++		}
++		sw_mac->skip_hw = 0;
++		dev = orig_dev;
++		sw_mac_open_next(sw, sw_mac->hw_priv, rx_mode);
++		if (sw_mac_open_final(sw, dev, hw_priv, sw_mac)) {
 +			netif_tx_start_all_queues(priv->dev);
 +			return 0;
 +		}
 +	}
-+	priv = orig_priv;
 +#endif
 +
  	netif_tx_start_all_queues(priv->dev);
@@ -876,7 +878,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  
  	for (chan = 0; chan < priv->plat->tx_queues_to_use; chan++)
  		hrtimer_cancel(&priv->dma_conf.tx_queue[chan].txtimer);
-@@ -3857,6 +4222,9 @@ irq_error:
+@@ -3857,6 +4224,9 @@ irq_error:
  	stmmac_hw_teardown(dev);
  init_error:
  	free_dma_desc_resources(priv, &priv->dma_conf);
@@ -886,7 +888,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	phylink_disconnect_phy(priv->phylink);
  init_phy_error:
  	pm_runtime_put(priv->device);
-@@ -3869,12 +4237,36 @@ static int stmmac_open(struct net_device
+@@ -3869,12 +4239,36 @@ static int stmmac_open(struct net_device
  	struct stmmac_dma_conf *dma_conf;
  	int ret;
  
@@ -923,7 +925,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	return ret;
  }
  
-@@ -3899,12 +4291,47 @@ static int stmmac_release(struct net_dev
+@@ -3899,12 +4293,47 @@ static int stmmac_release(struct net_dev
  	struct stmmac_priv *priv = netdev_priv(dev);
  	u32 chan;
  
@@ -971,7 +973,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	stmmac_disable_all_queues(priv);
  
  	for (chan = 0; chan < priv->plat->tx_queues_to_use; chan++)
-@@ -3912,6 +4339,10 @@ static int stmmac_release(struct net_dev
+@@ -3912,6 +4341,10 @@ static int stmmac_release(struct net_dev
  
  	netif_tx_disable(dev);
  
@@ -982,7 +984,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	/* Free the IRQ lines */
  	stmmac_free_irq(dev, REQ_IRQ_ERR_ALL, 0);
  
-@@ -3933,8 +4364,14 @@ static int stmmac_release(struct net_dev
+@@ -3933,8 +4366,14 @@ static int stmmac_release(struct net_dev
  	if (priv->plat->serdes_powerdown)
  		priv->plat->serdes_powerdown(dev, priv->plat->bsp_priv);
  
@@ -997,7 +999,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	stmmac_release_ptp(priv);
  
  	pm_runtime_put(priv->device);
-@@ -4331,12 +4768,36 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -4331,12 +4770,36 @@ static netdev_tx_t stmmac_xmit(struct sk
  	int entry, first_tx;
  	dma_addr_t des;
  
@@ -1034,7 +1036,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	/* Manage oversized TCP frames for GMAC4 device */
  	if (skb_is_gso(skb) && priv->tso) {
  		if (gso & (SKB_GSO_TCPV4 | SKB_GSO_TCPV6))
-@@ -4349,6 +4810,11 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -4349,6 +4812,11 @@ static netdev_tx_t stmmac_xmit(struct sk
  		if (!netif_tx_queue_stopped(netdev_get_tx_queue(dev, queue))) {
  			netif_tx_stop_queue(netdev_get_tx_queue(priv->dev,
  								queue));
@@ -1046,7 +1048,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  			/* This is a hard error, log it. */
  			netdev_err(priv->dev,
  				   "%s: Tx Ring full when queue awake\n",
-@@ -4534,6 +5000,9 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -4534,6 +5002,9 @@ static netdev_tx_t stmmac_xmit(struct sk
  
  	stmmac_set_tx_owner(priv, first);
  
@@ -1056,7 +1058,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	netdev_tx_sent_queue(netdev_get_tx_queue(dev, queue), skb->len);
  
  	stmmac_enable_dma_transmission(priv, priv->ioaddr);
-@@ -5183,6 +5652,11 @@ static int stmmac_rx(struct stmmac_priv
+@@ -5183,6 +5654,11 @@ static int stmmac_rx(struct stmmac_priv
  	int xdp_status = 0;
  	int buf_sz;
  
@@ -1068,7 +1070,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	dma_dir = page_pool_get_dma_dir(rx_q->page_pool);
  	buf_sz = DIV_ROUND_UP(priv->dma_conf.dma_buf_sz, PAGE_SIZE) * PAGE_SIZE;
  
-@@ -5398,6 +5872,25 @@ drain_data:
+@@ -5398,6 +5874,25 @@ drain_data:
  
  		stmmac_get_rx_hwtstamp(priv, p, np, skb);
  		stmmac_rx_vlan(priv->dev, skb);
@@ -1094,7 +1096,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  		skb->protocol = eth_type_trans(skb, priv->dev);
  
  		if (unlikely(!coe))
-@@ -5415,6 +5908,11 @@ drain_data:
+@@ -5415,6 +5910,11 @@ drain_data:
  		priv->dev->stats.rx_packets++;
  		priv->dev->stats.rx_bytes += len;
  		count++;
@@ -1106,27 +1108,40 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	}
  
  	if (status & rx_not_ls || skb) {
-@@ -5547,6 +6045,11 @@ static void stmmac_set_rx_mode(struct ne
+@@ -5547,6 +6047,25 @@ static void stmmac_set_rx_mode(struct ne
  {
  	struct stmmac_priv *priv = netdev_priv(dev);
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	if (sw_set_rx_mode(dev))
++	priv = get_hw_dev(priv);
++	if (sw_set_rx_mode(dev)) {
++		struct ksz_mac *hw_priv = get_ksz_mac(priv);
++
++		dev = hw_priv->net;
++		if (hw_priv->hw_promisc)
++			dev->flags |= IFF_PROMISC;
++		else
++			dev->flags &= ~IFF_PROMISC;
++		if (hw_priv->hw_multi)
++			dev->flags |= IFF_ALLMULTI;
++		else
++			dev->flags &= ~IFF_ALLMULTI;
++		stmmac_set_filter(priv, priv->hw, dev);
 +		return;
++	}
 +#endif
 +
  	stmmac_set_filter(priv, priv->hw, dev);
  }
  
-@@ -5569,6 +6072,18 @@ static int stmmac_change_mtu(struct net_
+@@ -5569,6 +6088,17 @@ static int stmmac_change_mtu(struct net_
  	const int mtu = new_mtu;
  	int ret;
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	struct ksz_mac *sw_mac = get_ksz_mac(priv);
-+	struct net_device *hw_dev = dev;
++	struct net_device *orig_dev = dev;
 +
-+	if (is_virt_mac(sw_mac)) {
++	if (is_virt_mac(get_ksz_mac(priv))) {
 +		new_mtu = STMMAC_ALIGN(new_mtu);
 +		dev->mtu = mtu;
 +		netdev_update_features(dev);
@@ -1137,28 +1152,30 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	if (txfifosz == 0)
  		txfifosz = priv->dma_cap.tx_fifo_size;
  
-@@ -5585,6 +6100,9 @@ static int stmmac_change_mtu(struct net_
+@@ -5585,6 +6115,10 @@ static int stmmac_change_mtu(struct net_
  	if ((txfifosz < new_mtu) || (new_mtu > BUF_SIZE_16KiB))
  		return -EINVAL;
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	sw_mac_close_for_hw(sw_mac, &dev, &hw_dev);
++	sw_mac_close_for_hw(get_ksz_mac(priv), &dev);
++	priv = netdev_priv(dev);
 +#endif
  	if (netif_running(dev)) {
  		netdev_dbg(priv->dev, "restarting interface to change its MTU\n");
  		/* Try to allocate the new DMA conf with the new mtu */
-@@ -5605,6 +6123,10 @@ static int stmmac_change_mtu(struct net_
+@@ -5605,6 +6139,11 @@ static int stmmac_change_mtu(struct net_
  		}
  
  		stmmac_set_rx_mode(dev);
 +
 +#ifdef CONFIG_KSZ_SWITCH
-+		sw_mac_open_for_hw(sw_mac, dev);
++		sw_mac_open_for_hw(get_ksz_mac(priv), dev);
++		dev = orig_dev;
 +#endif
  	}
  
  	dev->mtu = mtu;
-@@ -5618,6 +6140,12 @@ static netdev_features_t stmmac_fix_feat
+@@ -5618,6 +6157,12 @@ static netdev_features_t stmmac_fix_feat
  {
  	struct stmmac_priv *priv = netdev_priv(dev);
  
@@ -1171,7 +1188,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	if (priv->plat->rx_coe == STMMAC_RX_COE_NONE)
  		features &= ~NETIF_F_RXCSUM;
  
-@@ -5648,6 +6176,12 @@ static int stmmac_set_features(struct ne
+@@ -5648,6 +6193,12 @@ static int stmmac_set_features(struct ne
  {
  	struct stmmac_priv *priv = netdev_priv(netdev);
  
@@ -1184,7 +1201,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	/* Keep the COE Type in case of csum is supporting */
  	if (features & NETIF_F_RXCSUM)
  		priv->hw->rx_csum = priv->plat->rx_coe;
-@@ -5935,6 +6469,14 @@ static int stmmac_ioctl(struct net_devic
+@@ -5935,6 +6486,14 @@ static int stmmac_ioctl(struct net_devic
  	struct stmmac_priv *priv = netdev_priv (dev);
  	int ret = -EOPNOTSUPP;
  
@@ -1199,7 +1216,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	if (!netif_running(dev))
  		return -EINVAL;
  
-@@ -5957,6 +6499,17 @@ static int stmmac_ioctl(struct net_devic
+@@ -5957,6 +6516,17 @@ static int stmmac_ioctl(struct net_devic
  	return ret;
  }
  
@@ -1217,7 +1234,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  static int stmmac_setup_tc_block_cb(enum tc_setup_type type, void *type_data,
  				    void *cb_priv)
  {
-@@ -6038,6 +6591,13 @@ static int stmmac_set_mac_address(struct
+@@ -6038,6 +6608,13 @@ static int stmmac_set_mac_address(struct
  	if (ret)
  		goto set_mac_error;
  
@@ -1231,7 +1248,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	stmmac_set_umac_addr(priv, priv->hw, ndev->dev_addr, 0);
  
  set_mac_error:
-@@ -6337,6 +6897,19 @@ static int stmmac_vlan_rx_add_vid(struct
+@@ -6337,6 +6914,19 @@ static int stmmac_vlan_rx_add_vid(struct
  	bool is_double = false;
  	int ret;
  
@@ -1251,7 +1268,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	if (be16_to_cpu(proto) == ETH_P_8021AD)
  		is_double = true;
  
-@@ -6362,6 +6935,21 @@ static int stmmac_vlan_rx_kill_vid(struc
+@@ -6362,6 +6952,21 @@ static int stmmac_vlan_rx_kill_vid(struc
  	bool is_double = false;
  	int ret;
  
@@ -1273,7 +1290,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	ret = pm_runtime_resume_and_get(priv->device);
  	if (ret < 0)
  		return ret;
-@@ -6743,6 +7331,9 @@ static const struct net_device_ops stmma
+@@ -6743,6 +7348,9 @@ static const struct net_device_ops stmma
  	.ndo_set_features = stmmac_set_features,
  	.ndo_set_rx_mode = stmmac_set_rx_mode,
  	.ndo_tx_timeout = stmmac_tx_timeout,
@@ -1283,16 +1300,15 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	.ndo_eth_ioctl = stmmac_ioctl,
  	.ndo_setup_tc = stmmac_setup_tc,
  	.ndo_select_queue = stmmac_select_queue,
-@@ -6946,19 +7537,38 @@ int stmmac_reinit_queues(struct net_devi
+@@ -6946,19 +7554,40 @@ int stmmac_reinit_queues(struct net_devi
  	struct stmmac_priv *priv = netdev_priv(dev);
  	int ret = 0;
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	struct ksz_mac *sw_mac = get_ksz_mac(priv);
 +	struct net_device *orig_dev = dev;
 +	struct net_device *hw_dev = dev;
 +
-+	sw_mac_close_for_hw(sw_mac, &dev, &hw_dev);
++	sw_mac_close_for_hw(get_ksz_mac(priv), &dev);
 +	orig_dev = dev;
 +#endif
 +
@@ -1316,38 +1332,41 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  		ret = stmmac_open(dev);
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	sw_mac_open_for_hw(sw_mac, dev);
++	if (netif_running(dev)) {
++		priv = netdev_priv(dev);
++		sw_mac_open_for_hw(get_ksz_mac(priv), dev);
++	}
 +#endif
 +
  	return ret;
  }
  
-@@ -6967,6 +7577,13 @@ int stmmac_reinit_ringparam(struct net_d
+@@ -6967,6 +7596,10 @@ int stmmac_reinit_ringparam(struct net_d
  	struct stmmac_priv *priv = netdev_priv(dev);
  	int ret = 0;
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	struct ksz_mac *sw_mac = get_ksz_mac(priv);
-+	struct net_device *hw_dev = dev;
-+
-+	sw_mac_close_for_hw(sw_mac, &dev, &hw_dev);
++	sw_mac_close_for_hw(get_ksz_mac(priv), &dev);
 +	priv = get_hw_dev(priv);
 +#endif
  	if (netif_running(dev))
  		stmmac_release(dev);
  
-@@ -6976,6 +7593,10 @@ int stmmac_reinit_ringparam(struct net_d
+@@ -6976,6 +7609,13 @@ int stmmac_reinit_ringparam(struct net_d
  	if (netif_running(dev))
  		ret = stmmac_open(dev);
  
 +#ifdef CONFIG_KSZ_SWITCH
-+	sw_mac_open_for_hw(sw_mac, dev);
++	if (netif_running(dev)) {
++		priv = netdev_priv(dev);
++		sw_mac_open_for_hw(get_ksz_mac(priv), dev);
++	}
 +#endif
 +
  	return ret;
  }
  
-@@ -7059,9 +7680,11 @@ int stmmac_dvr_probe(struct device *devi
+@@ -7059,9 +7699,11 @@ int stmmac_dvr_probe(struct device *devi
  	struct stmmac_priv *priv;
  	u32 rxq;
  	int i, ret = 0;
@@ -1360,7 +1379,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	if (!ndev)
  		return -ENOMEM;
  
-@@ -7295,6 +7918,10 @@ int stmmac_dvr_probe(struct device *devi
+@@ -7295,6 +7937,10 @@ int stmmac_dvr_probe(struct device *devi
  			goto error_xpcs_setup;
  	}
  
@@ -1371,7 +1390,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	ret = stmmac_phy_setup(priv);
  	if (ret) {
  		netdev_err(ndev, "failed to setup phy (%d)\n", ret);
-@@ -7320,6 +7947,16 @@ int stmmac_dvr_probe(struct device *devi
+@@ -7320,6 +7966,16 @@ int stmmac_dvr_probe(struct device *devi
  	 */
  	pm_runtime_put(device);
  
@@ -1388,7 +1407,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	return ret;
  
  error_netdev_register:
-@@ -7355,6 +7992,10 @@ int stmmac_dvr_remove(struct device *dev
+@@ -7355,6 +8011,10 @@ int stmmac_dvr_remove(struct device *dev
  
  	pm_runtime_get_sync(dev);
  
@@ -1399,7 +1418,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	stmmac_stop_all_dma(priv);
  	stmmac_mac_set(priv, priv->ioaddr, false);
  	netif_carrier_off(ndev);
-@@ -7403,6 +8044,12 @@ int stmmac_suspend(struct device *dev)
+@@ -7403,6 +8063,12 @@ int stmmac_suspend(struct device *dev)
  	if (!ndev || !netif_running(ndev))
  		return 0;
  
@@ -1412,7 +1431,7 @@ diff -Napur linux-6.1.20-orig/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c 
  	mutex_lock(&priv->lock);
  
  	netif_device_detach(ndev);
-@@ -7510,6 +8157,12 @@ int stmmac_resume(struct device *dev)
+@@ -7510,6 +8176,12 @@ int stmmac_resume(struct device *dev)
  	if (!netif_running(ndev))
  		return 0;
  

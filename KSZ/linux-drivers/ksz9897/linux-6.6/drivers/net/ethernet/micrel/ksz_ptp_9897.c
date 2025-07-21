@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2024 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -4298,7 +4298,11 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 
 			bits = get_tx_tag_ports(sw, tag);
 			bits &= sw->PORT_MASK;
-			port = get_port_from_bits(bits);
+			if (bits)
+				port = get_port_from_bits(bits);
+			/* Using one network device; assume port 1 is used. */
+			else
+				port = 1;
 			if (port)
 				ptp_save_peer_delay(ptp, port - 1, msg);
 		}
@@ -4336,7 +4340,11 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 
 			bits = get_tx_tag_ports(sw, tag);
 			bits &= sw->PORT_MASK;
-			port = get_port_from_bits(bits);
+			if (bits)
+				port = get_port_from_bits(bits);
+			/* Using one network device; assume port 1 is used. */
+			else
+				port = 1;
 			if (port)
 				ptp->pdelay_resp_timestamp[port - 1] =
 					tx_msg.ts.timestamp;

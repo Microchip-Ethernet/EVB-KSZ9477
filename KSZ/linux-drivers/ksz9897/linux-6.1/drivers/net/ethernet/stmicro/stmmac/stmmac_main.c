@@ -1339,14 +1339,15 @@ static int stmmac_phy_setup(struct stmmac_priv *priv)
 	priv->phylink_config.mac_managed_pm = true;
 
 #if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
-	do {
-		int err = 0;
+	/* It is expected a PHY is declared if a switch is not used. */
+	if (of_phy_is_fixed_link(priv->device->of_node)) {
 		struct ksz_mac *sw_mac = get_ksz_mac(priv);
+		int err = 0;
 
 #ifdef CONFIG_KSZ_SMI
 		int irq = get_sw_irq(NULL);
 
-		err = smi_probe(&sw_mac->sw_pdev, priv->mii, irq,
+		err = smi_probe(sw_mac->sw_pdev, priv->mii, irq,
 				stmmac_smi_read, stmmac_smi_write);
 #endif
 		if (!err)
@@ -1355,7 +1356,7 @@ static int stmmac_phy_setup(struct stmmac_priv *priv)
 		/* Switch driver defines its own phylink. */
 		if (!err)
 			return 0;
-	} while (0);
+	}
 #endif
 
 	phylink = phylink_create(&priv->phylink_config, fwnode,
@@ -7969,6 +7970,7 @@ int stmmac_dvr_probe(struct device *device,
 #ifdef CONFIG_KSZ_SWITCH
 	/* Point to real private structure holding hardware information. */
 	setup_ksz_mac(priv, ndev);
+	priv->sw_mac.sw_pdev = to_platform_device(device);
 
 #if !defined(CONFIG_KSZ_IBA_ONLY)
 	if (priv->sw_mac.port.sw)

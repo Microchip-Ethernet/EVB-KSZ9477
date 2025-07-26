@@ -1124,22 +1124,24 @@ static int macb_mii_probe(struct net_device *dev)
 	}
 
 #if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_IBA_ONLY)
-	do {
+	/* It is expected a PHY is declared if a switch is not used. */
+	if (of_phy_is_fixed_link(bp->pdev->dev.of_node)) {
+		struct ksz_mac *sw_mac = get_ksz_mac(bp);
 		int err = 0;
 
 #ifdef CONFIG_KSZ_SMI
 		int irq = get_sw_irq(NULL);
 
-		err = smi_probe(&bp->sw_pdev, bp->mii_bus, irq,
+		err = smi_probe(sw_mac->sw_pdev, bp->mii_bus, irq,
 				smi_read, smi_write);
 #endif
 		if (!err)
-			err = sw_mac_chk(&bp->sw_mac);
+			err = sw_mac_chk(sw_mac);
 
 		/* Switch driver defines its own phylink. */
 		if (!err)
 			return 0;
-	} while (0);
+	}
 #endif
 
 	bp->phylink = phylink_create(&bp->phylink_config, bp->pdev->dev.fwnode,
@@ -5906,6 +5908,7 @@ static int macb_probe(struct platform_device *pdev)
 #ifdef CONFIG_KSZ_SWITCH
 	/* Point to real private structure holding hardware information. */
 	setup_ksz_mac(bp, dev);
+	bp->sw_mac.sw_pdev = pdev;
 #endif
 
 #if defined(CONFIG_KSZ_SWITCH) && !defined(CONFIG_KSZ_SWITCH_EMBEDDED)

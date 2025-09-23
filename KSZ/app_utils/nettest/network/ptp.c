@@ -2421,24 +2421,16 @@ int get_hw_cmd(FILE *fp)
 #endif
 
 static SOCKET create_sock(char *devname, char *ptp_ip, char *p2p_ip,
-	char *local_ip, int port, int multi_loop)
+	int port, int multi_loop, int family)
 {
 	SOCKET sockfd;
 	struct sockaddr_in servaddr;
 	struct sockaddr_in6 servaddr6;
-#if 0
-	struct in_addr local;
-#endif
 	char *sockopt;
-	int family = AF_INET;
 	int reuse = 1;
 
 	bzero(&servaddr, sizeof(servaddr));
 	bzero(&servaddr6, sizeof(servaddr6));
-	if (inet_pton(AF_INET, local_ip, &servaddr.sin_addr) > 0)
-		family = AF_INET;
-	else if (inet_pton(AF_INET6, local_ip, &servaddr6.sin6_addr) > 0)
-		family = AF_INET6;
 
 	sockfd = Socket(family, SOCK_DGRAM, 0);
 
@@ -2549,12 +2541,8 @@ static SOCKET create_sock(char *devname, char *ptp_ip, char *p2p_ip,
 		if (!ptp_ip)
 			return sockfd;
 
+		memset(&mreq, 0, sizeof(mreq));
 		inet_pton(family, ptp_ip, &mreq.imr_multiaddr.s_addr);
-#ifdef _SYS_SOCKET_H
-		inet_pton(family, local_ip, &mreq.imr_address.s_addr);
-#else
-		inet_pton(family, local_ip, &mreq.imr_interface.s_addr);
-#endif
 #ifdef _SYS_SOCKET_H
 		mreq.imr_ifindex = ipv6_interface;
 #endif
@@ -2565,11 +2553,6 @@ static SOCKET create_sock(char *devname, char *ptp_ip, char *p2p_ip,
 			return -1;
 		}
 		inet_pton(family, p2p_ip, &mreq.imr_multiaddr.s_addr);
-#ifdef _SYS_SOCKET_H
-		inet_pton(family, local_ip, &mreq.imr_address.s_addr);
-#else
-		inet_pton(family, local_ip, &mreq.imr_interface.s_addr);
-#endif
 #ifdef _SYS_SOCKET_H
 		mreq.imr_ifindex = ipv6_interface;
 #endif
@@ -3087,12 +3070,13 @@ next:
 	rc = fscanf(f, "%u", &num[1]);
 	fclose(f);
 
+	num[2] = 0;
 	sprintf(path, "%s%s/sw/%s", _PATH_SYSNET_DEV, devname, "host_port");
 	f = fopen(path, "r");
-	if (!f)
-		goto get_vlan_done;
-	rc = fscanf(f, "%u", &num[2]);
-	fclose(f);
+	if (f) {
+		rc = fscanf(f, "%u", &num[2]);
+		fclose(f);
+	}
 
 	if (num[2])
 		--num[1];
@@ -3400,16 +3384,24 @@ int main(int argc, char *argv[])
 		selfClockIdentity.addr[3] = 0xFF;
 		selfClockIdentity.addr[4] = 0xFE;
 		memcpy(&selfClockIdentity.addr[5], &info.hwaddr[3], 3);
+
+		/* Not using "eth0.100" device. */
+		if (!strcmp(devname, argv[1]))
+			strcpy(devname, "br0");
 		if (strcmp(devname, argv[1])) {
 			struct ip_info parent_info;
 
-			get_host_info(devname, &parent_info);
-			memcpy(host_addr, &parent_info.addr.sin_addr, 4);
-			inet_ntop(AF_INET, &parent_info.addr.sin_addr,
-				host_ip4, sizeof(host_ip4));
-			printf("use %s\n", host_ip4);
-		} else if (AF_INET == family)
-			family = AF_PACKET;
+			if (get_host_info(devname, &parent_info)) {
+				memcpy(host_addr, &parent_info.addr.sin_addr,
+				       4);
+				inet_ntop(AF_INET, &parent_info.addr.sin_addr,
+					host_ip4, sizeof(host_ip4));
+				printf("use %s\n", host_ip4);
+			} else if (AF_INET == family && ptp_unicast) {
+				/* Need IP address to send unicast. */
+				ptp_unicast = 0;
+			}
+		}
 #endif
 	} else {
 		printf("cannot locate IP address\n");
@@ -3497,14 +3489,14 @@ int main(int argc, char *argv[])
 	management_addr6.sin6_port = htons(PTP_GENERAL_PORT);
 	inet_pton(AF_INET6, PTP_ip_addr6, &management_addr6.sin6_addr);
 
-	event_fd = create_sock(argv[1], ptp_ip, p2p_ip, host_ip,
-		PTP_EVENT_PORT, 0);
+	event_fd = create_sock(argv[1], ptp_ip, p2p_ip,
+		PTP_EVENT_PORT, 0, family);
 	if (event_fd < 0) {
 		printf("Cannot create socket\n");
 		return 1;
 	}
-	general_fd = create_sock(argv[1], ptp_ip, p2p_ip, host_ip,
-		PTP_GENERAL_PORT, multi_loop);
+	general_fd = create_sock(argv[1], ptp_ip, p2p_ip,
+		PTP_GENERAL_PORT, multi_loop, family);
 	if (general_fd < 0) {
 		printf("Cannot create socket\n");
 		return 1;
@@ -3515,14 +3507,14 @@ int main(int argc, char *argv[])
 	if (!unicast_sock)
 		ptp_ip = NULL;
 	if (ptp_ip) {
-		uni_event_fd = create_sock(argv[1], NULL, NULL, host_ip,
-			PTP_EVENT_PORT, 0);
+		uni_event_fd = create_sock(argv[1], NULL, NULL,
+			PTP_EVENT_PORT, 0, family);
 		if (uni_event_fd < 0) {
 			printf("Cannot create socket\n");
 			return 1;
 		}
-		uni_general_fd = create_sock(argv[1], NULL, NULL, host_ip,
-			PTP_GENERAL_PORT, 0);
+		uni_general_fd = create_sock(argv[1], NULL, NULL,
+			PTP_GENERAL_PORT, 0, family);
 		if (uni_general_fd < 0) {
 			printf("Cannot create socket\n");
 			return 1;
@@ -3531,7 +3523,7 @@ int main(int argc, char *argv[])
 	management4_fd = general_fd;
 	if (AF_INET6 == ip_family) {
 		management4_fd = create_sock(argv[1], PTP_ip_addr, P2P_ip_addr,
-			host_ip4, PTP_GENERAL_PORT, multi_loop);
+			PTP_GENERAL_PORT, multi_loop, AF_INET);
 		if (management4_fd < 0) {
 			printf("Cannot create socket\n");
 		}

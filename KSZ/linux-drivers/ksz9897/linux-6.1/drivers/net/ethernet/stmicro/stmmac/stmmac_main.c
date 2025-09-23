@@ -3430,6 +3430,7 @@ static int sw_mac_init(struct net_device *dev, struct ksz_mac *sw_mac)
 	struct net_device *main_dev;
 	struct device *device;
 	netdev_features_t features;
+	u32 rx_queues, tx_queues;
 
 	priv = sw_mac->dev;
 	hw_dev = sw_mac->dev;
@@ -3444,6 +3445,7 @@ static int sw_mac_init(struct net_device *dev, struct ksz_mac *sw_mac)
 
 	prep_sw_first(sw, &port_count, &mib_port_count, &dev_count, dev_label,
 		      &stmmac_phylink_mac_ops);
+	sw_update_csum(sw);
 
 	/* The main switch phydev will not be attached. */
 	if (dev_count > 1) {
@@ -3456,6 +3458,7 @@ static int sw_mac_init(struct net_device *dev, struct ksz_mac *sw_mac)
 	strlcpy(dev_label, hw_priv->net->name, IFNAMSIZ);
 
 #ifndef CONFIG_KSZ_SMI
+	/* For access to PHY using MDIO bus from MAC. */
 	if (sw->net_ops->setup_mdiobus)
 		sw->net_ops->setup_mdiobus(sw, priv->mii);
 #endif
@@ -3472,11 +3475,12 @@ static int sw_mac_init(struct net_device *dev, struct ksz_mac *sw_mac)
 	INIT_WORK(&hw_priv->rmv_dev, rmv_dev_work);
 #endif
 
+	rx_queues = hw_dev->plat->rx_queues_to_use;
+	tx_queues = hw_dev->plat->tx_queues_to_use;
 	for (i = 1; i < dev_count; i++) {
 		dev = devm_alloc_etherdev_mqs(device,
 					      sizeof(struct stmmac_priv),
-					      MTL_MAX_TX_QUEUES,
-					      MTL_MAX_RX_QUEUES);
+					      tx_queues, rx_queues);
 		if (!dev)
 			break;
 
@@ -3565,7 +3569,11 @@ static int stmmac_hw_setup(struct net_device *dev, bool ptp_register)
 	int ret;
 
 #ifdef CONFIG_KSZ_SWITCH
+	struct ksz_sw *sw = get_sw(priv);
+
 	priv = get_hw_dev(priv);
+	if (sw_is_switch(sw) && (sw->features & PTP_HW))
+		ptp_register = false;
 #endif
 
 	/* DMA initialization and SW reset */
@@ -4297,8 +4305,8 @@ static int stmmac_release(struct net_device *dev)
 #ifdef CONFIG_KSZ_SWITCH
 	struct ksz_mac *sw_mac = get_ksz_mac(priv);
 	struct ksz_mac *hw_priv = sw_mac->hw_priv;
-	struct ksz_sw *sw = sw_mac->port.sw;
 	struct net_device *orig_dev = dev;
+	struct ksz_sw *sw = get_sw(priv);
 	int iba = 0;
 #endif
 
@@ -7799,6 +7807,7 @@ int stmmac_dvr_probe(struct device *device,
 		ndev->hw_features |= NETIF_F_HW_TC;
 	}
 
+#ifndef CONFIG_KSZ_SWITCH
 	if ((priv->plat->tso_en) && (priv->dma_cap.tsoen)) {
 		ndev->hw_features |= NETIF_F_TSO | NETIF_F_TSO6;
 		if (priv->plat->has_gmac4)
@@ -7806,6 +7815,7 @@ int stmmac_dvr_probe(struct device *device,
 		priv->tso = true;
 		dev_info(priv->device, "TSO feature enabled\n");
 	}
+#endif
 
 	if (priv->dma_cap.sphen && !priv->plat->sph_disable) {
 		ndev->hw_features |= NETIF_F_GRO;

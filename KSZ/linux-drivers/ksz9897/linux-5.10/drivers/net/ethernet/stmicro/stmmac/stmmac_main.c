@@ -2850,14 +2850,14 @@ static int sw_mac_init(struct net_device *dev, struct ksz_mac *sw_mac)
 
 		priv = netdev_priv(dev);
 		priv->dev = dev;
+		priv->device = device;
+		priv->plat = hw_dev->plat;
+		priv->hw = hw_dev->hw;
 
 		sw_mac = &priv->sw_mac;
 		sw_mac->hw_priv = hw_priv;
 		sw_mac->dev = priv;
 		sw_mac->net = dev;
-		priv->device = device;
-		priv->plat = hw_dev->plat;
-		priv->hw = hw_dev->hw;
 
 		mutex_init(&priv->lock);
 

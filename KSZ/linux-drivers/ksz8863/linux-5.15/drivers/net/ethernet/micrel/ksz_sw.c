@@ -7324,7 +7324,7 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 
 static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct ksz_port *priv, void *ptr,
-	int (*update_msg)(u8 *data, u32 port, u32 overrides))
+	int (*update_msg)(void *ptp, u8 *data, u32 port, u32 overrides))
 {
 	bool need_new_copy = false;
 	int len;
@@ -7339,6 +7339,12 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct ptp_info *ptp = ptr;
 
 	if (ptp->overrides & (PTP_PORT_FORWARD | PTP_PORT_TX_FORWARD))
+		update_dst |= 2;
+
+	/* Need to parse the PTP message to do necessary operations in the
+	 * background.
+	 */
+	if (ptp->need_1_step_resp_help || ptp->need_peer_delay_set_help)
 		update_dst |= 2;
 #endif
 	if (!update_dst)
@@ -7362,7 +7368,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (1 == priv->port_cnt)
 		port = priv->first_port;
 
-#if 0
+#if 1
 	do {
 		u16 prio;
 		u16 vid;
@@ -7418,7 +7424,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			dst |= (u32) sw->tx_ports << 16;
 			overrides |= PTP_UPDATE_DST_PORT;
 		}
-		blocked = update_msg(skb->data, dst, overrides);
+		blocked = update_msg(ptp, skb->data, dst, overrides);
 		if (blocked) {
 			dev_kfree_skb_irq(skb);
 			return NULL;
@@ -7517,7 +7523,7 @@ static struct sk_buff *sw_check_tx(struct ksz_sw *sw, struct net_device *dev,
 	struct sk_buff *skb, struct ksz_port *priv)
 {
 	void *ptr = NULL;
-	int (*update_msg)(u8 *data, u32 port, u32 overrides) = NULL;
+	int (*update_msg)(void *ptp, u8 *data, u32 port, u32 overrides) = NULL;
 
 #ifdef CONFIG_1588_PTP
 	if (sw->features & PTP_HW) {
@@ -7919,6 +7925,8 @@ static void sw_init_phylink(struct ksz_sw *sw, struct ksz_port *port)
 }  /* sw_init_phylink */
 #endif
 
+static int fiber;
+
 static void setup_device_node(struct ksz_sw *sw)
 {
 	struct sw_priv *ks = sw->dev;
@@ -7926,6 +7934,7 @@ static void setup_device_node(struct ksz_sw *sw)
 	struct device_node *ports, *port;
 	struct device_node *ethernet;
 	const char *name;
+	bool fb;
 	int err;
 	u32 reg;
 
@@ -7946,6 +7955,11 @@ dbg_msg(" found eth\n");
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
+				fb = of_property_read_bool(port,
+							   "micrel,fiber-mode");
+				if (fb)
+					fiber |= 1 << reg;
+
 				/* Save the device node. */
 				sw->devnode[reg] = port;
 			}
@@ -10092,7 +10106,6 @@ static void ksz_dev_monitor(struct timer_list *t)
 	ksz_update_timer(&hw_priv->monitor_timer_info);
 }  /* ksz_dev_monitor */
 
-static int fiber;
 static int intr_mode;
 
 static int sw_device_present;

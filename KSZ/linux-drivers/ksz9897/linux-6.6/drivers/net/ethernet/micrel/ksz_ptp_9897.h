@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common header
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -914,6 +914,7 @@ struct ptp_info {
 	short asym_delay[MAX_PTP_PORT][3];
 	u32 peer_delay[MAX_PTP_PORT];
 	struct ptp_peer_delay_ts peer_delay_info[MAX_PTP_PORT];
+	u16 peer_port[MAX_PTP_PORT];
 
 	spinlock_t rx_msg_lock;
 	spinlock_t tx_msg_lock;
@@ -1016,11 +1017,14 @@ struct ptp_info {
 	uint features;
 	uint overrides;
 
+	u32 check_1_step_req_help:1;
 	u32 need_sync_tx_ts:1;
 	u32 need_resp_tx_ts:1;
+	u32 need_1_step_req_help:1;
 	u32 need_1_step_resp_help:1;
 	u32 need_2_step_resp_help:1;
 	u32 need_1_step_clock_oper:1;
+	u32 need_p2p_tc_set_help:1;
 	u32 need_peer_delay_set_help:1;
 	u32 have_first_drift_set:1;
 	u32 use_own_api:1;

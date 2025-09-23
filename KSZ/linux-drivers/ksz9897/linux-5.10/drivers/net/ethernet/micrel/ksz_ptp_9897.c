@@ -1393,6 +1393,12 @@ dbg_msg("2-step P2P %d %d\n", ptp->need_resp_tx_ts, ptp->need_2_step_resp_help);
 		if (ptp->need_resp_tx_ts)
 			need_resp_tx_ts = true;
 	}
+	if (ptp->need_1_step_req_help) {
+		if ((mode & PTP_1STEP) && (mode & PTP_TC_P2P))
+			ptp->check_1_step_req_help = 1;
+		else
+			ptp->check_1_step_req_help = 0;
+	}
 
 	/* Only enable certain transmit timestamps for efficiency. */
 	if (need_sync_tx_ts)
@@ -2715,12 +2721,15 @@ static void ptp_set_peer_delay(struct work_struct *work)
 #endif
 
 	ptp->ops->acquire(ptp);
-	for (i = 0; i < ptp->ports; i++) {
+	for (i = 0; i <= ptp->ports; i++) {
 		d = &ptp->peer_delay_info[i];
 		if (d->filter.delay_valid) {
 			nsec = (u32)d->filter.delay;
-			set_ptp_link(ptp, i, nsec);
 			d->filter.delay_valid = false;
+			if (nsec != ptp->peer_delay[i]) {
+				set_ptp_link(ptp, i, nsec);
+				ptp->peer_delay[i] = nsec;
+			}
 		}
 	}
 	ptp->ops->release(ptp);
@@ -2991,6 +3000,14 @@ static void ptp_start(struct ptp_info *ptp, int init)
 		ptp->forward |= FWD_STP_DEV;
 	else if (sw->features & VLAN_PORT_TAGGING)
 		ptp->forward |= FWD_VLAN_DEV;
+	else
+		ptp->forward = FWD_MAIN_DEV;
+
+#ifdef CONFIG_KSZ_HSR
+	/* The bridge device is used for forwarding. */
+	if ((sw->features & HSR_REDBOX) && !(sw->overrides & HSR_FORWARD))
+		ptp->forward = FWD_MAIN_DEV;
+#endif
 	ptp->def_forward = ptp->forward;
 }  /* ptp_start */
 
@@ -3172,14 +3189,19 @@ static void ptp_init_state(struct ptp_info *ptp)
 	/* Support using 1-step Pdelay_Resp by remembering Pdelay_Req receive
 	 * timestamp.
 	 */
-	ptp->need_1_step_resp_help = true;
-	ptp->need_peer_delay_set_help = true;
+	if (!ptp->use_own_api) {
+		ptp->need_1_step_resp_help = true;
+		ptp->need_p2p_tc_set_help = true;
+		ptp->need_peer_delay_set_help = true;
+	}
+	ptp->need_1_step_req_help = true;
 	do {
 		struct ptp_peer_delay_ts *d;
 		int i;
 
-		for (i = 0; i < ptp->ports; i++) {
+		for (i = 0; i <= ptp->ports; i++) {
 			d = &ptp->peer_delay_info[i];
+			d->t1 = d->corr = 0;
 			mmedian_reset(&d->filter.median);
 			d->filter.delay_valid = false;
 		}
@@ -3249,6 +3271,8 @@ dbg_msg(" def: %x %x\n", ptp->def_mode, ptp->mode);
 	ptp->tx_en_ports = ptp->rx_en_ports = 0;
 	ptp->need_sync_tx_ts = false;
 	ptp->need_resp_tx_ts = false;
+	ptp->check_1_step_req_help = false;
+	ptp->need_1_step_req_help = false;
 	ptp->need_1_step_resp_help = false;
 	ptp->need_2_step_resp_help = false;
 	ptp->need_1_step_clock_oper = false;
@@ -3270,6 +3294,20 @@ dbg_msg(" def: %x %x\n", ptp->def_mode, ptp->mode);
 	/* Indicate drift is not being set by PTP stack. */
 	ptp->drift_set = 0;
 }  /* ptp_exit_state */
+
+static void update_udp_csum(int udp_check, u16 *loc)
+{
+	u16 check;
+
+	check = ntohs(*loc);
+	udp_check += check;
+	udp_check = (udp_check >> 16) + (udp_check & 0xffff);
+	udp_check += (udp_check >> 16);
+	check = (u16) udp_check;
+	if (!check)
+		check = -1;
+	*loc = htons(check);
+}
 
 static struct ptp_msg *check_ptp_msg(u8 *data, u16 **udp_check_ptr)
 {
@@ -3325,7 +3363,9 @@ static struct ptp_msg *check_ptp_msg(u8 *data, u16 **udp_check_ptr)
 			return NULL;
 
 		udp = (struct udphdr *)(iph + 1);
-		if (udp_check_ptr)
+
+		/* Not empty checksum. */
+		if (udp->check && udp_check_ptr)
 			*udp_check_ptr = &udp->check;
 	}
 
@@ -3333,6 +3373,18 @@ static struct ptp_msg *check_ptp_msg(u8 *data, u16 **udp_check_ptr)
 		return NULL;
 
 	msg = (struct ptp_msg *)(udp + 1);
+
+	/* Try to modify payload for checksum change.
+	 * However, hardware still modifies the checksum directly.
+	 */
+	if (ipv6) {
+		u16 len = ntohs(msg->hdr.messageLength);
+		u8 *data = (u8 *)msg;
+
+		if (len + 2 + sizeof(struct udphdr) == ntohs(udp->len) &&
+		    udp_check_ptr)
+			*udp_check_ptr = (u16 *)&data[len];
+	}
 
 check_ptp_version:
 	if (msg->hdr.versionPTP >= 2)
@@ -3379,13 +3431,12 @@ static struct ptp_msg *check_ptp_event(u8 *data)
  * are filled with zero.
  */
 static struct ptp_msg *update_ptp_msg(u8 *data, u8 *port, u32 *timestamp,
-	u32 overrides)
+	u32 overrides, u16 **csum_loc)
 {
 	struct ptp_msg *msg;
-	u16 *udp_check_loc = NULL;
 	int udp_check = 0;
 
-	msg = check_ptp_msg(data, &udp_check_loc);
+	msg = check_ptp_msg(data, csum_loc);
 	if (!msg)
 		return NULL;
 	if (msg->hdr.reserved2 != *port) {
@@ -3440,18 +3491,8 @@ static struct ptp_msg *update_ptp_msg(u8 *data, u8 *port, u32 *timestamp,
 			sec.lo);
 		*timestamp = (rx.sec << 30) | rx.nsec;
 	}
-	if (udp_check && udp_check_loc) {
-		u16 check;
-
-		check = ntohs(*udp_check_loc);
-		udp_check += check;
-		udp_check = (udp_check >> 16) + (udp_check & 0xffff);
-		udp_check += (udp_check >> 16);
-		check = (u16) udp_check;
-		if (!check)
-			check = -1;
-		*udp_check_loc = htons(check);
-	}
+	if (udp_check && csum_loc && *csum_loc)
+		update_udp_csum(udp_check, *csum_loc);
 	return msg;
 }  /* update_ptp_msg */
 
@@ -3583,11 +3624,9 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 		if (!(ptp->tx_en & 1))
 			ptp->tx_en &= ~(1 << 8);
 		break;
-#if 0
 	case HWTSTAMP_TX_ONESTEP_P2P:
 		ptp->tx_en |= 6;
 		break;
-#endif
 	case HWTSTAMP_TX_ONESTEP_SYNC:
 		ptp->tx_en |= 2;
 		break;
@@ -3596,6 +3635,7 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 	default:
 		return -ERANGE;
 	}
+
 	if (config.tx_type != HWTSTAMP_TX_OFF) {
 
 		/* PTP stack can use PTP driver API to setup mode. */
@@ -3618,6 +3658,7 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 				/* Assume stack will forward everything. */
 				mode |= PTP_802_1AS;
 			}
+			ptp->need_1_step_req_help = true;
 			ptp_acquire(ptp);
 			set_ptp_mode(ptp, mode);
 			ptp->op_mode = 1;
@@ -3629,6 +3670,11 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 			ptp->tx_en |= (1 << 8);
 		ptp->tx_en_ports |= ports;
 		ptp->tx_en |= 1;
+
+		/* eth0 is used when child devices are present. */
+		if (ptp->tx_en_ports == (1 << ptp->ports) &&
+		    (ptp->forward & FWD_STP_DEV))
+			ptp->forward = FWD_MAIN_DEV;
 	}
 
 	switch (config.rx_filter) {
@@ -3930,6 +3976,7 @@ static struct ptp_msg *ptp_set_rx_info(struct ptp_info *ptp, u8 *data, u8 port,
 	u32 timestamp)
 {
 	struct ptp_msg *msg;
+	u16 *csum = NULL;
 #ifdef DBG_MSG_DROP
 	u16 *seqid;
 #endif
@@ -3939,8 +3986,9 @@ static struct ptp_msg *ptp_set_rx_info(struct ptp_info *ptp, u8 *data, u8 port,
 	/* Do not need to parse PTP message except for PDELAY_REQ_MSG. */
 	if (1 == ptp->op_mode &&
 	    (ptp->need_1_step_resp_help ||
+	     ptp->need_1_step_req_help ||
 	     ptp->need_peer_delay_set_help)) {
-		msg = check_ptp_msg(data, NULL);
+		msg = check_ptp_msg(data, &csum);
 		if (!msg)
 			return NULL;
 		if (ptp->need_1_step_resp_help &&
@@ -3950,6 +3998,23 @@ static struct ptp_msg *ptp_set_rx_info(struct ptp_info *ptp, u8 *data, u8 port,
 		    msg->hdr.messageType == PDELAY_RESP_FOLLOW_UP_MSG) {
 			if (ptp->need_peer_delay_set_help)
 				ptp_save_peer_delay(ptp, port, msg);
+			if (ptp->check_1_step_req_help) {
+				struct ptp_msg_pdelay_resp *resp =
+					&msg->data.pdelay_resp;
+				u16 *loc = &resp->requestingPortIdentity.port;
+				u16 src = ntohs(*loc);
+
+				/* Restore original port for acceptance. */
+				if (ptp->peer_port[port] &&
+				    ptp->peer_port[port] != src) {
+					int check = src;
+
+					check -= ptp->peer_port[port];
+					*loc = htons(ptp->peer_port[port]);
+					if (check && csum)
+						update_udp_csum(check, csum);
+				}
+			}
 		}
 		return NULL;
 	}
@@ -3961,7 +4026,7 @@ static struct ptp_msg *ptp_set_rx_info(struct ptp_info *ptp, u8 *data, u8 port,
 		overrides |= PTP_UPDATE_PDELAY_RESP_PORT;
 	} else
 		overrides &= ~PTP_ZERO_RESERVED_FIELD;
-	msg = update_ptp_msg(data, &port, &timestamp, overrides);
+	msg = update_ptp_msg(data, &port, &timestamp, overrides, &csum);
 
 #ifdef DBG_PROC_SYNC
 	if (ptp->overrides & PTP_CHECK_SYNC_TIME)
@@ -4010,7 +4075,7 @@ static int ba_hack;
 #endif
 
 static struct ptp_msg *ptp_get_tx_info(struct ptp_info *ptp, u8 *data,
-	u32 *tx_port, u32 *tx_timestamp)
+	u32 *tx_port, u32 *tx_timestamp, u16 **csum_loc)
 {
 	struct ptp_msg *msg;
 	u32 overrides = ptp->overrides;
@@ -4035,7 +4100,7 @@ static struct ptp_msg *ptp_get_tx_info(struct ptp_info *ptp, u8 *data,
 	/* Get receive port and timestamp inside the PTP message. */
 	if (0 == ptp->op_mode)
 		overrides |= PTP_ZERO_RESERVED_FIELD;
-	msg = update_ptp_msg(data, &port, &timestamp, overrides);
+	msg = update_ptp_msg(data, &port, &timestamp, overrides, csum_loc);
 	if (msg) {
 		/* Get transmit port and timestamp inside the PTP message. */
 		if (0 == ptp->op_mode) {
@@ -4163,6 +4228,7 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 	struct ptp_msg *msg;
 	struct ptp_msg_options tx_msg;
 	struct ksz_sw_tx_tag *tag = ptr;
+	u16 *csum = NULL;
 
 	tx_msg.port = 0;
 	tx_msg.ts.timestamp = 0;
@@ -4170,7 +4236,7 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 	/* Assume packet will be parsed to determine PTP message type. */
 	ptp->tx_msg_parsed = true;
 	ptp->tx_msg = ptp_get_tx_info(ptp, data, &tx_msg.port,
-		&tx_msg.ts.timestamp);
+		&tx_msg.ts.timestamp, &csum);
 	dest = false;
 	if (get_tx_tag_ports(sw, tag))
 		dest = true;
@@ -4250,30 +4316,33 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 		found = 2;
 	}
 	if (PDELAY_REQ_MSG == msg->hdr.messageType) {
-		if (!(ptp->mode & PTP_TC_P2P)) {
+		if (ptp->need_p2p_tc_set_help && !(ptp->mode & PTP_TC_P2P)) {
 			/* Not fast enough to receive the response. */
 			schedule_work(&ptp->set_p2p);
 		}
 		if (ptp->need_peer_delay_set_help) {
-			uint port;
+			uint port, first, last;
 			u32 bits;
 
 			bits = get_tx_tag_ports(sw, tag);
 			bits &= sw->PORT_MASK;
-			if (bits)
+			if (bits) {
 				port = get_port_from_bits(bits);
-			/* Using one network device; assume port 1 is used. */
-			else
-				port = 1;
-			if (port)
-				ptp_save_peer_delay(ptp, port - 1, msg);
+				first = port - 1;
+				last = port;
+			} else {
+				first = 0;
+				last = ptp->ports + 1;
+			}
+			for (port = first; port < last; port++)
+				ptp_save_peer_delay(ptp, port, msg);
 		}
 	}
 
 	/* Only PDELAY_RESP_MSG requires timestamp in transmission. */
 	if (!found && PDELAY_RESP_MSG == msg->hdr.messageType) {
-		int two_step = msg->hdr.flagField.flag.twoStepFlag;
 		struct ptp_msg_pdelay_resp *resp = &msg->data.pdelay_resp;
+		int two_step = msg->hdr.flagField.flag.twoStepFlag;
 
 		found = find_msg_info(&ptp->rx_msg_info[PDELAY_REQ_MSG],
 			&ptp->rx_msg_lock, &msg->hdr,
@@ -4304,12 +4373,56 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 			bits &= sw->PORT_MASK;
 			if (bits)
 				port = get_port_from_bits(bits);
-			/* Using one network device; assume port 1 is used. */
 			else
-				port = 1;
+				port = tx_msg.port + 1;
 			if (port)
 				ptp->pdelay_resp_timestamp[port - 1] =
 					tx_msg.ts.timestamp;
+		}
+	} else if (!found && !dest &&
+		   PDELAY_RESP_FOLLOW_UP_MSG == msg->hdr.messageType) {
+		struct ptp_msg_pdelay_resp *resp = &msg->data.pdelay_resp;
+
+		found = find_msg_info(&ptp->rx_msg_info[PDELAY_REQ_MSG],
+			&ptp->rx_msg_lock, &msg->hdr,
+			&resp->requestingPortIdentity, true, &tx_msg);
+	}
+	if (ptp->check_1_step_req_help) {
+		u16 *loc = &msg->hdr.sourcePortIdentity.port;
+		uint tx_port = get_tx_tag_ports(sw, tag);
+		uint p = 0;
+
+		if (tx_port)
+			p = get_port_from_bits(tx_port);
+		if (PDELAY_REQ_MSG == msg->hdr.messageType) {
+			u8 first, last;
+
+			if (p) {
+				first = p - 1;
+				last = p;
+			} else {
+				first = 0;
+				last = ptp->ports + 1;
+			}
+
+			/* Save port as it will be changed by hardware. */
+			for (p = first; p < last; p++)
+				ptp->peer_port[p] = ntohs(*loc);
+		} else if (PDELAY_RESP_MSG == msg->hdr.messageType ||
+			   PDELAY_RESP_FOLLOW_UP_MSG == msg->hdr.messageType) {
+			/* Try to use same hardware port so that the peer will
+			 * not complain.
+			 */
+			if (!p)
+				p = tx_msg.port + 1;
+			if (p && ntohs(*loc) != p) {
+				int check = ntohs(*loc);
+
+				check -= p;
+				*loc = htons(p);
+				if (check && csum)
+					update_udp_csum(check, csum);
+			}
 		}
 	}
 	if (ba_hack) {
@@ -4329,17 +4442,16 @@ static void ptp_set_tx_info(struct ptp_info *ptp, u8 *data, void *ptr)
 		goto set_tx_info_done;
 
 	if (found || tx_msg.port) {
-		if (tx_msg.port) {
-			uint ports;
+		uint ports;
 
-			if (1 == found)
-				ports = (1 << tx_msg.port);
-			else
-				ports = tx_msg.port;
-			if (ports)
-				prio = true;
-			set_tx_tag_ports(tag, ports);
-		}
+		/* Port is receive port. */
+		if (1 == found)
+			ports = (1 << tx_msg.port);
+		else
+			ports = tx_msg.port;
+		if (ports)
+			prio = true;
+		set_tx_tag_ports(tag, ports);
 		goto set_tx_info_done;
 	} else if (ptp->op_mode != 3)
 		goto set_tx_info_done;
@@ -6090,6 +6202,10 @@ static int ptp_get_port_info(struct ptp_info *ptp, u8 *data, int *output)
 		data[4] = phys_port + 1;
 		data[5] = virt_port;
 		*output = mask;
+
+		/* Do not need to help manipulating the port number. */
+		ptp->need_1_step_req_help = false;
+		ptp->check_1_step_req_help = false;
 	} else {
 		result = DEV_IOC_INVALID_CMD;
 	}
@@ -6201,6 +6317,7 @@ static void proc_ptp_work(struct work_struct *work)
 					ptp->need_1_step_resp_help = false;
 					ptp->need_peer_delay_set_help = false;
 				}
+				ptp->need_p2p_tc_set_help = false;
 				ptp->use_own_api = true;
 				ptp->cap = cap;
 dbg_msg("op_mode: %x %d; %x %08x %x:%x"NL, ptp->cap, ptp->op_mode,

@@ -603,6 +603,21 @@ static int ksz9897_remove(struct spi_device *spi)
 	return ksz_remove(priv);
 }
 
+static const struct spi_device_id ksz9897_spi_ids[] = {
+	{ .name = "ksz9897" },
+	{ .name = "ksz9567" },
+	{ .name = "ksz9477" },
+	{ .name = "ksz9896" },
+	{ .name = "ksz9566" },
+	{ .name = "ksz8565" },
+	{ .name = "ksz9893" },
+	{ .name = "ksz9563" },
+	{ .name = "ksz8563" },
+	{ .name = "lan9646" },
+	{},
+};
+MODULE_DEVICE_TABLE(spi, ksz9897_spi_ids);
+
 static const struct of_device_id ksz9897_dt_ids[] = {
 	{ .compatible = "microchip,ksz9897" },
 	{ .compatible = "microchip,ksz9567" },
@@ -626,6 +641,7 @@ static struct spi_driver ksz9897_driver = {
 	},
 	.probe = ksz9897_probe,
 	.remove = ksz9897_remove,
+	.id_table = ksz9897_spi_ids,
 };
 
 static int __init ksz9897_init(void)

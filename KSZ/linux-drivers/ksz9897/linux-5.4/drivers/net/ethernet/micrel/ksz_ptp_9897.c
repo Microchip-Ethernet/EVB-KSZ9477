@@ -3269,6 +3269,7 @@ dbg_msg(" def: %x %x\n", ptp->def_mode, ptp->mode);
 	ptp->overrides &= ~PTP_USE_DEFAULT_PORT;
 	ptp->tx_en = ptp->rx_en = 0;
 	ptp->tx_en_ports = ptp->rx_en_ports = 0;
+	ptp->tx_en_cnt = ptp->rx_en_cnt = 0;
 	ptp->need_sync_tx_ts = false;
 	ptp->need_resp_tx_ts = false;
 	ptp->check_1_step_req_help = false;
@@ -3618,7 +3619,10 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 
 	switch (config.tx_type) {
 	case HWTSTAMP_TX_OFF:
-		ptp->tx_en_ports &= ~ports;
+		if (ptp->tx_en_cnt)
+			--ptp->tx_en_cnt;
+		else
+			ptp->tx_en_ports &= ~ports;
 		if (!ptp->tx_en_ports)
 			ptp->tx_en &= ~7;
 		if (!(ptp->tx_en & 1))
@@ -3670,7 +3674,10 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 		/* Default is to include tx latency in tx timestamp. */
 		if (!(ptp->tx_en & 1))
 			ptp->tx_en |= (1 << 8);
-		ptp->tx_en_ports |= ports;
+		if (ptp->tx_en_ports == ports)
+			++ptp->tx_en_cnt;
+		else
+			ptp->tx_en_ports |= ports;
 		ptp->tx_en |= 1;
 
 		/* eth0 is used when child devices are present. */
@@ -3681,7 +3688,10 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 
 	switch (config.rx_filter) {
 	case HWTSTAMP_FILTER_NONE:
-		ptp->rx_en_ports &= ~ports;
+		if (ptp->rx_en_cnt)
+			--ptp->rx_en_cnt;
+		else
+			ptp->rx_en_ports &= ~ports;
 		if (!ptp->rx_en_ports)
 			ptp->rx_en &= ~1;
 		if (!(ptp->rx_en & 1))
@@ -3708,7 +3718,10 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 		/* Default is to include rx latency in rx timestamp. */
 		if (!(ptp->rx_en & 1))
 			ptp->rx_en |= (1 << 8);
-		ptp->rx_en_ports |= ports;
+		if (ptp->rx_en_ports == ports)
+			++ptp->rx_en_cnt;
+		else
+			ptp->rx_en_ports |= ports;
 		ptp->rx_en |= 1;
 		break;
 	}

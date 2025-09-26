@@ -936,6 +936,8 @@ struct ptp_info {
 	int tx_en;
 	u16 rx_en_ports;
 	u16 tx_en_ports;
+	u8 rx_en_cnt;
+	u8 tx_en_cnt;
 	int utc_offset;
 
 	u32 clk_divider;

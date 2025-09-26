@@ -2077,7 +2077,7 @@ static int hsr_rcv(struct ksz_hsr_info *info, struct sk_buff *skb, int port)
 		from = hsr_port_get_hsr(&info->hsr, pt);
 		return hsr_forward_skb(skb, from);
 	}
-	return 2;
+	return 1;
 }  /* hsr_rcv */
 #endif
 

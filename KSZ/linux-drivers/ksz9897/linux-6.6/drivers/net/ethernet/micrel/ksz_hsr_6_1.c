@@ -2655,6 +2655,7 @@ static int fill_frame_info(struct hsr_frame_info *frame,
 
 	/* Not unicast frame addressed to host. */
 	if (!frame->is_local_exclusive) {
+		struct ksz_sw *sw = info->sw_dev;
 
 		/* May need to change address for lane B. */
 		frame->node_dst = hsr_addr_chk_dest(port->hsr, skb);
@@ -2680,6 +2681,10 @@ static int fill_frame_info(struct hsr_frame_info *frame,
 			if (frame->is_supervision)
 				frame->is_hsr_exclusive = true;
 		}
+
+		/* Do not forward PTP messages to Redbox. */
+		if (get_rx_tag_ptp(&sw->tag))
+			frame->is_hsr_exclusive = true;
 
 		/* Forward to Redbox if supported. */
 		if (port->type != HSR_PT_INTERLINK &&

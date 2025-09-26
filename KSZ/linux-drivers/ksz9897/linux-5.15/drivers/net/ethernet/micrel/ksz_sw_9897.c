@@ -13428,6 +13428,7 @@ static void sw_forward(struct ksz_sw *sw, u8 *addr, u8 *self, u16 proto,
 	int forward = 0;
 
 	/* Already set for PTP message. */
+	/* This causes PTP message received from Redbox not to forward. */
 	if (sw->info->forward)
 		return;
 
@@ -13919,10 +13920,17 @@ static int sw_drv_rx(struct ksz_sw *sw, struct sk_buff *skb, uint port)
 		/* It is an HSR frame or consumed. */
 		if (ret < 2)
 			return ret;
+
 		if (sw->features & HSR_REDBOX) {
 			ret = hsr_chk(&sw->info->hsr, skb, port);
 			if (ret < 2)
 				return ret;
+
+			/* Drop PTP message from Redbox. */
+			if (get_rx_tag_ptp(&sw->tag)) {
+				dev_kfree_skb_irq(skb);
+				return 0;
+			}
 		}
 	}
 #endif
@@ -14199,12 +14207,34 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 	uint p;
 	struct ksz_hsr_info *info = &sw->info->hsr;
 
+#ifdef CONFIG_1588_PTP
+	struct ptp_msg *msg = NULL;
+
+	if (sw->features & PTP_HW) {
+		struct ptp_info *ptp = &sw->ptp_hw;
+
+		if (ptp->tx_msg_parsed) {
+			msg = ptp->tx_msg;
+		} else {
+			msg = check_ptp_msg(skb->data, NULL);
+			ptp->tx_msg_parsed = true;
+			ptp->tx_msg = msg;
+		}
+	}
+#endif
+
 	p = sw->priv_port;
 	i = sw->info->port_cfg[p].index;
 
 	/* Internal forwarding when Redbox is up. */
 	if (info->redbox_up && info->redbox_fwd) {
 		struct net_device **dev = (struct net_device **)skb->cb;
+		bool ptp_msg = false;
+
+#ifdef CONFIG_1588_PTP
+		if (msg)
+			ptp_msg = true;
+#endif
 
 		/* Destination is Redbox. */
 		if (info->redbox && *dev == info->redbox) {
@@ -14220,7 +14250,7 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 		}
 
 		/* Using eth0 to send and not forwarding from eth0. */
-		if (*dev != info->dev) {
+		if (*dev != info->dev && !ptp_msg) {
 			int forward = hsr_fwd(info, skb);
 
 			/* Unicast frame to eth1 so get VLAN for eth1. */
@@ -14237,23 +14267,23 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 	if (sw->eth_cnt && (sw->eth_maps[i].proto & HSR_HW)) {
 		struct hsr_port *from =
 			hsr_port_get_hsr(&info->hsr, HSR_PT_MASTER);
-#ifdef CONFIG_1588_PTP
-		struct ptp_msg *msg;
-		struct ptp_info *ptp = &sw->ptp_hw;
 
-		if (ptp->tx_msg_parsed) {
-			msg = ptp->tx_msg;
-		} else {
-			msg = check_ptp_msg(skb->data, NULL);
-			ptp->tx_msg_parsed = true;
-			ptp->tx_msg = msg;
-		}
+#ifdef CONFIG_1588_PTP
 		if (msg) {
+			if (!info->hsr_up) {
+				dev_kfree_skb_irq(skb);
+				return NULL;
+			}
+
+			/* Expect these PTP messages sent by child device. */
 			if (msg->hdr.messageType != SYNC_MSG &&
 			    msg->hdr.messageType != MANAGEMENT_MSG &&
 			    msg->hdr.messageType != SIGNALING_MSG &&
-			    msg->hdr.messageType != ANNOUNCE_MSG)
+			    msg->hdr.messageType != ANNOUNCE_MSG) {
+				set_tag_ports(sw, tag, info->member, false,
+					      false);
 				return skb;
+			}
 			if (ports_not_matched(sw, tag, (1 << info->ports[0]))) {
 				dev_kfree_skb_irq(skb);
 				return NULL;

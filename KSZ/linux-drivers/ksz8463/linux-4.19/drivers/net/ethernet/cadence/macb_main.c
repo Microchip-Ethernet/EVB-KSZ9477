@@ -604,7 +604,7 @@ static void macb_handle_link_change(struct net_device *dev)
 			status_change = 1;
 		}
 #ifdef CONFIG_KSZ_SWITCH
-		bp->sw_mac.ready = netif_running(dev);
+		bp->sw_mac.port.ready = netif_running(dev);
 #endif
 	}
 

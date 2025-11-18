@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 switch common header
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2013-2015 Micrel, Inc.
@@ -437,7 +437,6 @@ enum {
  */
 struct ksz_port_info {
 	phy_interface_t interface;
-	struct phy_device *phydev;
 	uint state;
 	uint tx_rate;
 	u8 duplex;
@@ -454,7 +453,6 @@ struct ksz_port_info {
 	u8 own_duplex;
 	u16 own_speed;
 	u8 phy_id;
-	u32 report:1;
 	u32 phy:1;
 	u32 fiber:1;
 
@@ -527,16 +525,14 @@ struct ksz_sw_net_ops {
 		char *dev_name, struct ksz_port *port, int i, uint port_cnt,
 		uint mib_port_cnt);
 	void (*leave_dev)(struct ksz_sw *sw);
-	u8 (*get_state)(struct net_device *dev);
-	void (*set_state)(struct net_device *dev, u8 state);
-	struct ksz_port *(*get_priv_port)(struct net_device *dev);
 	int (*get_ready)(struct net_device *dev);
 
 	void (*start)(struct ksz_sw *sw, u8 *addr);
 	int (*stop)(struct ksz_sw *sw, int complete);
-	int (*open_dev)(struct ksz_sw *sw, struct net_device *dev, u8 *addr);
+	int (*open_dev)(struct ksz_sw *sw, struct net_device *dev,
+		struct ksz_port *port, u8 *addr);
 	void (*open_port)(struct ksz_sw *sw, struct net_device *dev,
-		struct ksz_port *port, u8 *state);
+		struct ksz_port *port);
 	void (*close_port)(struct ksz_sw *sw, struct net_device *dev,
 		struct ksz_port *port);
 	void (*open)(struct ksz_sw *sw);
@@ -748,7 +744,6 @@ struct phy_priv {
 #define HSR_REDBOX			BIT(26)
 #define DSA_SUPPORT			BIT(28)
 #define DIFF_MAC_ADDR			BIT(29)
-#define QW_HW				BIT(30)
 #define PTP_HW				BIT(31)
 
 /* Software overrides. */
@@ -760,6 +755,7 @@ struct phy_priv {
 #define UNK_MCAST_BLOCK			BIT(5)
 #define UPDATE_CSUM			BIT(6)
 #define DELAY_UPDATE_LINK		BIT(7)
+#define NO_TX_LOCK			BIT(8)
 
 #define IBA_TEST			BIT(16)
 #define ACL_INTR_MONITOR		BIT(17)
@@ -837,6 +833,8 @@ struct ksz_sw {
 	u32 msg_enable;
 	wait_queue_head_t queue;
 	struct sk_buff_head txq;
+	spinlock_t rx_lock;
+	spinlock_t tx_lock;
 	struct mutex *hwlock;
 	struct mutex *reglock;
 	struct mutex acllock;
@@ -848,8 +846,9 @@ struct ksz_sw {
 	int intr_using;
 
 	struct ksz_sw_info *info;
-	struct ksz_port_info port_info[SWITCH_PORT_NUM];
+	struct ksz_port_info port_info[TOTAL_PORT_NUM];
 	struct net_device *main_dev;
+	struct ksz_port *main_port;
 	struct net_device *netdev[TOTAL_PORT_NUM];
 	struct ksz_port *netport[TOTAL_PORT_NUM];
 	struct phy_device phy_map[TOTAL_PORT_NUM + 1];
@@ -984,20 +983,44 @@ struct ksz_port {
 	u8 duplex;
 	u16 speed;
 	u8 force_link;
+	u8 state;
+	uint iba_ready:1;
+	uint need_mac:1;
+	uint opened:1;
+	uint ready:1;
+	uint report:1;
 	u16 link_ports;
 	u16 live_ports;
 
 	struct ksz_port_info *linked;
 
+	struct ksz_sw *sw;
+
+	struct delayed_work link_update;
 	struct net_device *netdev;
 	struct phy_device *phydev;
-	struct ksz_sw *sw;
-	struct delayed_work link_update;
 };
 
 static inline void sw_update_csum(struct ksz_sw *sw)
 {
 	sw->overrides |= UPDATE_CSUM;
+}
+
+static inline void sw_no_tx_lock(struct ksz_sw *sw)
+{
+	sw->overrides |= NO_TX_LOCK;
+}
+
+static inline void sw_lock_tx(struct ksz_sw *sw)
+{
+	if (!(sw->overrides & NO_TX_LOCK))
+		spin_lock_bh(&sw->tx_lock);
+}
+
+static inline void sw_unlock_tx(struct ksz_sw *sw)
+{
+	if (!(sw->overrides & NO_TX_LOCK))
+		spin_unlock_bh(&sw->tx_lock);
 }
 
 static inline uint get_rx_tag_ports(struct ksz_sw_tx_tag *tag)
@@ -1029,16 +1052,19 @@ static inline void set_tx_tag_queue(struct ksz_sw *sw,
 	tag->ports |= (q << sw->TAIL_TAG_SHIFT);
 }
 
+#ifdef CONFIG_KSZ_HSR
 static inline bool using_hsr(struct ksz_sw *sw)
 {
 	return (sw->features & HSR_HW);
 }
+#endif
 
 static inline bool using_tail_tag(struct ksz_sw *sw)
 {
 	return (sw->overrides & TAIL_TAGGING);
 }
 
+#ifdef CONFIG_KSZ_IBA
 static inline bool iba_stopped(void *ptr)
 {
 	struct ksz_sw *sw = ptr;
@@ -1048,6 +1074,7 @@ static inline bool iba_stopped(void *ptr)
 		return true;
 	return false;
 }
+#endif
 
 struct lan_attributes {
 	int info;
@@ -1071,6 +1098,7 @@ struct lan_attributes {
 	int bcast_per;
 	int mcast_storm;
 	int tx_queue_based;
+	int use_diffserv_map;
 	int diffserv_map;
 	int p_802_1p_map;
 	int vlan;

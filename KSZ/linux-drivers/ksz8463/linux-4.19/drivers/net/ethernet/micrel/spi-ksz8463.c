@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8463 SPI driver
  *
- * Copyright (c) 2015-2021 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -62,8 +62,8 @@
 #define KS8463MLI_DEV0			"ksz8463"
 #define KS8463MLI_DEV2			"ksz8463_2"
 
-#define SW_DRV_RELDATE			"Sep 30, 2021"
-#define SW_DRV_VERSION			"1.2.3"
+#define SW_DRV_RELDATE			"Nov 13, 2025"
+#define SW_DRV_VERSION			"1.2.4"
 
 /* -------------------------------------------------------------------------- */
 

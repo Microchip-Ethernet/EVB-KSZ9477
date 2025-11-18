@@ -1,7 +1,7 @@
 /**
  * Microchip RSTP code
  *
- * Copyright (c) 2016-2019 Microchip Technology Inc.
+ * Copyright (c) 2016-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -602,6 +602,7 @@ static void dbg_stp(struct ksz_stp_port *p, const char *msg, int rx)
 	dbg_msg("%c", reRoot ? 'R' : '.');
 	dbg_msg("%c", tcProp ? 'T' : '.');
 	dbg_msg("%c", rcvdTc ? 'C' : '.');
+	dbg_msg(" %u:%u:%u", fdWhile, rrWhile, tcWhile);
 	dbg_msg("  ");
 	for (rx = 0; rx < NUM_OF_PORT_STATE_MACHINES; rx++)
 		dbg_msg("%2d", p->states[rx]);
@@ -1229,6 +1230,8 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 
 	memcpy(skb->data, stp->tx_frame, len);
 	memcpy(&skb->data[6], info->mac_addr, ETH_ALEN);
+	skb_reset_mac_header(skb);
+	skb_set_network_header(skb, ETH_HLEN);
 
 	skb_put(skb, len);
 	sw->net_ops->add_tail_tag(sw, skb, ports);
@@ -1237,7 +1240,10 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 	do {
 		struct ksz_sw *sw = stp->sw_dev;
 
+		/* Guard against sending during receiving. */
+		spin_lock_bh(&sw->rx_lock);
 		rc = ops->ndo_start_xmit(skb, skb->dev);
+		spin_unlock_bh(&sw->rx_lock);
 		if (NETDEV_TX_BUSY == rc) {
 			rc = wait_event_interruptible_timeout(sw->queue,
 				!netif_queue_stopped(stp->dev),
@@ -2989,6 +2995,10 @@ static void stp_role_tr_root_p_init(struct ksz_stp_port *p)
 	if (mrp_10_1_8a_hack)
 		rrWhile = to_stp_timer(4);
 #endif
+	/* The hack used to pass MRP_10_1_8a uses 4 seconds, but maybe the
+	 * HelloTime should be used here like fdWhile.
+	 */
+	rrWhile = forwardDelay();
 }  /* stp_role_tr_root_p_init */
 
 static void stp_role_tr_root_p_next(struct ksz_stp_port *p,
@@ -3000,6 +3010,10 @@ static void stp_role_tr_root_p_next(struct ksz_stp_port *p,
 	if (mrp_10_1_8a_hack)
 		delay = to_stp_timer(4);
 #endif
+	/* The hack used to pass MRP_10_1_8a uses 4 seconds, but maybe the
+	 * HelloTime should be used here like fdWhile.
+	 */
+	delay = forwardDelay();
 
 	stp_change_state(state,
 		((proposed && !agree) && canChange),

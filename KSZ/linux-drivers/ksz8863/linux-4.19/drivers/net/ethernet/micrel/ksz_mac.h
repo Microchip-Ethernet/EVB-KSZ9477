@@ -14,12 +14,12 @@
 #elif defined(CONFIG_HAVE_KSZ8463)
 #include "ksz_cfg_8463.h"
 #elif defined(CONFIG_HAVE_LAN937X)
-#include "../microchip/lan937x_cfg.h"
+#include "../microchip/lan937x/lan937x_cfg.h"
 #endif
 
 #ifndef CONFIG_KSZ_SWITCH_EMBEDDED
-#ifdef CONFIG_HAVE_LAN937X
-#include "../microchip/lan937x_dev.h"
+#ifdef USE_LAN937X
+#include "../microchip/lan937x/lan937x_dev.h"
 #else
 #include "ksz_spi_net.h"
 #endif
@@ -37,10 +37,10 @@ struct ksz_mac {
 	spinlock_t		tx_lock;
 	int			msg_enable;
 	int			phy_addr;
-	u8			state;
-	u32			ready:1;
 	u32			multi:2;
 	u32			promisc:1;
+	u32			do_hw:1;
+	u32			skip_hw:1;
 	u8			opened;
 	u8			hw_multi;
 	u8			hw_promisc;

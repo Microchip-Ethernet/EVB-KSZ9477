@@ -1,7 +1,7 @@
 /**
  * Microchip switch common header
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -102,6 +102,9 @@ struct ksz_mac_table {
 #define FWD_STP_DEV			(1 << 2)
 #define FWD_MAIN_DEV			(1 << 3)
 #define FWD_VLAN_DEV			(1 << 4)
+#define FWD_MCAST			(1 << 5)
+#define FWD_UCAST			(1 << 6)
+#define FWD_KNOWN			(1 << 7)
 
 struct ksz_alu_table {
 	u8 owner;
@@ -295,7 +298,6 @@ struct ksz_port_info {
 	u8 own_duplex;
 	u16 own_speed;
 	u8 phy_id;
-	u32 report:1;
 	u32 phy:1;
 	u32 fiber:1;
 
@@ -328,18 +330,16 @@ struct ksz_sw_net_ops {
 		int *mib_port_cnt, int *dev_cnt);
 	void (*setup_mdiobus)(struct ksz_sw *sw, void *bus);
 	int (*setup_dev)(struct ksz_sw *sw, struct net_device *dev,
-		char *dev_name, struct ksz_port *port, int i, int port_cnt,
-		int mib_port_cnt);
+		char *dev_name, struct ksz_port *port, int i, uint port_cnt,
+		uint mib_port_cnt);
 	void (*leave_dev)(struct ksz_sw *sw);
-	u8 (*get_state)(struct net_device *dev);
-	void (*set_state)(struct net_device *dev, u8 state);
-	struct ksz_port *(*get_priv_port)(struct net_device *dev);
 
 	void (*start)(struct ksz_sw *sw, u8 *addr);
 	int (*stop)(struct ksz_sw *sw, int complete);
-	int (*open_dev)(struct ksz_sw *sw, struct net_device *dev, u8 *addr);
+	int (*open_dev)(struct ksz_sw *sw, struct net_device *dev,
+		struct ksz_port *port, u8 *addr);
 	void (*open_port)(struct ksz_sw *sw, struct net_device *dev,
-		struct ksz_port *port, u8 *state);
+		struct ksz_port *port);
 	void (*close_port)(struct ksz_sw *sw, struct net_device *dev,
 		struct ksz_port *port);
 	void (*open)(struct ksz_sw *sw);
@@ -496,6 +496,8 @@ struct ksz_sw_cached_regs {
 #define PAUSE_FLOW_CTRL			(1 << 0)
 #define FAST_AGING			(1 << 1)
 #define UPDATE_CSUM			(1 << 2)
+#define HAVE_MORE_THAN_2_PORTS		(1 << 3)
+#define NO_TX_LOCK			(1 << 8)
 
 #define TAIL_PRP_0			(1 << 24)
 #define TAIL_PRP_1			(1 << 25)
@@ -553,6 +555,8 @@ struct ksz_sw {
 	phy_interface_t interface;
 	u32 msg_enable;
 	wait_queue_head_t queue;
+	spinlock_t rx_lock;
+	spinlock_t tx_lock;
 	struct mutex *hwlock;
 	struct mutex *reglock;
 	struct mutex lock;
@@ -561,6 +565,7 @@ struct ksz_sw {
 	struct ksz_sw_info *info;
 	struct ksz_port_info port_info[TOTAL_PORT_NUM];
 	struct net_device *main_dev;
+	struct ksz_port *main_port;
 	struct net_device *netdev[TOTAL_PORT_NUM];
 	struct ksz_port *netport[TOTAL_PORT_NUM];
 	struct phy_device phy_map[TOTAL_PORT_NUM + 1];
@@ -662,6 +667,10 @@ struct ksz_port {
 	u8 duplex;
 	u8 speed;
 	u8 force_link;
+	u8 state;
+	uint opened:1;
+	uint ready:1;
+	uint report:1;
 	u16 link_ports;
 
 	struct ksz_port_info *linked;
@@ -676,6 +685,23 @@ struct ksz_port {
 static inline void sw_update_csum(struct ksz_sw *sw)
 {
 	sw->overrides |= UPDATE_CSUM;
+}
+
+static inline void sw_no_tx_lock(struct ksz_sw *sw)
+{
+	sw->overrides |= NO_TX_LOCK;
+}
+
+static inline void sw_lock_tx(struct ksz_sw *sw)
+{
+	if (!(sw->overrides & NO_TX_LOCK))
+		spin_lock_bh(&sw->tx_lock);
+}
+
+static inline void sw_unlock_tx(struct ksz_sw *sw)
+{
+	if (!(sw->overrides & NO_TX_LOCK))
+		spin_unlock_bh(&sw->tx_lock);
 }
 
 #ifdef CONFIG_KSZ_HSR

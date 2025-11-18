@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common header
  *
- * Copyright (c) 2015-2019 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -655,6 +655,44 @@ struct ptp_irig_info {
 	struct ptp_utime t;
 };
 
+struct ptp_msg_info {
+	struct ptp_msg_hdr hdr;
+	struct ptp_ts ts;
+};
+
+#define MMEDIAN_LEN  10
+
+struct mmedian_data {
+	s64 delays;
+	int order;
+};
+
+struct mmedian {
+	struct mmedian_data data[MMEDIAN_LEN];
+	int index;
+	int cnt;
+	int len;
+};
+
+struct ptp_filter {
+	struct mmedian median;
+	u8 delay_valid;
+	s64 delay;
+};
+
+struct ptp_peer_delay_ts {
+	struct ptp_filter filter;
+	s64 corr;
+	s64 t1;
+	s64 t2;
+	s64 t3;
+	s64 t4;
+	u16 fup_seqid;
+	u16 req_seqid;
+	u16 resp_seqid;
+	u8 domain;
+};
+
 struct ptp_info;
 
 struct ptp_work {
@@ -728,7 +766,7 @@ struct ptp_ops {
 	void (*exit)(struct ptp_info *ptp);
 	int (*stop)(struct ptp_info *ptp, int hw_access);
 	struct ptp_msg *(*check_msg)(u8 *data, u16 **udp_check_ptr);
-	int (*update_msg)(u8 *data, u32 port, u32 overrides);
+	int (*update_msg)(void *ptr, u8 *data, u32 port, u32 overrides);
 	void (*get_rx_tstamp)(void *ptr, struct sk_buff *skb);
 	void (*get_tx_tstamp)(struct ptp_info *ptp, struct sk_buff *skb);
 	int (*hwtstamp_ioctl)(struct ptp_info *ptp, struct ifreq *ifr,
@@ -827,6 +865,10 @@ struct ptp_info {
 	u16 tx_latency[MAX_PTP_PORT];
 	short asym_delay[MAX_PTP_PORT];
 	u16 peer_delay[MAX_PTP_PORT];
+	struct ptp_peer_delay_ts peer_delay_info[MAX_PTP_PORT];
+	struct ptp_msg_info peer_req_info[MAX_PTP_PORT];
+	struct ptp_msg_info peer_resp_info[MAX_PTP_PORT];
+	u16 peer_port[MAX_PTP_PORT];
 
 	struct ptp_msg *rx_msg;
 	int rx_msg_parsed;
@@ -836,6 +878,7 @@ struct ptp_info {
 	u16 seqid_pdelay_resp[MAX_PTP_PORT];
 	u16 seqid_pdelay_resp_fup[MAX_PTP_PORT];
 	int cap;
+	int def_forward;
 	int forward;
 	int op_mode;
 	int op_state;
@@ -891,6 +934,10 @@ struct ptp_info {
 	unsigned long delay_ticks;
 	int rx_en;
 	int tx_en;
+	u16 rx_en_ports;
+	u16 tx_en_ports;
+	u8 rx_en_cnt;
+	u8 tx_en_cnt;
 	int utc_offset;
 
 	u32 clk_divider;
@@ -909,7 +956,19 @@ struct ptp_info {
 	uint features;
 	uint overrides;
 
+	u32 check_1_step_req_help:1;
+	u32 need_1_step_req_help:1;
+	u32 need_1_step_resp_help:1;
+	u32 need_p2p_tc_set_help:1;
+	u32 need_peer_delay_set_help:1;
+	u32 have_first_drift_set:1;
+	u32 use_own_api:1;
+	u32 pdelay_req_rx_1:1;
+	u32 pdelay_req_rx_2:1;
+
 	struct work_struct adj_clk;
+	struct work_struct set_p2p;
+	struct work_struct set_peer_delay;
 
 	const struct ptp_ops *ops;
 	const struct ptp_reg_ops *reg;
@@ -1041,6 +1100,15 @@ struct tsm_get_time {
 	u32 sec;
 	u32 nsec;
 } __packed;
+
+#define PTP_CAN_RX_TIMESTAMP		BIT(0)
+#define PTP_KNOW_ABOUT_LATENCY		BIT(1)
+#define PTP_HAVE_MULT_DEVICES		BIT(2)
+#define PTP_HAVE_MULT_PORTS		BIT(3)
+#define PTP_KNOW_ABOUT_MULT_PORTS	BIT(4)
+#define PTP_USE_RESERVED_FIELDS		BIT(5)
+#define PTP_SEPARATE_PATHS		BIT(6)
+#define PTP_USE_ONE_STEP		BIT(7)
 
 #ifdef __KERNEL__
 struct ptp_attributes {

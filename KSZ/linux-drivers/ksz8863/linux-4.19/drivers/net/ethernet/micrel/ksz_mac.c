@@ -36,12 +36,12 @@ static void get_sysfs_data_(struct net_device *dev,
 #elif defined(CONFIG_HAVE_KSZ8463)
 #include "ksz_sw_sysfs.c"
 #elif defined(CONFIG_HAVE_LAN937X)
-#include "../microchip/lan937x_sw_sysfs.c"
+#include "../microchip/lan937x/lan937x_sw_sysfs.c"
 #endif
 
 #ifdef CONFIG_1588_PTP
-#ifdef CONFIG_HAVE_LAN937X
-#include "../microchip/lan937x_ptp_sysfs.c"
+#ifdef USE_LAN937X
+#include "../microchip/lan937x/lan937x_ptp_sysfs.c"
 #else
 #include "ksz_ptp_sysfs.c"
 #endif
@@ -55,6 +55,11 @@ static void get_sysfs_data_(struct net_device *dev,
 static inline int sw_is_switch(struct ksz_sw *sw)
 {
 	return sw != NULL;
+}
+
+static inline bool is_virt_mac(struct ksz_mac *sw_mac)
+{
+	return (sw_mac->hw_priv && sw_mac != sw_mac->hw_priv);
 }
 
 static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb)
@@ -137,12 +142,14 @@ static void dev_set_multicast(struct ksz_mac *priv, int multicast)
 			++hw_priv->hw_multi;
 		else
 			--hw_priv->hw_multi;
-		priv->multi = multicast;
 
 		/* Turn on/off all multicast mode. */
 		if (hw_priv->hw_multi <= 1 && hw_multi <= 1)
 			hw_set_multicast(hw_priv->dev, hw_priv->hw_multi);
 	}
+
+	/* Can change to 1 from 2. */
+	priv->multi = multicast;
 }  /* dev_set_multicast */
 
 static void dev_set_promisc(struct ksz_mac *priv, int promisc)
@@ -174,6 +181,47 @@ static void promisc_reset_work(struct work_struct *work)
 }  /* promisc_reset_work */
 
 #ifndef KSZ_USE_SUBQUEUE
+#ifdef KSZ_USE_TX_QUEUE
+static void stop_dev_queues(struct ksz_sw *sw, struct net_device *hw_dev,
+			    struct netdev_queue *q)
+{
+	if (sw_is_switch(sw)) {
+		int dev_count = sw->dev_count + sw->dev_offset;
+		struct net_device *net;
+		int p;
+
+		for (p = 0; p < dev_count; p++) {
+			net = sw->netdev[p];
+			if (!net || net == hw_dev)
+				continue;
+			if (netif_running(net)) {
+				netif_tx_stop_queue(q);
+			}
+		}
+	}
+}  /* stop_dev_queues */
+
+static void wake_dev_queues(struct ksz_sw *sw, struct net_device *hw_dev,
+			    struct netdev_queue *q)
+{
+	if (sw_is_switch(sw)) {
+		int dev_count = sw->dev_count + sw->dev_offset;
+		struct net_device *net;
+		int p;
+
+		for (p = 0; p < dev_count; p++) {
+			net = sw->netdev[p];
+			if (!net || net == hw_dev)
+				continue;
+			if (netif_running(net)) {
+				if (netif_tx_queue_stopped(q))
+					netif_tx_wake_queue(q);
+			}
+		}
+		wake_up_interruptible(&sw->queue);
+	}
+}  /* wake_dev_queues */
+#else
 static void stop_dev_queues(struct ksz_sw *sw, struct net_device *hw_dev)
 {
 	if (sw_is_switch(sw)) {
@@ -215,6 +263,7 @@ static void wake_dev_queues(struct ksz_sw *sw, struct net_device *hw_dev)
 		wake_up_interruptible(&sw->queue);
 	}
 }  /* wake_dev_queues */
+#endif
 #else
 static void stop_dev_subqueues(struct ksz_sw *sw, struct net_device *hw_dev,
 			       int q)
@@ -630,11 +679,11 @@ static bool sw_mac_open_first(struct net_device *dev, struct ksz_mac *priv,
 		struct net_device *main_dev = hw_priv->net;
 
 		/* Need to wait for adjust_link to start operation. */
-		hw_priv->ready = false;
+		hw_priv->port.ready = false;
 		hw_priv->hw_multi = 0;
 		hw_priv->hw_promisc = 0;
 		sw_reset_mac_mib(hw_priv);
-		*rx_mode = sw->net_ops->open_dev(sw, main_dev,
+		*rx_mode = sw->net_ops->open_dev(sw, main_dev, &hw_priv->port,
 						 main_dev->dev_addr);
 	}
 	return false;
@@ -654,12 +703,12 @@ static void sw_mac_open_next(struct ksz_sw *sw, struct ksz_mac *hw_priv,
 		}
 		sw->net_ops->open(sw);
 	}
-}  /* sw_mac_open_second */
+}  /* sw_mac_open_next */
 
 static bool sw_mac_open_final(struct ksz_sw *sw, struct net_device *dev,
 			      struct ksz_mac *hw_priv, struct ksz_mac *priv)
 {
-	sw->net_ops->open_port(sw, dev, &priv->port, &priv->state);
+	sw->net_ops->open_port(sw, dev, &priv->port);
 	hw_priv->opened++;
 	return (hw_priv->opened > 1);
 }  /* sw_mac_open_final */
@@ -734,7 +783,7 @@ static bool sw_mac_close(struct net_device *dev, struct ksz_mac *priv, int iba)
 	}
 
 	/* Reset ready indication. */
-	hw_priv->ready = false;
+	hw_priv->port.ready = false;
 
 	/* Last network device to turn off is not the first. */
 	if (dev != sw->netdev[0]) {
@@ -748,6 +797,142 @@ static bool sw_mac_close(struct net_device *dev, struct ksz_mac *priv, int iba)
 	}
 	return false;
 }
+
+#ifdef KSZ_USE_CLOSE_HW
+static void sw_mac_close_for_hw(struct ksz_mac *priv, struct net_device **dev)
+{
+	struct net_device *found = NULL, *net;
+	struct ksz_sw *sw = priv->port.sw;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return;
+
+	/* Find which network device is running. */
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		net = sw->netdev[i];
+		if (!net)
+			continue;
+		if (netif_running(net)) {
+			found = net;
+			break;
+		}
+	}
+	if (!found)
+		return;
+	priv->hw_priv->do_hw = 1;
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		net = sw->netdev[i];
+		if (!net)
+			continue;
+		if (net != found && netif_running(net)) {
+			netif_tx_disable(net);
+		}
+	}
+	*dev = found;
+}
+
+static void sw_mac_open_for_hw(struct ksz_mac *priv, struct net_device *dev)
+{
+	struct ksz_port *port = &priv->port;
+	struct ksz_sw *sw = priv->port.sw;
+	struct net_device *net;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return;
+	priv->hw_priv->do_hw = 0;
+
+	/* Find which network device is running. */
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		net = sw->netdev[i];
+		if (!net)
+			continue;
+		if (net != dev && netif_running(net)) {
+			netif_tx_start_all_queues(net);
+		}
+	}
+
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	if (sw->phylink_ops) {
+		const struct phylink_mac_ops *ops = sw->phylink_ops;
+		struct phylink_link_state *state;
+		unsigned int mode = MLO_AN_PHY;
+		struct phylink_config *config;
+		bool rx_pause = true;
+		bool tx_pause = true;
+
+		config = &port->pl_config;
+		state = &port->pl_state;
+		port->pl_config.get_fixed_state(config, state);
+		ops->mac_link_up(config, port->phydev, mode,
+				 sw->interface,
+				 state->speed, state->duplex,
+				 tx_pause, rx_pause);
+	}
+#endif
+
+	/* netif_carrier_off was called so need to check link to turn it on. */
+	port->report = true;
+	schedule_delayed_work(&port->link_update, 0);
+}
+#endif
+
+#ifdef KSZ_USE_COMPLETED_QUEUE
+static unsigned int dev_bytes[TOTAL_PORT_NUM];
+static unsigned int dev_pkts[TOTAL_PORT_NUM];
+
+static void sw_init_queue_len(struct ksz_mac *priv)
+{
+	struct ksz_sw *sw = priv->port.sw;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return;
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		dev_bytes[i] = dev_pkts[i] = 0;
+	}
+}
+
+static void sw_update_queue_len(struct ksz_mac *priv, struct sk_buff *skb)
+{
+	struct ksz_sw *sw = priv->port.sw;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return;
+
+#ifdef CONFIG_KSZ_IBA
+	if (skb->protocol == htons(IBA_TAG_TYPE))
+		return;
+#endif
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		if (sw->netdev[i] == skb->dev) {
+			dev_pkts[i]++;
+			dev_bytes[i] += skb->len;
+			break;
+		}
+	}
+}
+
+static bool sw_completed_queue(struct ksz_mac *priv, u32 queue)
+{
+	struct ksz_sw *sw = priv->port.sw;
+	struct net_device *net;
+	int i;
+
+	if (!sw_is_switch(sw))
+		return false;
+	for (i = 0; i < sw->dev_count + sw->dev_offset; i++) {
+		net = sw->netdev[i];
+		if (!dev_pkts[i])
+			continue;
+		netdev_tx_completed_queue(netdev_get_tx_queue(net, queue),
+					  dev_pkts[i], dev_bytes[i]);
+	}
+	return true;
+}
+#endif
 
 #ifndef CONFIG_KSZ_NO_MDIO_BUS
 static int mdio_read(struct net_device *dev, int phy_id, int reg_num)
@@ -778,33 +963,12 @@ static void mdio_write(struct net_device *dev, int phy_id, int reg_num, int val)
 static void sw_adjust_link(struct net_device *dev)
 {}
 
-static u8 get_priv_state(struct net_device *dev)
-{
-	struct ksz_mac *priv = get_netdev_priv(dev);
-
-	return priv->state;
-}  /* get_priv_state */
-
-static void set_priv_state(struct net_device *dev, u8 state)
-{
-	struct ksz_mac *priv = get_netdev_priv(dev);
-
-	priv->state = state;
-}  /* set_priv_state */
-
-static struct ksz_port *get_priv_port(struct net_device *dev)
-{
-	struct ksz_mac *priv = get_netdev_priv(dev);
-
-	return &priv->port;
-}  /* get_priv_port */
-
 #if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 static int get_net_ready(struct net_device *dev)
 {
 	struct ksz_mac *priv = get_netdev_priv(dev);
 
-	return priv->hw_priv->ready;
+	return priv->hw_priv->port.ready;
 }  /* get_net_ready */
 #endif
 
@@ -815,9 +979,6 @@ static void prep_sw_first(struct ksz_sw *sw, int *port_count,
 	*mib_port_count = 1;
 	*dev_count = 1;
 	dev_name[0] = '\0';
-	sw->net_ops->get_state = get_priv_state;
-	sw->net_ops->set_state = set_priv_state;
-	sw->net_ops->get_priv_port = get_priv_port;
 #if defined(CONFIG_HAVE_KSZ9897) || defined(CONFIG_HAVE_LAN937X)
 	sw->net_ops->get_ready = get_net_ready;
 #endif
@@ -891,8 +1052,6 @@ static int get_sw_irq(struct device **ext_dev)
 #endif
 
 #ifdef CONFIG_KSZ_IBA_ONLY
-static int not_ready;
-
 /**
  * netdev_start_iba - Start using IBA for register access
  *
@@ -903,7 +1062,8 @@ static void netdev_start_iba(struct work_struct *work)
 	struct delayed_work *dwork = to_delayed_work(work);
 	struct ksz_sw *sw = container_of(dwork, struct ksz_sw, set_ops);
 	struct ksz_iba_info *iba = &sw->info->iba;
-	struct net_device *dev;
+	struct net_device *dev = sw->main_dev;
+	struct ksz_port *port = sw->main_port;
 	struct ksz_mac *priv;
 	int rx_mode;
 
@@ -911,20 +1071,19 @@ static void netdev_start_iba(struct work_struct *work)
 		return;
 
 	/* Communication is not ready if a cable connection is used. */
-	if (sw->net_ops->get_ready && !sw->net_ops->get_ready(iba->dev)) {
-		not_ready = true;
+	if (!port->ready) {
+		port->iba_ready = false;
 		schedule_delayed_work(&sw->set_ops, 1);
 		return;
 	}
 
 	/* Need some time after link is established. */
-	if (not_ready) {
-		not_ready = false;
+	if (!port->iba_ready) {
+		port->iba_ready = true;
 		schedule_delayed_work(&sw->set_ops, 10);
 		return;
 	}
 
-	dev = sw->netdev[0];
 	priv = get_netdev_priv(dev);
 
 	sw->reg = &sw_iba_ops;
@@ -953,7 +1112,7 @@ static void netdev_start_iba(struct work_struct *work)
 	priv->hw_multi = 0;
 	priv->hw_promisc = 0;
 	sw_reset_mac_mib(priv);
-	rx_mode = sw->net_ops->open_dev(sw, dev, dev->dev_addr);
+	rx_mode = sw->net_ops->open_dev(sw, dev, &priv->port, dev->dev_addr);
 	if (rx_mode & 1) {
 		priv->hw_multi = 1;
 		hw_set_multicast(priv->dev, priv->hw_multi);
@@ -964,7 +1123,7 @@ static void netdev_start_iba(struct work_struct *work)
 	}
 	sw->net_ops->open(sw);
 
-	sw->net_ops->open_port(sw, dev, &priv->port, &priv->state);
+	sw->net_ops->open_port(sw, dev, &priv->port);
 	priv->opened++;
 
 	/* set_rx_mode is called before open. */
@@ -1002,11 +1161,11 @@ static int create_sw_dev(struct net_device *dev, struct ksz_mac *priv)
 	if (ret)
 		return ret;
 
-	sw->net_ops->get_state = get_priv_state;
-	sw->net_ops->set_state = set_priv_state;
-	sw->net_ops->get_priv_port = get_priv_port;
 	sw->net_ops->get_ready = get_net_ready;
 	sw->netdev[0] = dev;
+	sw->netport[0] = &priv->port;
+	sw->main_dev = dev;
+	sw->main_port = &priv->port;
 	sw->dev_count = 1;
 
 	INIT_DELAYED_WORK(&sw->set_ops, netdev_start_iba);
@@ -1016,7 +1175,7 @@ static int create_sw_dev(struct net_device *dev, struct ksz_mac *priv)
 	priv->parent = sw->dev;
 	priv->port.sw = sw;
 
-	not_ready = false;
+	sw->main_port->iba_ready = true;
 
 #ifdef DEBUG_MSG
 	init_dbg();
@@ -1118,8 +1277,8 @@ static void sw_mac_remove(struct net_device *dev, struct ksz_mac *priv)
 		if (sw->info->iba.use_iba >= IBA_USE_CODE_ONLY)
 			sw->info->iba.use_iba = IBA_USE_CODE_LOST;
 		else if (sw->info->iba.use_iba == IBA_USE_CODE_ON)
-			sw->net_ops->close_port(sw, sw->netdev[0],
-						sw->netport[0]);
+			sw->net_ops->close_port(sw, sw->main_dev,
+						sw->main_port);
 #endif
 
 		/* Remove all other network devices. */

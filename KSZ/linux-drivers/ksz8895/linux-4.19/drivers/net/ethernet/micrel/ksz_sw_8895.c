@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8895 switch common code
  *
- * Copyright (c) 2015-2024 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -1980,23 +1980,21 @@ static void sw_flush_dyn_mac_table(struct ksz_sw *sw, uint port)
 	int learn_disable[TOTAL_PORT_NUM];
 
 	if (port < sw->port_cnt) {
-		first = get_log_port(sw, port);
+		first = port;
 		cnt = first + 1;
 	} else {
 		first = 0;
 		cnt = sw->mib_port_cnt + 1;
 	}
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		learn_disable[port] = port_chk_dis_learn(sw, port);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 1);
+		learn_disable[index] = port_chk_dis_learn(sw, index);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 1);
 	}
 	sw_cfg(sw, S_FLUSH_TABLE_CTRL, SW_FLUSH_DYN_MAC_TABLE, 1);
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 0);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 0);
 	}
 }  /* sw_flush_dyn_mac_table */
 
@@ -3443,7 +3441,6 @@ static int port_get_link_speed(struct ksz_port *port)
 			}
 			info->state = media_disconnected;
 		}
-		info->report = true;
 		info->advertised = local;
 		info->partner = remote;
 		info->link = link;
@@ -3459,6 +3456,7 @@ static int port_get_link_speed(struct ksz_port *port)
 #endif
 	/* Only update for regular port. */
 	if (change && port->first_port <= sw->mib_port_cnt) {
+		port->report = true;
 		port->link_ports |= change;
 	}
 	return change;
@@ -6568,14 +6566,18 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (dest && (sw->overrides & UPDATE_CSUM)) {
 		__sum16 *csum_loc = (__sum16 *)
 			(skb->head + skb->csum_start + skb->csum_offset);
+		int csum = ntohs(*csum_loc);
+		__sum16 new_csum;
 
-		/* Checksum is cleared by driver to be filled by hardware. */
-		if (!*csum_loc) {
-			__sum16 new_csum;
-
+		if (skb->len & 1)
 			new_csum = dest << 8;
-			*csum_loc = ~htons(new_csum);
-		}
+		else
+			new_csum = dest;
+		csum += new_csum;
+		csum = (csum >> 16) + (csum & 0xffff);
+		csum += (csum >> 16);
+		new_csum = (__sum16) csum;
+		*csum_loc = ~htons(new_csum);
 	}
 	return skb;
 }  /* sw_check_skb */
@@ -6592,7 +6594,9 @@ static struct sk_buff *sw_check_tx(struct ksz_sw *sw, struct net_device *dev,
 static struct sk_buff *sw_final_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct net_device *dev, struct ksz_port *port)
 {
+	sw_lock_tx(sw);
 	skb = sw->net_ops->check_tx(sw, dev, skb, port);
+	sw_unlock_tx(sw);
 	if (!skb)
 		return NULL;
 	return skb;
@@ -6758,13 +6762,15 @@ static void sw_init_mib(struct ksz_sw *sw)
 	sw->port_state[sw->HOST_PORT].state = media_connected;
 }  /* sw_init_mib */
 
-static int sw_open_dev(struct ksz_sw *sw, struct net_device *dev, u8 *addr)
+static int sw_open_dev(struct ksz_sw *sw, struct net_device *dev,
+	struct ksz_port *port, u8 *addr)
 {
 	int mode = 0;
 
 	sw_init_mib(sw);
 
 	sw->main_dev = dev;
+	sw->main_port = port;
 	sw->net_ops->start(sw, addr);
 	if (sw->dev_count > 1)
 		mode |= 1;
@@ -6774,13 +6780,15 @@ static int sw_open_dev(struct ksz_sw *sw, struct net_device *dev, u8 *addr)
 }  /* sw_open_dev */
 
 static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
-	struct ksz_port *port, u8 *state)
+	struct ksz_port *port)
 {
 	uint i;
 	uint n;
 	uint p;
 	struct ksz_port_info *info;
+	struct ksz_port_info *host;
 
+	host = get_port_info(sw, sw->HOST_PORT);
 	for (i = 0, n = port->first_port; i < port->port_cnt; i++, n++) {
 		p = get_phy_port(sw, n);
 		info = get_port_info(sw, p);
@@ -6790,7 +6798,8 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 		 */
 		info->link = 0xFF;
 		info->state = media_unknown;
-		info->report = true;
+		info->tx_rate = host->tx_rate;
+		info->duplex = host->duplex;
 		if (port->port_cnt == 1) {
 			if (sw->netdev[0]) {
 				struct ksz_port *sw_port = sw->netport[0];
@@ -6808,21 +6817,21 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 			}
 		}
 	}
-	info = get_port_info(sw, sw->HOST_PORT);
-	info->report = true;
+	port->opened = true;
+	port->report = true;
 
 	sw->ops->acquire(sw);
 
 	/* Need to open the port in multiple device interfaces mode. */
 	if (sw->dev_count > 1 && (!sw->dev_offset || dev != sw->netdev[0])) {
-		*state = STP_STATE_SIMPLE;
+		port->state = STP_STATE_SIMPLE;
 		if (sw->dev_offset && !(sw->features & STP_SUPPORT)) {
-			*state = STP_STATE_FORWARDING;
+			port->state = STP_STATE_FORWARDING;
 		}
 		if (sw->features & SW_VLAN_DEV) {
 			p = get_phy_port(sw, port->first_port);
 			i = sw->info->port_cfg[p].index;
-			*state = STP_STATE_FORWARDING;
+			port->state = STP_STATE_FORWARDING;
 		}
 		for (i = 0, n = port->first_port; i < port->port_cnt;
 		     i++, n++) {
@@ -6830,10 +6839,11 @@ static void sw_open_port(struct ksz_sw *sw, struct net_device *dev,
 			sw->dev_ports |= (1 << p);
 #ifdef CONFIG_KSZ_STP
 			if (sw->features & STP_SUPPORT) {
-				stp_enable_port(&sw->info->rstp, p, state);
+				stp_enable_port(&sw->info->rstp, p,
+						&port->state);
 			}
 #endif
-			port_set_stp_state(sw, p, *state);
+			port_set_stp_state(sw, p, port->state);
 		}
 	} else if (sw->dev_count == 1) {
 		sw->dev_ports = sw->PORT_MASK;
@@ -6859,6 +6869,8 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 #ifdef CONFIG_KSZ_MRP
 	struct mrp_info *mrp = &sw->mrp;
 #endif
+
+	port->opened = false;
 
 	/* Need to shut the port manually in multiple device interfaces mode. */
 	if (sw->dev_count > 1 && (!sw->dev_offset || dev != sw->netdev[0])) {
@@ -7599,6 +7611,45 @@ static void sw_exit_dev(struct ksz_sw *sw)
 		exit_sw_dev(sw->id, sw->dev_major, sw->dev_name);
 }  /* sw_exit_dev */
 
+static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
+			   struct ksz_port_info *info)
+{
+	struct ksz_port_info *linked = port->linked;
+	struct phy_device *phydev = port->phydev;
+	struct net_device *dev = port->netdev;
+	int phy_link = 0;
+	int link;
+
+	phydev->link = (info->state == media_connected);
+	phydev->speed = info->tx_rate / TX_RATE_UNIT;
+	if (!phydev->speed)
+		phydev->speed = 10;
+	phydev->duplex = (info->duplex == 2);
+
+	if (phydev->link)
+		phy_link = (linked->state == media_connected);
+	if (phydev->adjust_link && phydev->attached_dev &&
+	    port->report) {
+		phydev->adjust_link(phydev->attached_dev);
+	}
+	link = netif_carrier_ok(dev);
+	if (port->report) {
+		port->report = false;
+		link = !phy_link;
+	}
+	if (phy_link == link)
+		return;
+
+	if (netif_msg_link(sw))
+		pr_info("%s link %s"NL,
+			dev->name,
+			phy_link ? "on" : "off");
+	if (phy_link)
+		netif_carrier_on(dev);
+	else
+		netif_carrier_off(dev);
+}  /* sw_report_link */
+
 static void link_update_work(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
@@ -7606,33 +7657,16 @@ static void link_update_work(struct work_struct *work)
 		container_of(dwork, struct ksz_port, link_update);
 	struct ksz_sw *sw = port->sw;
 	struct ksz_port_info *info;
-	struct phy_device *phydev;
-	struct net_device *dev;
-	uint i;
-	uint p;
-	int link;
 
-	sw_notify_link_change(sw, port->link_ports);
-
-	for (i = 1; i <= sw->mib_port_cnt; i++) {
-		p = get_phy_port(sw, i);
-		info = get_port_info(sw, p);
-
-		if (!info->report)
-			continue;
-		info->report = false;
-		phydev = sw->phy[p + 1];
-		if (!phydev)
-			continue;
-		phydev->link = (info->state == media_connected);
-		phydev->speed = info->tx_rate / TX_RATE_UNIT;
-		phydev->duplex = (info->duplex == 2);
-	}
+	/* Netdevice associated with port was closed. */
+	if (!port->opened)
+		goto do_main;
 
 	if (sw->dev_offset && sw->netport[0]) {
 		int dev_cnt = sw->dev_count + sw->dev_offset;
 		struct ksz_port *sw_port = sw->netport[0];
 		struct ksz_port *dev_port;
+		int i;
 
 		for (i = sw->dev_offset; i < dev_cnt; i++) {
 			struct phy_priv *phydata;
@@ -7642,43 +7676,17 @@ static void link_update_work(struct work_struct *work)
 				phydata = &sw->phydata[i];
 				dev_port = phydata->port;
 			}
-			if (media_connected == dev_port->linked->state &&
-			    dev_port->linked->phy) {
-
-				/* Indicate a linked port is found .*/
+			if (media_connected == dev_port->linked->state) {
 				sw_port->linked = dev_port->linked;
 				break;
 			}
 		}
 	}
 
-	info = port->linked;
-	phydev = port->phydev;
-	phydev->link = (info->state == media_connected);
-	phydev->speed = info->tx_rate / TX_RATE_UNIT;
-	phydev->duplex = (info->duplex == 2);
-	dev = port->netdev;
-	if (dev && netif_running(dev)) {
+	sw_notify_link_change(sw, port->link_ports);
 
-		/* Not using PHY provided by the switch driver. */
-		if (dev->phydev && dev->phydev != phydev &&
-		    phy_is_internal(dev->phydev)) {
-			dev->phydev->link = phydev->link;
-			dev->phydev->speed = phydev->speed;
-			dev->phydev->duplex = phydev->duplex;
-		}
-		link = netif_carrier_ok(dev);
-		if (link != phydev->link) {
-			if (phydev->link)
-				netif_carrier_on(dev);
-			else
-				netif_carrier_off(dev);
-			if (netif_msg_link(sw))
-				pr_info("%s link %s\n",
-					dev->name,
-					phydev->link ? "on" : "off");
-		}
-	}
+	if ((!sw->dev_offset || port != sw->netport[0]) && port->netdev)
+		sw_report_link(sw, port, port->linked);
 
 #ifdef CONFIG_KSZ_STP
 	if (sw->features & STP_SUPPORT) {
@@ -7687,51 +7695,17 @@ static void link_update_work(struct work_struct *work)
 		stp->ops->link_change(stp, true);
 	}
 #endif
+
+do_main:
 	port->link_ports = 0;
 
+	/* There is an extra network device for the main device. */
 	/* The switch is always linked; speed and duplex are also fixed. */
-	phydev = NULL;
-	dev = sw->netdev[0];
-	if (dev)
-		phydev = dev->phydev;
-	if (phydev) {
-		int phy_link = 0;
-
+	if (sw->dev_offset) {
 		port = sw->netport[0];
-
-		/* phydev settings may be changed by ethtool. */
-		info = get_port_info(sw, sw->HOST_PORT);
-#if 0
-		/* Need a way to know the PHY port is actually used. */
-		phydev->link = (info->state == media_connected);
-		phydev->speed = info->tx_rate / TX_RATE_UNIT;
-		phydev->duplex = (info->duplex == 2);
-#else
-		phydev->link = 1;
-		phydev->speed = SPEED_100;
-		phydev->duplex = 1;
-#endif
-		phydev->pause = 1;
-		if (phydev->link)
-			phy_link = (port->linked->state == media_connected);
-		link = netif_carrier_ok(dev);
-		if (link != phy_link) {
-			if (netif_msg_link(sw))
-				pr_info("%s link %s\n",
-					dev->name,
-					phy_link ? "on" : "off");
-		}
-		if (phydev->adjust_link && phydev->attached_dev &&
-		    info->report) {
-			phydev->adjust_link(phydev->attached_dev);
-			info->report = false;
-		}
-		link = netif_carrier_ok(dev);
-		if (link != phy_link) {
-			if (phy_link)
-				netif_carrier_on(dev);
-			else
-				netif_carrier_off(dev);
+		if (port && port->opened && netif_running(port->netdev)) {
+			info = get_port_info(sw, sw->HOST_PORT);
+			sw_report_link(sw, port, info);
 		}
 	}
 }  /* link_update_work */
@@ -7860,7 +7834,7 @@ static void ksz_setup_logical_ports(struct ksz_sw *sw, u8 id, uint ports)
 		info->log_p = l;
 		info->log_m = 0;
 	}
-	n = (1 << n) - 1;
+	n = (1 << cnt) - 1;
 	ports &= n;
 	for (i = 0, n = 0; n <= sw->port_cnt; n++) {
 		if (n > 0) {
@@ -8183,8 +8157,8 @@ static void sw_leave_dev(struct ksz_sw *sw)
 }  /* sw_leave_dev */
 
 static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
-	char *dev_name, struct ksz_port *port, int i, int port_cnt,
-	int mib_port_cnt)
+	char *dev_name, struct ksz_port *port, int i, uint port_cnt,
+	uint mib_port_cnt)
 {
 	struct ksz_port_info *info;
 	uint cnt;
@@ -8301,15 +8275,6 @@ dbg_msg("%s %d:%d phy:%d\n", __func__, port->first_port, port->port_cnt, phy_id)
 	return phy_id;
 }  /* sw_setup_dev */
 
-static u8 sw_get_priv_state(struct net_device *dev)
-{
-	return STP_STATE_SIMPLE;
-}
-
-static void sw_set_priv_state(struct net_device *dev, u8 state)
-{
-}
-
 static int netdev_chk_running(struct net_device *dev)
 {
 	return netif_running(dev);
@@ -8359,26 +8324,21 @@ static void sw_netdev_oper(struct ksz_sw *sw, struct net_device *dev,
 static void sw_netdev_open_port(struct ksz_sw *sw, struct net_device *dev)
 {
 	struct ksz_port *port;
-	u8 state;
 	int p;
 	int dev_count = 1;
 
 	dev_count = sw->dev_count + sw->dev_offset;
 	if (dev_count <= 1) {
-		port = sw->net_ops->get_priv_port(dev);
-		state = sw->net_ops->get_state(dev);
-		sw->net_ops->open_port(sw, dev, port, &state);
-		sw->net_ops->set_state(dev, state);
+		port = sw->netport[0];
+		sw->net_ops->open_port(sw, dev, port);
 		return;
 	}
 	for (p = 0; p < dev_count; p++) {
 		dev = sw->netdev[p];
 		if (!dev)
 			continue;
-		port = sw->net_ops->get_priv_port(dev);
-		state = sw->net_ops->get_state(dev);
-		sw->net_ops->open_port(sw, dev, port, &state);
-		sw->net_ops->set_state(dev, state);
+		port = sw->netport[p];
+		sw->net_ops->open_port(sw, dev, port);
 	}
 }  /* sw_netdev_open_port */
 
@@ -8401,8 +8361,6 @@ static struct ksz_sw_net_ops sw_net_ops = {
 	.setup_special		= sw_setup_special,
 	.setup_dev		= sw_setup_dev,
 	.leave_dev		= sw_leave_dev,
-	.get_state		= sw_get_priv_state,
-	.set_state		= sw_set_priv_state,
 
 	.start			= sw_start,
 	.stop			= sw_stop,
@@ -8965,7 +8923,9 @@ static int ksz_mii_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
 					break;
 				}
 			}
-dbg_msg(" %d f:%d l:%d\n", phy_id, first, last);
+#if 0
+dbg_msg(" %d f:%d l:%d; %x %04x\n", phy_id, first, last, regnum, val);
+#endif
 		}
 
 		/* PHY device driver resets or powers down the PHY. */
@@ -9077,10 +9037,9 @@ static int ksz_mii_init(struct sw_priv *ks)
 	for (i = 0; i < PHY_MAX_ADDR; i++) {
 		phydev = mdiobus_get_phy(bus, i);
 		if (phydev) {
-			struct phy_priv *priv = &ks->sw.phydata[i];
+			struct phy_priv *priv = phydev->priv;
 
 			priv->state = phydev->state;
-			phydev->priv = priv;
 		}
 	}
 
@@ -9395,6 +9354,8 @@ static int ksz_probe(struct sw_priv *ks)
 
 	sw = &ks->sw;
 	mutex_init(&sw->lock);
+	spin_lock_init(&sw->rx_lock);
+	spin_lock_init(&sw->tx_lock);
 	sw->hwlock = &ks->hwlock;
 	sw->reglock = &ks->lock;
 	sw->dev = ks;
@@ -9482,9 +9443,8 @@ dbg_msg("ports: %x\n", ports);
 		info = get_port_info(sw, pi);
 		info->link = 0xFF;
 		info->state = media_disconnected;
-		info->report = true;
 	}
-	sw->interface = PHY_INTERFACE_MODE_MII;
+	sw->interface = PHY_INTERFACE_MODE_RMII;
 	pi = sw->HOST_PORT;
 	info = get_port_info(sw, pi);
 	info->tx_rate = 100 * TX_RATE_UNIT;

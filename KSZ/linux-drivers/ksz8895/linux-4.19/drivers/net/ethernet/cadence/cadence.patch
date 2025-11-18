@@ -60,7 +60,7 @@ diff -Napur linux-4.19.207-orig/drivers/net/ethernet/cadence/macb.h linux-4.19.2
  #ifdef CONFIG_MACB_USE_HWSTAMP
 diff -Napur linux-4.19.207-orig/drivers/net/ethernet/cadence/macb_main.c linux-4.19.207/drivers/net/ethernet/cadence/macb_main.c
 --- linux-4.19.207-orig/drivers/net/ethernet/cadence/macb_main.c	2021-09-22 02:48:14.000000000 -0700
-+++ linux-4.19.207/drivers/net/ethernet/cadence/macb_main.c	2023-12-06 23:39:21.374891847 -0800
++++ linux-4.19.207/drivers/net/ethernet/cadence/macb_main.c	2025-11-17 15:45:19.249943251 -0800
 @@ -36,8 +36,173 @@
  #include <linux/ip.h>
  #include <linux/udp.h>
@@ -240,7 +240,7 @@ diff -Napur linux-4.19.207-orig/drivers/net/ethernet/cadence/macb_main.c linux-4
  			status_change = 1;
  		}
 +#ifdef CONFIG_KSZ_SWITCH
-+		bp->sw_mac.ready = netif_running(dev);
++		bp->sw_mac.port.ready = netif_running(dev);
 +#endif
  	}
  

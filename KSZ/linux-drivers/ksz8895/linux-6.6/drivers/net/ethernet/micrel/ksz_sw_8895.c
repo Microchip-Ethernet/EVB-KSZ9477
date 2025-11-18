@@ -1984,23 +1984,21 @@ static void sw_flush_dyn_mac_table(struct ksz_sw *sw, uint port)
 	int learn_disable[TOTAL_PORT_NUM];
 
 	if (port < sw->port_cnt) {
-		first = get_log_port(sw, port);
+		first = port;
 		cnt = first + 1;
 	} else {
 		first = 0;
 		cnt = sw->mib_port_cnt + 1;
 	}
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		learn_disable[port] = port_chk_dis_learn(sw, port);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 1);
+		learn_disable[index] = port_chk_dis_learn(sw, index);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 1);
 	}
 	sw_cfg(sw, S_FLUSH_TABLE_CTRL, SW_FLUSH_DYN_MAC_TABLE, 1);
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 0);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 0);
 	}
 }  /* sw_flush_dyn_mac_table */
 
@@ -7068,6 +7066,9 @@ static void sw_start(struct ksz_sw *sw, const u8 *addr)
 		struct sw_priv *ks = sw->dev;
 		int ret;
 
+		/* Interrupt is already started. */
+		if (ks->irq_work.func)
+			break;
 		ret = sw_start_interrupt(ks, dev_name(ks->dev));
 		if (ret < 0) {
 			printk(KERN_WARNING "No switch interrupt"NL);
@@ -7393,8 +7394,10 @@ dbg_msg(" found eth\n");
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 				/* Save the device node. */
 				sw->devnode[reg] = port;
+#endif
 				cnt++;
 			}
 		}
@@ -8960,9 +8963,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	sw->netport[i] = port;
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	if (phy_id)
 		port->dn = sw->devnode[phy_id - 1];
-#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	setup_phylink(port);
 #endif
 	if (sw->dev_count > 1 && i && !(sw->features & DIFF_MAC_ADDR)) {

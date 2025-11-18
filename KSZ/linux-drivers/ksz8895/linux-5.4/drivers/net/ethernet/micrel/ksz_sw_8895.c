@@ -1984,23 +1984,21 @@ static void sw_flush_dyn_mac_table(struct ksz_sw *sw, uint port)
 	int learn_disable[TOTAL_PORT_NUM];
 
 	if (port < sw->port_cnt) {
-		first = get_log_port(sw, port);
+		first = port;
 		cnt = first + 1;
 	} else {
 		first = 0;
 		cnt = sw->mib_port_cnt + 1;
 	}
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		learn_disable[port] = port_chk_dis_learn(sw, port);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 1);
+		learn_disable[index] = port_chk_dis_learn(sw, index);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 1);
 	}
 	sw_cfg(sw, S_FLUSH_TABLE_CTRL, SW_FLUSH_DYN_MAC_TABLE, 1);
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 0);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 0);
 	}
 }  /* sw_flush_dyn_mac_table */
 
@@ -7130,7 +7128,7 @@ static void sw_init_mib(struct ksz_sw *sw)
 	sw->port_state[sw->HOST_PORT].state = media_connected;
 }  /* sw_init_mib */
 
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 				   unsigned long *supported,
 				   struct phylink_link_state *state)
@@ -7336,8 +7334,10 @@ dbg_msg(" found eth\n");
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 				/* Save the device node. */
 				sw->devnode[reg] = port;
+#endif
 			}
 		}
 	}
@@ -7493,7 +7493,7 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 
 static void sw_open(struct ksz_sw *sw)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw_init_phylink(sw, sw->main_port);
 #endif
 #ifdef CONFIG_KSZ_MRP
@@ -7514,7 +7514,7 @@ static void sw_open(struct ksz_sw *sw)
 
 static void sw_close(struct ksz_sw *sw)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw_exit_phylink(sw, sw->main_port);
 #endif
 #ifdef CONFIG_KSZ_MRP
@@ -8205,7 +8205,7 @@ static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
 		phydev->speed = 10;
 	phydev->duplex = (info->duplex == 2);
 
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	/* Not started yet. */
 	if (sw->phylink_ops && port != sw->main_port &&
 	    phydev->state == PHY_READY)
@@ -8718,7 +8718,7 @@ static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
 	int *mib_port_cnt, int *dev_cnt,
 	const void *phylink_ops)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw->phylink_ops = phylink_ops;
 #endif
 	phy_offset = 0;
@@ -8759,7 +8759,7 @@ static void sw_leave_dev(struct ksz_sw *sw)
 	int dev_count = sw->dev_count + sw->dev_offset;
 	struct sw_priv *ks = sw->dev;
 	struct phy_priv *phydata;
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	struct ksz_port *port;
 #endif
 	int i;
@@ -8773,7 +8773,7 @@ static void sw_leave_dev(struct ksz_sw *sw)
 		leave_mrp(&sw->mrp);
 #endif
 	for (i = 0; i < dev_count; i++) {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 		port = sw->netport[i];
 		if (port && port->pl) {
 		       phylink_destroy(port->pl);
@@ -8891,9 +8891,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	sw->netport[i] = port;
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	if (phy_id)
 		port->dn = sw->devnode[phy_id - 1];
-#ifdef CONFIG_PHYLINK
 	setup_phylink(port);
 #endif
 	if (sw->dev_count > 1 && i && !(sw->features & DIFF_MAC_ADDR)) {

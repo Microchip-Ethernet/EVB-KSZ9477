@@ -223,54 +223,6 @@ dbg_msg("  ??? %s %d\n", __func__, p);
 	return sw->port_info[p].log_p;
 }
 
-#if 0
-static uint get_log_port_zero(struct ksz_sw *sw, uint p)
-{
-	uint n;
-
-	n = get_log_port(sw, p);
-	if (n)
-		n--;
-	else
-		n = sw->mib_port_cnt;
-	return n;
-}
-#endif
-
-#if 0
-static uint get_phy_mask_from_log(struct ksz_sw *sw, uint log_m)
-{
-	struct ksz_port_info *info;
-	uint n;
-	uint p;
-	uint phy_m = 0;
-
-	for (n = 0; n <= sw->mib_port_cnt; n++) {
-		info = &sw->port_info[n];
-		p = info->phy_p;
-		if (log_m & sw->port_info[p].log_m)
-			phy_m |= info->phy_m;
-	}
-	return phy_m;
-}
-
-static uint get_log_mask_from_phy(struct ksz_sw *sw, uint phy_m)
-{
-	struct ksz_port_info *info;
-	uint n;
-	uint p;
-	uint log_m = 0;
-
-	for (n = 0; n <= sw->mib_port_cnt; n++) {
-		info = &sw->port_info[n];
-		p = info->phy_p;
-		if (phy_m & info->phy_m)
-			log_m |= sw->port_info[p].log_m;
-	}
-	return log_m;
-}
-#endif
-
 static uint get_sysfs_port(struct ksz_sw *sw, uint n)
 {
 	return n;
@@ -1818,6 +1770,9 @@ static void hw_cfg_rx_prio_rate(struct ksz_sw *sw, uint port, int prio,
 static void hw_cfg_tx_prio_rate(struct ksz_sw *sw, uint port, int prio,
 	uint rate)
 {
+	/* KSZ8863/KSZ8873 has a bug where enabling tail tagging will cause
+	 * the egress rate to double.
+	 */
 	hw_cfg_prio_rate(sw, port, prio, rate,
 #ifdef PORT_OUT_RATE_ADDR
 		REG_PORT_1_OUT_RATE_0,
@@ -1863,14 +1818,13 @@ static int sw_chk_tx_prio_rate(struct ksz_sw *sw, uint port)
 #ifdef PORT_OUT_RATE_ADDR
 	u32 addr;
 	u32 rate_addr;
-	u32 out_rate;
 
 	PORT_OUT_RATE_ADDR(port, addr);
 	rate_addr = addr + REG_PORT_OUT_RATE_0;
-	out_rate = sw->reg->r32(sw, rate_addr);
-	return (out_rate) != 0;
+	return sw_chk(sw, rate_addr, SWITCH_OUT_RATE_ENABLE);
 #else
-	return port_chk(sw, port, REG_PORT_OUT_RATE_0, 0x80);
+	return port_chk(sw, port, REG_PORT_OUT_RATE_0,
+			PORT_EGRESS_LIMIT_FLOW_EN);
 #endif
 }  /* sw_chk_tx_prio_rate */
 
@@ -1905,13 +1859,9 @@ static void sw_dis_tx_prio_rate(struct ksz_sw *sw, uint port)
 
 	PORT_OUT_RATE_ADDR(port, addr);
 	rate_addr = addr + REG_PORT_OUT_RATE_0;
-	sw->reg->w32(sw, rate_addr, 0);
+	sw_cfg(sw, rate_addr, SWITCH_OUT_RATE_ENABLE, 0);
 #else
-	u8 data;
-
-	port_r8(sw, port, REG_PORT_OUT_RATE_0, &data);
-	data &= ~0x80;
-	port_w8(sw, port, REG_PORT_OUT_RATE_0, data);
+	port_cfg(sw, port, REG_PORT_OUT_RATE_0, PORT_EGRESS_LIMIT_FLOW_EN, 0);
 #endif
 }  /* sw_dis_tx_prio_rate */
 
@@ -1940,19 +1890,15 @@ static void sw_ena_rx_prio_rate(struct ksz_sw *sw, uint port)
  */
 static void sw_ena_tx_prio_rate(struct ksz_sw *sw, uint port)
 {
-	int prio;
+#ifdef PORT_OUT_RATE_ADDR
+	u32 addr;
+	u32 rate_addr;
 
-	for (prio = 0; prio < PRIO_QUEUES; prio++)
-		hw_cfg_tx_prio_rate(sw, port, prio,
-			sw->info->port_cfg[port].tx_rate[prio]);
-#ifndef PORT_OUT_RATE_ADDR
-	do {
-		u8 data;
-
-		port_r8(sw, port, REG_PORT_OUT_RATE_0, &data);
-		data |= 0x80;
-		port_w8(sw, port, REG_PORT_OUT_RATE_0, data);
-	} while (0);
+	PORT_OUT_RATE_ADDR(port, addr);
+	rate_addr = addr + REG_PORT_OUT_RATE_0;
+	sw_cfg(sw, rate_addr, SWITCH_OUT_RATE_ENABLE, 1);
+#else
+	port_cfg(sw, port, REG_PORT_OUT_RATE_0, PORT_EGRESS_LIMIT_FLOW_EN, 1);
 #endif
 }  /* sw_ena_tx_prio_rate */
 
@@ -2086,16 +2032,14 @@ static void sw_flush_dyn_mac_table(struct ksz_sw *sw, uint port)
 		cnt = TOTAL_PORT_NUM;
 	}
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		learn_disable[port] = port_chk_dis_learn(sw, port);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 1);
+		learn_disable[index] = port_chk_dis_learn(sw, index);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 1);
 	}
 	sw_cfg(sw, S_FLUSH_TABLE_CTRL, SWITCH_FLUSH_DYN_MAC_TABLE, 1);
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 0);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 0);
 	}
 }
 
@@ -5615,6 +5559,9 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 
 			memset((void *) mib->counter, 0, sizeof(u64) *
 				TOTAL_SWITCH_COUNTER_NUM);
+			mib->rate[0].last = mib->rate[1].last = 0;
+			mib->rate[0].last_cnt = mib->rate[1].last_cnt = 0;
+			mib->rate[0].peak = mib->rate[1].peak = 0;
 		}
 		break;
 	case PROC_SET_SW_REG:
@@ -6112,6 +6059,9 @@ static int sysfs_port_write(struct ksz_sw *sw, int proc_num, uint port,
 
 		memset((void *) mib->counter, 0, sizeof(u64) *
 			TOTAL_SWITCH_COUNTER_NUM);
+		mib->rate[0].last = mib->rate[1].last = 0;
+		mib->rate[0].last_cnt = mib->rate[1].last_cnt = 0;
+		mib->rate[0].peak = mib->rate[1].peak = 0;
 		break;
 	}
 	case PROC_ENABLE_BROADCAST_STORM:
@@ -6753,10 +6703,25 @@ static int sw_chk_id(struct ksz_sw *sw, u16 *id)
 	if ((*id & SWITCH_CHIP_ID_MASK) != CHIP_ID_63)
 		return -ENODEV;
 	sw->chip_id = KSZ8863_SW_CHIP;
+
+	/* KSZ8863 MLL: 0x43
+	 * KSZ8863 RLL: 0x53
+	 * KSZ8863 FLL: 0x41
+	 * KSZ8873 MLL: 0x03
+	 * KSZ8873 RLL: 0x13
+	 * KSZ8873 FLL: 0x00
+	 */
 	mode = sw->reg->r8(sw, REG_MODE_INDICATOR);
-	if (!(mode & (PORT_1_COPPER | PORT_2_COPPER)) ||
-	    !(mode & MODE_2_PHY))
+	if (!(mode & MODE_2_PHY))
 		sw->chip_id = KSZ8873_SW_CHIP;
+
+	/* Check if PHYs are powered down by DSA driver. */
+	mode = sw->reg->r8(sw, REG_PORT_1_CTRL_13);
+	if (mode & PORT_POWER_DOWN)
+		sw->reg->w8(sw, REG_PORT_1_CTRL_13, mode & ~PORT_POWER_DOWN);
+	mode = sw->reg->r8(sw, REG_PORT_2_CTRL_13);
+	if (mode & PORT_POWER_DOWN)
+		sw->reg->w8(sw, REG_PORT_2_CTRL_13, mode & ~PORT_POWER_DOWN);
 	return 2;
 }
 #endif
@@ -7289,6 +7254,9 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 			consume_skb(org_skb);
 		}
 #if 1
+		/* Switch does send out minimum frame after removing VLAN tag,
+		 * so no need to pad for minimum VLAN frame.
+		 */
 		if (padlen) {
 			if (__skb_put_padto(skb, skb->len + padlen, false))
 				return NULL;
@@ -7744,6 +7712,13 @@ static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 	phylink_set(mask, 100baseT_Half);
 	phylink_set(mask, 100baseT_Full);
 
+	/* KSZ8863/KSZ8873 has a bug where port 1 does not respond to PAUSE
+	 * frames and so port 3 does not send PAUSE frames to MAC to slow down
+	 * traffic.  A workaround is to use egress rate limiting if the
+	 * receive bandwidth of the link partner is known.
+	 * Note the switch also has a bug in egress rate limiting when tail
+	 * tagging is enabled.
+	 */
 	switch (port->flow_ctrl) {
 	case PHY_NO_FLOW_CTRL:
 		phylink_clear(mask, Pause);
@@ -7974,8 +7949,10 @@ dbg_msg(" name: %s\n", name);
 				if (fb)
 					fiber |= 1 << reg;
 
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 				/* Save the device node. */
 				sw->devnode[reg] = port;
+#endif
 				cnt++;
 			}
 		}
@@ -9300,9 +9277,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	sw->netport[i] = port;
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	if (phy_id)
 		port->dn = sw->devnode[phy_id - 1];
-#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	setup_phylink(port);
 #endif
 

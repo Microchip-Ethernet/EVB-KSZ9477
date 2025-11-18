@@ -64,7 +64,7 @@
 #define KS8463MLI_DEV0			"ksz8463"
 #define KS8463MLI_DEV2			"ksz8463_2"
 
-#define SW_DRV_RELDATE			"Jan 8, 2025"
+#define SW_DRV_RELDATE			"Nov 13, 2025"
 #define SW_DRV_VERSION			"1.2.4"
 
 /* -------------------------------------------------------------------------- */

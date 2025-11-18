@@ -223,54 +223,6 @@ dbg_msg("  ??? %s %d\n", __func__, p);
 	return sw->port_info[p].log_p;
 }
 
-#if 0
-static uint get_log_port_zero(struct ksz_sw *sw, uint p)
-{
-	uint n;
-
-	n = get_log_port(sw, p);
-	if (n)
-		n--;
-	else
-		n = sw->mib_port_cnt;
-	return n;
-}
-#endif
-
-#if 0
-static uint get_phy_mask_from_log(struct ksz_sw *sw, uint log_m)
-{
-	struct ksz_port_info *info;
-	uint n;
-	uint p;
-	uint phy_m = 0;
-
-	for (n = 0; n <= sw->mib_port_cnt; n++) {
-		info = &sw->port_info[n];
-		p = info->phy_p;
-		if (log_m & sw->port_info[p].log_m)
-			phy_m |= info->phy_m;
-	}
-	return phy_m;
-}
-
-static uint get_log_mask_from_phy(struct ksz_sw *sw, uint phy_m)
-{
-	struct ksz_port_info *info;
-	uint n;
-	uint p;
-	uint log_m = 0;
-
-	for (n = 0; n <= sw->mib_port_cnt; n++) {
-		info = &sw->port_info[n];
-		p = info->phy_p;
-		if (phy_m & info->phy_m)
-			log_m |= sw->port_info[p].log_m;
-	}
-	return log_m;
-}
-#endif
-
 static uint get_sysfs_port(struct ksz_sw *sw, uint n)
 {
 	return n;
@@ -1818,6 +1770,9 @@ static void hw_cfg_rx_prio_rate(struct ksz_sw *sw, uint port, int prio,
 static void hw_cfg_tx_prio_rate(struct ksz_sw *sw, uint port, int prio,
 	uint rate)
 {
+	/* KSZ8863/KSZ8873 has a bug where enabling tail tagging will cause
+	 * the egress rate to double.
+	 */
 	hw_cfg_prio_rate(sw, port, prio, rate,
 #ifdef PORT_OUT_RATE_ADDR
 		REG_PORT_1_OUT_RATE_0,
@@ -1863,14 +1818,13 @@ static int sw_chk_tx_prio_rate(struct ksz_sw *sw, uint port)
 #ifdef PORT_OUT_RATE_ADDR
 	u32 addr;
 	u32 rate_addr;
-	u32 out_rate;
 
 	PORT_OUT_RATE_ADDR(port, addr);
 	rate_addr = addr + REG_PORT_OUT_RATE_0;
-	out_rate = sw->reg->r32(sw, rate_addr);
-	return (out_rate) != 0;
+	return sw_chk(sw, rate_addr, SWITCH_OUT_RATE_ENABLE);
 #else
-	return port_chk(sw, port, REG_PORT_OUT_RATE_0, 0x80);
+	return port_chk(sw, port, REG_PORT_OUT_RATE_0,
+			PORT_EGRESS_LIMIT_FLOW_EN);
 #endif
 }  /* sw_chk_tx_prio_rate */
 
@@ -1905,13 +1859,9 @@ static void sw_dis_tx_prio_rate(struct ksz_sw *sw, uint port)
 
 	PORT_OUT_RATE_ADDR(port, addr);
 	rate_addr = addr + REG_PORT_OUT_RATE_0;
-	sw->reg->w32(sw, rate_addr, 0);
+	sw_cfg(sw, rate_addr, SWITCH_OUT_RATE_ENABLE, 0);
 #else
-	u8 data;
-
-	port_r8(sw, port, REG_PORT_OUT_RATE_0, &data);
-	data &= ~0x80;
-	port_w8(sw, port, REG_PORT_OUT_RATE_0, data);
+	port_cfg(sw, port, REG_PORT_OUT_RATE_0, PORT_EGRESS_LIMIT_FLOW_EN, 0);
 #endif
 }  /* sw_dis_tx_prio_rate */
 
@@ -1940,19 +1890,15 @@ static void sw_ena_rx_prio_rate(struct ksz_sw *sw, uint port)
  */
 static void sw_ena_tx_prio_rate(struct ksz_sw *sw, uint port)
 {
-	int prio;
+#ifdef PORT_OUT_RATE_ADDR
+	u32 addr;
+	u32 rate_addr;
 
-	for (prio = 0; prio < PRIO_QUEUES; prio++)
-		hw_cfg_tx_prio_rate(sw, port, prio,
-			sw->info->port_cfg[port].tx_rate[prio]);
-#ifndef PORT_OUT_RATE_ADDR
-	do {
-		u8 data;
-
-		port_r8(sw, port, REG_PORT_OUT_RATE_0, &data);
-		data |= 0x80;
-		port_w8(sw, port, REG_PORT_OUT_RATE_0, data);
-	} while (0);
+	PORT_OUT_RATE_ADDR(port, addr);
+	rate_addr = addr + REG_PORT_OUT_RATE_0;
+	sw_cfg(sw, rate_addr, SWITCH_OUT_RATE_ENABLE, 1);
+#else
+	port_cfg(sw, port, REG_PORT_OUT_RATE_0, PORT_EGRESS_LIMIT_FLOW_EN, 1);
 #endif
 }  /* sw_ena_tx_prio_rate */
 
@@ -2086,16 +2032,14 @@ static void sw_flush_dyn_mac_table(struct ksz_sw *sw, uint port)
 		cnt = TOTAL_PORT_NUM;
 	}
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		learn_disable[port] = port_chk_dis_learn(sw, port);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 1);
+		learn_disable[index] = port_chk_dis_learn(sw, index);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 1);
 	}
 	sw_cfg(sw, S_FLUSH_TABLE_CTRL, SWITCH_FLUSH_DYN_MAC_TABLE, 1);
 	for (index = first; index < cnt; index++) {
-		port = get_phy_port(sw, index);
-		if (!learn_disable[port])
-			port_cfg_dis_learn(sw, port, 0);
+		if (!learn_disable[index])
+			port_cfg_dis_learn(sw, index, 0);
 	}
 }
 
@@ -5611,6 +5555,9 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 
 			memset((void *) mib->counter, 0, sizeof(u64) *
 				TOTAL_SWITCH_COUNTER_NUM);
+			mib->rate[0].last = mib->rate[1].last = 0;
+			mib->rate[0].last_cnt = mib->rate[1].last_cnt = 0;
+			mib->rate[0].peak = mib->rate[1].peak = 0;
 		}
 		break;
 	case PROC_SET_SW_REG:
@@ -6108,6 +6055,9 @@ static int sysfs_port_write(struct ksz_sw *sw, int proc_num, uint port,
 
 		memset((void *) mib->counter, 0, sizeof(u64) *
 			TOTAL_SWITCH_COUNTER_NUM);
+		mib->rate[0].last = mib->rate[1].last = 0;
+		mib->rate[0].last_cnt = mib->rate[1].last_cnt = 0;
+		mib->rate[0].peak = mib->rate[1].peak = 0;
 		break;
 	}
 	case PROC_ENABLE_BROADCAST_STORM:
@@ -6749,10 +6699,25 @@ static int sw_chk_id(struct ksz_sw *sw, u16 *id)
 	if ((*id & SWITCH_CHIP_ID_MASK) != CHIP_ID_63)
 		return -ENODEV;
 	sw->chip_id = KSZ8863_SW_CHIP;
+
+	/* KSZ8863 MLL: 0x43
+	 * KSZ8863 RLL: 0x53
+	 * KSZ8863 FLL: 0x41
+	 * KSZ8873 MLL: 0x03
+	 * KSZ8873 RLL: 0x13
+	 * KSZ8873 FLL: 0x00
+	 */
 	mode = sw->reg->r8(sw, REG_MODE_INDICATOR);
-	if (!(mode & (PORT_1_COPPER | PORT_2_COPPER)) ||
-	    !(mode & MODE_2_PHY))
+	if (!(mode & MODE_2_PHY))
 		sw->chip_id = KSZ8873_SW_CHIP;
+
+	/* Check if PHYs are powered down by DSA driver. */
+	mode = sw->reg->r8(sw, REG_PORT_1_CTRL_13);
+	if (mode & PORT_POWER_DOWN)
+		sw->reg->w8(sw, REG_PORT_1_CTRL_13, mode & ~PORT_POWER_DOWN);
+	mode = sw->reg->r8(sw, REG_PORT_2_CTRL_13);
+	if (mode & PORT_POWER_DOWN)
+		sw->reg->w8(sw, REG_PORT_2_CTRL_13, mode & ~PORT_POWER_DOWN);
 	return 2;
 }
 #endif
@@ -7285,6 +7250,9 @@ static struct sk_buff *sw_ins_vlan(struct ksz_sw *sw, uint port,
 			consume_skb(org_skb);
 		}
 #if 1
+		/* Switch does send out minimum frame after removing VLAN tag,
+		 * so no need to pad for minimum VLAN frame.
+		 */
 		if (padlen) {
 			if (__skb_put_padto(skb, skb->len + padlen, false))
 				return NULL;
@@ -7324,7 +7292,7 @@ static struct sk_buff *sw_ins_hsr(struct ksz_sw *sw, uint n,
 
 static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct ksz_port *priv, void *ptr,
-	int (*update_msg)(u8 *data, u32 port, u32 overrides))
+	int (*update_msg)(void *ptp, u8 *data, u32 port, u32 overrides))
 {
 	bool need_new_copy = false;
 	int len;
@@ -7339,6 +7307,12 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	struct ptp_info *ptp = ptr;
 
 	if (ptp->overrides & (PTP_PORT_FORWARD | PTP_PORT_TX_FORWARD))
+		update_dst |= 2;
+
+	/* Need to parse the PTP message to do necessary operations in the
+	 * background.
+	 */
+	if (ptp->need_1_step_resp_help || ptp->need_peer_delay_set_help)
 		update_dst |= 2;
 #endif
 	if (!update_dst)
@@ -7362,7 +7336,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 	if (1 == priv->port_cnt)
 		port = priv->first_port;
 
-#if 0
+#if 1
 	do {
 		u16 prio;
 		u16 vid;
@@ -7418,7 +7392,7 @@ static struct sk_buff *sw_check_skb(struct ksz_sw *sw, struct sk_buff *skb,
 			dst |= (u32) sw->tx_ports << 16;
 			overrides |= PTP_UPDATE_DST_PORT;
 		}
-		blocked = update_msg(skb->data, dst, overrides);
+		blocked = update_msg(ptp, skb->data, dst, overrides);
 		if (blocked) {
 			dev_kfree_skb_irq(skb);
 			return NULL;
@@ -7520,7 +7494,7 @@ static struct sk_buff *sw_check_tx(struct ksz_sw *sw, struct net_device *dev,
 	struct sk_buff *skb, struct ksz_port *priv)
 {
 	void *ptr = NULL;
-	int (*update_msg)(u8 *data, u32 port, u32 overrides) = NULL;
+	int (*update_msg)(void *ptp, u8 *data, u32 port, u32 overrides) = NULL;
 
 #ifdef CONFIG_1588_PTP
 	if (sw->features & PTP_HW) {
@@ -7720,7 +7694,7 @@ static void sw_init_mib(struct ksz_sw *sw)
 	sw->port_state[sw->HOST_PORT].state = media_connected;
 }  /* sw_init_mib */
 
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 				   unsigned long *supported,
 				   struct phylink_link_state *state)
@@ -7737,6 +7711,13 @@ static void sw_set_phylink_support(struct ksz_sw *sw, struct ksz_port *port,
 	phylink_set(mask, 100baseT_Half);
 	phylink_set(mask, 100baseT_Full);
 
+	/* KSZ8863/KSZ8873 has a bug where port 1 does not respond to PAUSE
+	 * frames and so port 3 does not send PAUSE frames to MAC to slow down
+	 * traffic.  A workaround is to use egress rate limiting if the
+	 * receive bandwidth of the link partner is known.
+	 * Note the switch also has a bug in egress rate limiting when tail
+	 * tagging is enabled.
+	 */
 	switch (port->flow_ctrl) {
 	case PHY_NO_FLOW_CTRL:
 		phylink_clear(mask, Pause);
@@ -7922,6 +7903,8 @@ static void sw_init_phylink(struct ksz_sw *sw, struct ksz_port *port)
 }  /* sw_init_phylink */
 #endif
 
+static int fiber;
+
 static void setup_device_node(struct ksz_sw *sw)
 {
 	struct sw_priv *ks = sw->dev;
@@ -7929,6 +7912,7 @@ static void setup_device_node(struct ksz_sw *sw)
 	struct device_node *ports, *port;
 	struct device_node *ethernet;
 	const char *name;
+	bool fb;
 	int err;
 	u32 reg;
 
@@ -7949,8 +7933,15 @@ dbg_msg(" found eth\n");
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
+				fb = of_property_read_bool(port,
+							   "micrel,fiber-mode");
+				if (fb)
+					fiber |= 1 << reg;
+
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 				/* Save the device node. */
 				sw->devnode[reg] = port;
+#endif
 			}
 		}
 	}
@@ -8131,7 +8122,7 @@ static void sw_close_port(struct ksz_sw *sw, struct net_device *dev,
 
 static void sw_open(struct ksz_sw *sw)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw_init_phylink(sw, sw->main_port);
 #endif
 #ifdef CONFIG_KSZ_DLR
@@ -8146,7 +8137,7 @@ static void sw_open(struct ksz_sw *sw)
 
 static void sw_close(struct ksz_sw *sw)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw_exit_phylink(sw, sw->main_port);
 #endif
 	ksz_stop_timer(sw->monitor_timer_info);
@@ -8814,7 +8805,7 @@ static void sw_report_link(struct ksz_sw *sw, struct ksz_port *port,
 		phydev->speed = 10;
 	phydev->duplex = (info->duplex == 2);
 
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	/* Not started yet. */
 	if (sw->phylink_ops && port != sw->main_port &&
 	    phydev->state == PHY_READY)
@@ -9073,7 +9064,7 @@ static void sw_setup_special(struct ksz_sw *sw, int *port_cnt,
 	int *mib_port_cnt, int *dev_cnt,
 	const void *phylink_ops)
 {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	sw->phylink_ops = phylink_ops;
 #endif
 	phy_offset = 0;
@@ -9121,7 +9112,7 @@ static void sw_leave_dev(struct ksz_sw *sw)
 	int dev_count = sw->dev_count + sw->dev_offset;
 	struct sw_priv *ks = sw->dev;
 	struct phy_priv *phydata;
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	struct ksz_port *port;
 #endif
 	int i;
@@ -9131,7 +9122,7 @@ static void sw_leave_dev(struct ksz_sw *sw)
 		leave_stp(&sw->info->rstp);
 #endif
 	for (i = 0; i < dev_count; i++) {
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 		port = sw->netport[i];
 		if (port && port->pl) {
 		       phylink_destroy(port->pl);
@@ -9262,9 +9253,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	sw->netport[i] = port;
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	if (phy_id)
 		port->dn = sw->devnode[phy_id - 1];
-#ifdef CONFIG_PHYLINK
 	setup_phylink(port);
 #endif
 
@@ -10095,7 +10086,6 @@ static void ksz_dev_monitor(struct timer_list *t)
 	ksz_update_timer(&hw_priv->monitor_timer_info);
 }  /* ksz_dev_monitor */
 
-static int fiber;
 static int intr_mode;
 
 static int sw_device_present;

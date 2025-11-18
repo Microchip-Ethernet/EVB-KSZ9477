@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ8863 SPI driver
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  * Copyright (c) 2010-2015 Micrel, Inc.
  *
  * Copyright 2009 Simtec Electronics
@@ -64,8 +64,8 @@
 #define KS8863MLI_DEV0			"ksz8863"
 #define KS8863MLI_DEV2			"ksz8863_2"
 
-#define SW_DRV_RELDATE			"Mar 25, 2023"
-#define SW_DRV_VERSION			"1.2.3"
+#define SW_DRV_RELDATE			"Nov 13, 2025"
+#define SW_DRV_VERSION			"1.2.4"
 
 /* -------------------------------------------------------------------------- */
 

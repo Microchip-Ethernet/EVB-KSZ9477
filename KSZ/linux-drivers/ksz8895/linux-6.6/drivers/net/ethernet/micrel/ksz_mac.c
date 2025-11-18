@@ -36,12 +36,12 @@ static void get_sysfs_data_(struct net_device *dev,
 #elif defined(CONFIG_HAVE_KSZ8463)
 #include "ksz_sw_sysfs.c"
 #elif defined(CONFIG_HAVE_LAN937X)
-#include "../microchip/lan937x_sw_sysfs.c"
+#include "../microchip/lan937x/lan937x_sw_sysfs.c"
 #endif
 
 #ifdef CONFIG_1588_PTP
-#ifdef CONFIG_HAVE_LAN937X
-#include "../microchip/lan937x_ptp_sysfs.c"
+#ifdef USE_LAN937X
+#include "../microchip/lan937x/lan937x_ptp_sysfs.c"
 #else
 #include "ksz_ptp_sysfs.c"
 #endif

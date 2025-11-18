@@ -14,6 +14,9 @@ static int sw_mac_init(struct net_device *net, struct ksz_mac *priv);
 #if defined(CONFIG_IBA_KSZ9897) || defined(CONFIG_IBA_LAN937X)
 #define CONFIG_KSZ_IBA_ONLY
 #endif
+#if !defined(CONFIG_KSZ_SMI) && defined(CONFIG_LAN937X_SMI)
+#define CONFIG_KSZ_SMI
+#endif
 
 #ifdef CONFIG_KSZ_SWITCH_EMBEDDED
 #include <linux/of_irq.h>
@@ -52,11 +55,11 @@ static void copy_old_skb(struct sk_buff *old, struct sk_buff *skb);
 #elif defined(CONFIG_HAVE_KSZ8863)
 #include "i2c-ksz8863.c"
 #elif defined(CONFIG_IBA_LAN937X)
-#include "../microchip/iba-lan937x.c"
+#include "../microchip/lan937x/iba-lan937x.c"
 #elif defined(CONFIG_SMI_LAN937X)
-#include "../microchip/smi-lan937x.c"
+#include "../microchip/lan937x/smi-lan937x.c"
 #elif defined(CONFIG_HAVE_LAN937X)
-#include "../microchip/spi-lan937x.c"
+#include "../microchip/lan937x/spi-lan937x.c"
 #endif
 #endif
 

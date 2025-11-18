@@ -20,7 +20,7 @@
 #define KSZ_SW_8795_H
 
 
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 #include <linux/phylink.h>
 #endif
 
@@ -633,7 +633,6 @@ struct ksz_sw {
 	struct ksz_port *main_port;
 	struct net_device *netdev[TOTAL_PORT_NUM];
 	struct ksz_port *netport[TOTAL_PORT_NUM];
-	struct device_node *devnode[TOTAL_PORT_NUM];
 	struct phy_device phy_map[TOTAL_PORT_NUM + 1];
 	struct phy_device *phy[TOTAL_PORT_NUM + 1];
 	struct phy_priv phydata[TOTAL_PORT_NUM + 1];
@@ -650,7 +649,8 @@ struct ksz_sw {
 	struct ksz_counter_info *counter;
 	struct delayed_work *link_read;
 
-#ifdef CONFIG_PHYLINK
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	struct device_node *devnode[TOTAL_PORT_NUM];
 	const struct phylink_mac_ops *phylink_ops;
 #endif
 
@@ -750,8 +750,8 @@ struct ksz_port {
 	struct delayed_work link_update;
 	struct net_device *netdev;
 	struct phy_device *phydev;
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 	struct device_node *dn;
-#ifdef CONFIG_PHYLINK
 	struct phylink *pl;
 	struct phylink_config pl_config;
 	struct phylink_link_state pl_state;

@@ -602,6 +602,7 @@ static void dbg_stp(struct ksz_stp_port *p, const char *msg, int rx)
 	dbg_msg("%c", reRoot ? 'R' : '.');
 	dbg_msg("%c", tcProp ? 'T' : '.');
 	dbg_msg("%c", rcvdTc ? 'C' : '.');
+	dbg_msg(" %u:%u:%u", fdWhile, rrWhile, tcWhile);
 	dbg_msg("  ");
 	for (rx = 0; rx < NUM_OF_PORT_STATE_MACHINES; rx++)
 		dbg_msg("%2d", p->states[rx]);
@@ -2994,6 +2995,10 @@ static void stp_role_tr_root_p_init(struct ksz_stp_port *p)
 	if (mrp_10_1_8a_hack)
 		rrWhile = to_stp_timer(4);
 #endif
+	/* The hack used to pass MRP_10_1_8a uses 4 seconds, but maybe the
+	 * HelloTime should be used here like fdWhile.
+	 */
+	rrWhile = forwardDelay();
 }  /* stp_role_tr_root_p_init */
 
 static void stp_role_tr_root_p_next(struct ksz_stp_port *p,
@@ -3005,6 +3010,10 @@ static void stp_role_tr_root_p_next(struct ksz_stp_port *p,
 	if (mrp_10_1_8a_hack)
 		delay = to_stp_timer(4);
 #endif
+	/* The hack used to pass MRP_10_1_8a uses 4 seconds, but maybe the
+	 * HelloTime should be used here like fdWhile.
+	 */
+	delay = forwardDelay();
 
 	stp_change_state(state,
 		((proposed && !agree) && canChange),

@@ -870,7 +870,6 @@ struct ksz_sw {
 	struct ksz_port *main_port;
 	struct net_device *netdev[TOTAL_PORT_NUM];
 	struct ksz_port *netport[TOTAL_PORT_NUM];
-	struct device_node *devnode[TOTAL_PORT_NUM];
 	struct phy_device phy_map[TOTAL_PORT_NUM + 1];
 	struct phy_device *phy[TOTAL_PORT_NUM + 1];
 	struct phy_priv phydata[TOTAL_PORT_NUM + 1];
@@ -891,6 +890,7 @@ struct ksz_sw {
 	struct delayed_work *link_read;
 
 #if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	struct device_node *devnode[TOTAL_PORT_NUM];
 	const struct phylink_mac_ops *phylink_ops;
 #endif
 
@@ -1026,8 +1026,8 @@ struct ksz_port {
 	struct delayed_work link_update;
 	struct net_device *netdev;
 	struct phy_device *phydev;
-	struct device_node *dn;
 #if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	struct device_node *dn;
 	struct phylink *pl;
 	struct phylink_config pl_config;
 	struct phylink_link_state pl_state;
@@ -1131,6 +1131,7 @@ struct lan_attributes {
 	int bcast_per;
 	int mcast_storm;
 	int tx_queue_based;
+	int use_diffserv_map;
 	int diffserv_map;
 	int p_802_1p_map;
 	int vlan;

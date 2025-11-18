@@ -67,6 +67,7 @@ enum {
 	PROC_SET_BROADCAST_STORM,
 	PROC_SET_MULTICAST_STORM,
 	PROC_SET_TX_RATE_QUEUE_BASED,
+	PROC_USE_DIFFSERV_MAP,
 	PROC_SET_DIFFSERV,
 	PROC_SET_802_1P,
 
@@ -6193,8 +6194,13 @@ static void sw_setup_reserved_multicast(struct ksz_sw *sw)
 			table[5].override = true;
 			table[5].ports = sw->HOST_MASK;
 		} else {
+#if 0
 			table[4].ports = sw->PORT_MASK;
 			table[5].ports = sw->PORT_MASK;
+#else
+			table[4].ports = sw->PORT_MASK & ~sw->HOST_MASK;
+			table[5].ports = sw->PORT_MASK & ~sw->HOST_MASK;
+#endif
 		}
 		table[6].override = true;
 		table[6].ports = sw->HOST_MASK;
@@ -8993,6 +8999,8 @@ static void sw_setup(struct ksz_sw *sw)
 	/* Unknown multicast forwarding will not be used. */
 	if (sw->features & AVB_SUPPORT)
 		sw_setup_multi(sw);
+	else
+		sw->info->multi_sys = STP_ENTRY;
 #ifdef CONFIG_KSZ_STP
 	sw->ops->release(sw);
 	sw_setup_stp(sw);
@@ -10556,6 +10564,9 @@ static ssize_t sysfs_sw_read_hw(struct ksz_sw *sw, int proc_num, ssize_t len,
 	case PROC_SET_VLAN_FILTERING_STATIC:
 		chk = sw_chk(sw, REG_SW_LUE_CTRL_2, SW_EGRESS_VLAN_FILTER_STA);
 		break;
+	case PROC_USE_DIFFSERV_MAP:
+		chk = sw_chk(sw, REG_SW_MAC_TOS_CTRL, SW_TOS_DSCP_REMAP);
+		break;
 	default:
 		return len;
 	}
@@ -10724,6 +10735,9 @@ static int sysfs_sw_write(struct ksz_sw *sw, int proc_num,
 	case PROC_SET_TX_RATE_QUEUE_BASED:
 		sw_cfg(sw, REG_SW_MAC_CTRL_5, SW_OUT_RATE_LIMIT_QUEUE_BASED,
 			num);
+		break;
+	case PROC_USE_DIFFSERV_MAP:
+		sw_cfg(sw, REG_SW_MAC_TOS_CTRL, SW_TOS_DSCP_REMAP, num);
 		break;
 	case PROC_SET_DIFFSERV:
 		count = sscanf(buf, "%d=%x", (unsigned int *) &num, &val);
@@ -15928,8 +15942,10 @@ dbg_msg(" found eth\n");
 				name = of_get_property(port, "label", NULL);
 				if (name)
 dbg_msg(" name: %s\n", name);
+#if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
 				/* Save the device node. */
 				sw->devnode[reg] = port;
+#endif
 				cnt++;
 
 				err = of_property_read_u32(port, "mode", &mode);
@@ -17706,10 +17722,6 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 	sw->netport[i] = port;
 	port->netdev = dev;
 	port->phydev = sw->phy[phy_id];
-
-	/* Cannot point to host port that uses fixed-link. */
-	if (phy_id)
-		port->dn = sw->devnode[phy_id - 1];
 	if (dev->phydev && phy_is_internal(dev->phydev)) {
 		__ETHTOOL_DECLARE_LINK_MODE_MASK(supported);
 	
@@ -17734,6 +17746,9 @@ static int sw_setup_dev(struct ksz_sw *sw, struct net_device *dev,
 		dev->phydev->mdio.addr = phy_id;
 	}
 #if defined(CONFIG_PHYLINK) || defined(CONFIG_PHYLINK_MODULE)
+	/* Cannot point to host port that uses fixed-link. */
+	if (phy_id)
+		port->dn = sw->devnode[phy_id - 1];
 	setup_phylink(port);
 #endif
 	if (sw->dev_count > 1 && i && !(sw->features & DIFF_MAC_ADDR)) {
@@ -19974,16 +19989,6 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 			sgmii = 1;
 	}
 	sw->sgmii_mode = sgmii;
-	sw->interface = PHY_INTERFACE_MODE_MII;
-	sw->multi_dev |= multi_dev;
-	if (setup_device_node(sw)) {
-		ret = -ENODEV;
-		goto err_platform;
-	}
-
-#ifdef DEBUG_MSG
-	flush_work(&db.dbg_print);
-#endif
 
 	for (pi = 0; pi < phy_port_count; pi++) {
 		/*
@@ -20000,8 +20005,23 @@ dbg_msg("port: %x %x %x"NL, sw->port_cnt, sw->mib_port_cnt, sw->phy_port_cnt);
 		info->phy = true;
 		info->interface = PHY_INTERFACE_MODE_RGMII;
 	}
-	sw->ops->acquire(sw);
 	for (; pi < mib_port_count; pi++) {
+		info = get_port_info(sw, pi);
+		info->interface = PHY_INTERFACE_MODE_MII;
+	}
+	sw->interface = PHY_INTERFACE_MODE_MII;
+	sw->multi_dev |= multi_dev;
+	if (setup_device_node(sw)) {
+		ret = -ENODEV;
+		goto err_platform;
+	}
+
+#ifdef DEBUG_MSG
+	flush_work(&db.dbg_print);
+#endif
+
+	sw->ops->acquire(sw);
+	for (pi = phy_port_count; pi < mib_port_count; pi++) {
 		u16 data;
 		u16 orig;
 		u8 *data_lo;
@@ -20110,7 +20130,10 @@ dbg_msg("?%02x"NL, *data_hi);
 			info->set_link_speed = sgmii_port_set_speed;
 			info->phy = port_sgmii_detect(sw, pi);
 		}
-		info->interface = phy;
+
+		/* Only set when not overrode by device tree. */
+		if (info->interface == PHY_INTERFACE_MODE_MII)
+			info->interface = phy;
 
 		/* Switch interface is not set through device tree. */
 		if (sw->HOST_PORT == pi &&

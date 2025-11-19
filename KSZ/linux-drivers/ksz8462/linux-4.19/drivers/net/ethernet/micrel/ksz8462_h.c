@@ -71,6 +71,8 @@
 /* Can be defined if KSZ9897 driver is included also. */
 #undef CONFIG_KSZ_DLR
 #undef CONFIG_KSZ_HSR
+#undef CONFIG_KSZ_IBA
+#undef CONFIG_KSZ_SWITCH_EMBEDDED
 
 #include "ksz_common.h"
 #include "ksz_req.h"
@@ -1073,6 +1075,7 @@ static void ksz8462_link_update_work(struct work_struct *work)
 #ifdef CONFIG_KSZ_HSR
 	if (sw->features & HSR_HW) {
 		struct ksz_hsr_info *hsr = &sw->info->hsr;
+		uint p;
 
 		p = get_phy_port(sw, port->first_port);
 		if (hsr->ports[0] <= port->first_port &&
@@ -1663,27 +1666,6 @@ static int priv_match_multi(void *ptr, u8 *data)
 		}
 	return drop;
 }  /* priv_match_multi */
-
-static u8 get_priv_state(struct net_device *dev)
-{
-	struct ks_net *priv = netdev_priv(dev);
-
-	return priv->state;
-}  /* get_priv_state */
-
-static void set_priv_state(struct net_device *dev, u8 state)
-{
-	struct ks_net *priv = netdev_priv(dev);
-
-	priv->state = state;
-}  /* set_priv_state */
-
-static struct ksz_port *get_priv_port(struct net_device *dev)
-{
-	struct ks_net *priv = netdev_priv(dev);
-
-	return &priv->port;
-}  /* get_priv_port */
 
 static u16 chk_rcv(struct ksz_hw *hw)
 {
@@ -2381,7 +2363,7 @@ static int netdev_open_before(struct net_device *dev, struct dev_priv *priv,
 	mutex_unlock(hw_priv->lock);
 
 	if (sw_is_switch(sw))
-		sw->net_ops->open_dev(sw, dev, hw->mac_addr);
+		sw->net_ops->open_dev(sw, dev, &priv->port, hw->mac_addr);
 	else {
 		sw_init_mib(sw);
 		sw_disable(sw);
@@ -2417,7 +2399,7 @@ static int ks_net_open(struct net_device *dev)
 		if (err)
 			return err;
 	}
-	sw->net_ops->open_port(sw, dev, &priv->port, &priv->state);
+	sw->net_ops->open_port(sw, dev, &priv->port);
 
 	if (!(hw_priv->opened)) {
 		start_hw(hw_priv, hw);
@@ -3066,6 +3048,7 @@ static void ks_set_msglevel(struct net_device *dev, u32 to)
 	ks->msg_enable = to;
 }
 
+#if 0
 static int ks_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 {
 	struct ks_net *ks = netdev_priv(dev);
@@ -3077,6 +3060,7 @@ static int ks_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	struct ks_net *ks = netdev_priv(dev);
 	return mii_ethtool_sset(&ks->mii_if, cmd);
 }
+#endif
 
 static u32 ks_get_link(struct net_device *dev)
 {
@@ -3454,8 +3438,10 @@ static const struct ethtool_ops ks_ethtool_ops = {
 	.set_wol		= ks_set_wol,
 	.get_msglevel		= ks_get_msglevel,
 	.set_msglevel		= ks_set_msglevel,
+#if 0
 	.get_settings		= ks_get_settings,
 	.set_settings		= ks_set_settings,
+#endif
 	.get_link		= ks_get_link,
 	.nway_reset		= ks_nway_reset,
 	.get_strings		= ks_get_strings,
@@ -3701,10 +3687,6 @@ static int ks846x_probe(struct platform_device *pdev)
 		cnt = 2;
 	else
 		cnt = 1;
-
-	sw->net_ops->get_state = get_priv_state;
-	sw->net_ops->set_state = set_priv_state;
-	sw->net_ops->get_priv_port = get_priv_port;
 
 	/* Device has a switch with multiple ports. */
 	if (2 == cnt) {

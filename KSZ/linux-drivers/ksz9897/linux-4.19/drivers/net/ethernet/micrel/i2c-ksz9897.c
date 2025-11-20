@@ -1,7 +1,7 @@
 /**
  * Microchip KSZ9897 I2C driver
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -60,18 +60,6 @@
 #include "ksz_cfg_9897.h"
 
 
-#ifdef CONFIG_KSZ_DLR
-/* Have ACL to handle beacon timeout. */
-#define CONFIG_HAVE_ACL_HW
-
-/* Have DLR to transmit beacons. */
-#define CONFIG_HAVE_DLR_HW
-#endif
-
-#ifdef CONFIG_KSZ_HSR
-#define CONFIG_HAVE_HSR_HW
-#endif
-
 #if 0
 #define USE_MII_PHY
 #endif
@@ -104,8 +92,8 @@
 #endif
 
 
-#define SW_DRV_RELDATE			"Nov 17, 2023"
-#define SW_DRV_VERSION			"1.2.8"
+#define SW_DRV_RELDATE			"Nov 18, 2025"
+#define SW_DRV_VERSION			"1.2.11"
 
 /* -------------------------------------------------------------------------- */
 
@@ -492,6 +480,7 @@ static int ksz9897_probe(struct i2c_client *i2c,
 {
 	struct i2c_hw_priv *hw_priv;
 	struct sw_priv *priv;
+	int err;
 
 	priv = kzalloc(sizeof(struct sw_priv), GFP_KERNEL);
 	if (!priv)
@@ -513,7 +502,14 @@ static int ksz9897_probe(struct i2c_client *i2c,
 
 	priv->irq = i2c->irq;
 
-	return ksz_probe(priv);
+	err = ksz_probe(priv);
+
+	/* This will load the I2C driver again because of mdiobus_register
+	 * failure, but the MAC driver still misses the connection.
+	 */
+	if (err == -EBUSY)
+		err = -EPROBE_DEFER;
+	return err;
 }
 
 static int ksz9897_remove(struct i2c_client *i2c)

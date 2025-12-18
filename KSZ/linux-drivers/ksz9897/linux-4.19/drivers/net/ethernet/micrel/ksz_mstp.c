@@ -1,7 +1,7 @@
 /**
  * Microchip MSTP code
  *
- * Copyright (c) 2016-2021 Microchip Technology Inc.
+ * Copyright (c) 2016-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -1725,6 +1725,7 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 	const struct net_device_ops *ops = stp->dev->netdev_ops;
 	struct llc *llc = (struct llc *) &frame[12];
 	struct ksz_port_info *info = get_port_info(sw, port);
+	int timeout = 5;
 
 	/* Do not send if network device is not ready. */
 	if (!netif_running(stp->dev))
@@ -1757,7 +1758,10 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 	do {
 		struct ksz_sw *sw = stp->sw_dev;
 
+		/* Guard against sending during receiving. */
+		spin_lock_bh(&sw->rx_lock);
 		rc = ops->ndo_start_xmit(skb, skb->dev);
+		spin_unlock_bh(&sw->rx_lock);
 		if (NETDEV_TX_BUSY == rc) {
 			rc = wait_event_interruptible_timeout(sw->queue,
 				!netif_queue_stopped(stp->dev),
@@ -1765,7 +1769,7 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 
 			rc = NETDEV_TX_BUSY;
 		}
-	} while (NETDEV_TX_BUSY == rc);
+	} while (NETDEV_TX_BUSY == rc && timeout--);
 	return rc;
 }  /* stp_xmit */
 

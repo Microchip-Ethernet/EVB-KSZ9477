@@ -1719,6 +1719,7 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 	const struct net_device_ops *ops = stp->dev->netdev_ops;
 	struct llc *llc = (struct llc *) &frame[12];
 	struct ksz_port_info *info = get_port_info(sw, port);
+	int timeout = 5;
 
 	/* Do not send if network device is not ready. */
 	if (!netif_running(stp->dev))
@@ -1743,6 +1744,8 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 
 	memcpy(skb->data, stp->tx_frame, len);
 	memcpy(&skb->data[6], info->mac_addr, ETH_ALEN);
+	skb_reset_mac_header(skb);
+	skb_set_network_header(skb, ETH_HLEN);
 
 	skb_put(skb, len);
 	sw->net_ops->add_tail_tag(sw, skb, ports);
@@ -1762,7 +1765,7 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 
 			rc = NETDEV_TX_BUSY;
 		}
-	} while (NETDEV_TX_BUSY == rc);
+	} while (NETDEV_TX_BUSY == rc && timeout--);
 	return rc;
 }  /* stp_xmit */
 

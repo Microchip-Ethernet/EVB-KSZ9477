@@ -1206,6 +1206,7 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 	const struct net_device_ops *ops = stp->dev->netdev_ops;
 	struct llc *llc = (struct llc *) &frame[12];
 	struct ksz_port_info *info = get_port_info(sw, port);
+	int timeout = 5;
 
 	/* Do not send if network device is not ready. */
 	if (!netif_running(stp->dev))
@@ -1251,7 +1252,7 @@ static int stp_xmit(struct ksz_stp_info *stp, u8 port)
 
 			rc = NETDEV_TX_BUSY;
 		}
-	} while (NETDEV_TX_BUSY == rc);
+	} while (NETDEV_TX_BUSY == rc && timeout--);
 	return rc;
 }  /* stp_xmit */
 

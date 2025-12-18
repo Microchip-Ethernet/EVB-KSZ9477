@@ -5633,6 +5633,7 @@ static int proc_mrp_xmit(struct mrp_info *mrp, uint p, struct sk_buff *skb)
 	struct ksz_sw *sw = mrp->parent;
 	const struct net_device_ops *ops = sw->main_dev->netdev_ops;
 	int result = DEV_IOC_OK;
+	int timeout = 5;
 
 	/* Send to host port by simulating receiving. */
 	if (p == sw->HOST_PORT) {
@@ -5682,7 +5683,7 @@ dbg_msg("  tx close: %d %x %x"NL, p, sw->tx_ports[0], mrp->tx_ports);
 
 			rc = NETDEV_TX_BUSY;
 		}
-	} while (NETDEV_TX_BUSY == rc);
+	} while (NETDEV_TX_BUSY == rc && timeout--);
 	return result;
 }  /* proc_mrp_xmit */
 #endif

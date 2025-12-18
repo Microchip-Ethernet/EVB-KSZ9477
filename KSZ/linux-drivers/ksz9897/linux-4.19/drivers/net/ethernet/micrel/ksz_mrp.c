@@ -1,7 +1,7 @@
 /**
  * Microchip MRP driver code
  *
- * Copyright (c) 2015-2023 Microchip Technology Inc.
+ * Copyright (c) 2015-2025 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2014-2015 Micrel, Inc.
@@ -1784,10 +1784,10 @@ dbg_msg(" %s %d=%x:%d"NL, __func__, port, new_decl, vlan->id);
 	}
 #ifdef DEBUG_MVRP
 #ifdef DEBUG
-if (dbg_mrp_vlan)
-	mrp_show_node(&mrp->vlan_list, show_vlan_info);
+	if (dbg_mrp_vlan)
+		mrp_show_node(&mrp->vlan_list, show_vlan_info);
 	if (mrp->vlan_list.cnt > 4) {
-if (dbg_mrp_vlan)
+		if (dbg_mrp_vlan)
 dbg_msg(" stop dbg vlan"NL);
 		dbg_mrp_vlan = 0;
 	}
@@ -1798,8 +1798,7 @@ dbg_msg(" stop dbg vlan"NL);
 
 #if 1
 	if (mrp->rx_ports) {
-
-if (mrp->rx_ports != sw->rx_ports[0])
+		if (mrp->rx_ports != sw->rx_ports[0])
 dbg_msg(" rx: %x %x"NL, mrp->rx_ports, sw->rx_ports[0]);
 	}
 #endif
@@ -2109,7 +2108,7 @@ static int stream_drop(struct mrp_node *prev,
 	struct mrp_info *mrp = param[0];
 	struct mrp_port_info *info = param[1];
 	struct mrp_traffic_info *traffic = param[2];
-	int *port = param[3];
+	u8 *port = param[3];
 	struct SRP_reserv *t_reserv = param[4];
 	int *active = param[5];
 
@@ -2532,7 +2531,7 @@ static int stream_decr_bandwidth(struct mrp_node *prev,
 	struct SRP_reserv *reserv;
 	struct mrp_port_info *info = param[0];
 	struct mrp_traffic_info *traffic = param[1];
-	int *mark = param[2];
+	bool *mark = param[2];
 
 	if (traffic->bandwidth_used > traffic->bandwidth_max) {
 		reserv = data->reserv;
@@ -2570,7 +2569,7 @@ static int stream_stop(struct mrp_node *prev, struct srp_stream_info *data,
 	struct SRP_stream *stream;
 	struct mrp_info *mrp = param[0];
 	struct mrp_traffic_info *traffic = param[1];
-	int *port = param[2];
+	u8 *port = param[2];
 	int result;
 
 	if (data->mark) {
@@ -2634,7 +2633,7 @@ static int stream_start(struct mrp_node *prev,
 	struct mrp_info *mrp = param[0];
 	struct mrp_port_info *info = param[1];
 	struct mrp_traffic_info *traffic = param[2];
-	int *port = param[3];
+	u8 *port = param[3];
 	int result;
 	u32 bandwidth;
 	bool adv = false;
@@ -2742,7 +2741,7 @@ static int stream_drop_other(struct mrp_node *prev,
 	struct SRP_stream *stream;
 	struct mrp_info *mrp = param[0];
 	struct mrp_traffic_info *traffic = param[1];
-	int *port = param[2];
+	u8 *port = param[2];
 	int *avail = param[3];
 	int result;
 
@@ -5634,6 +5633,7 @@ static int proc_mrp_xmit(struct mrp_info *mrp, uint p, struct sk_buff *skb)
 	struct ksz_sw *sw = mrp->parent;
 	const struct net_device_ops *ops = sw->main_dev->netdev_ops;
 	int result = DEV_IOC_OK;
+	int timeout = 5;
 
 	/* Send to host port by simulating receiving. */
 	if (p == sw->HOST_PORT) {
@@ -5672,7 +5672,10 @@ dbg_msg("  tx close: %d %x %x"NL, p, sw->tx_ports[0], mrp->tx_ports);
 	ports |= TAIL_TAG_SET_QUEUE;
 	sw->net_ops->add_tail_tag(sw, skb, ports);
 	do {
+		/* Guard against sending during receiving. */
+		spin_lock_bh(&sw->rx_lock);
 		rc = ops->ndo_start_xmit(skb, skb->dev);
+		spin_unlock_bh(&sw->rx_lock);
 		if (NETDEV_TX_BUSY == rc) {
 			rc = wait_event_interruptible_timeout(sw->queue,
 				!netif_queue_stopped(sw->main_dev),
@@ -5680,9 +5683,9 @@ dbg_msg("  tx close: %d %x %x"NL, p, sw->tx_ports[0], mrp->tx_ports);
 
 			rc = NETDEV_TX_BUSY;
 		}
-	} while (NETDEV_TX_BUSY == rc);
+	} while (NETDEV_TX_BUSY == rc && timeout--);
 	return result;
-}  /* proc_mrp_mrp_xmit */
+}  /* proc_mrp_xmit */
 #endif
 
 static void proc_mrp_cmd(struct mrp_info *mrp, struct mrp_work *parent)
@@ -5994,7 +5997,7 @@ static int mrp_dev_req(struct mrp_info *mrp, char *arg)
 	int subcmd;
 	int output;
 	u8 data[PARAM_DATA_SIZE];
-	u8 cmd_data[4];
+	u8 cmd_data[40];
 	int err = 0;
 	int result = 0;
 	struct mrp_cfg_options *cmd = (struct mrp_cfg_options *) cmd_data;
@@ -6616,6 +6619,7 @@ static void mmrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 	struct ksz_sw *sw = mrp->parent;
 
 	cmd->port = get_log_port(sw, app->port);
+	cmd->type = MRP_TYPE_UNKNOWN;
 	if (MMRP_ATTR_MAC == attr->type) {
 		memcpy(cmd->data.mac.addr, attr->value, ETH_ALEN);
 		cmd->type = MRP_TYPE_MAC;
@@ -6656,6 +6660,7 @@ static void mvrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 	struct ksz_sw *sw = mrp->parent;
 
 	cmd->port = get_log_port(sw, app->port);
+	cmd->type = MRP_TYPE_UNKNOWN;
 	if (MVRP_ATTR_VID == attr->type) {
 		u16 *vid = (u16 *) attr->value;
 
@@ -6746,6 +6751,7 @@ static void msrp_acton(struct mrp_applicant *app, struct mrp_attr *attr)
 		break;
 	}
 	default:
+		cmd->type = MRP_TYPE_UNKNOWN;
 		break;
 	}
 	attr->notify = MRP_NOTIFY_NONE;

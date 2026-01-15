@@ -17,6 +17,10 @@
 /* Can be defined if KSZ9897 driver is included also. */
 #undef CONFIG_KSZ_HSR
 
+#ifdef CONFIG_KSZ_DLR
+#define MAX_REQUEST_SIZE	80
+#endif
+
 
 #include "ksz_common.h"
 

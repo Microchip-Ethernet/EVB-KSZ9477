@@ -1,7 +1,7 @@
 /**
  * Microchip Ethernet driver common code
  *
- * Copyright (c) 2015-2020 Microchip Technology Inc.
+ * Copyright (c) 2015-2026 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2011 Micrel, Inc.
@@ -128,7 +128,7 @@ static void file_dev_clear_notify(struct file_dev_info *list,
 	struct file_dev_info *dev_info;
 	uint notify = 0;
 
-	if (!info->notifications)
+	if (!info->notifications[mod])
 		return;
 	dev_info = list;
 	while (dev_info) {

@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common code
  *
- * Copyright (c) 2015-2025 Microchip Technology Inc.
+ * Copyright (c) 2015-2026 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2009-2015 Micrel, Inc.
@@ -1796,14 +1796,24 @@ static void save_tx_ts(struct ptp_info *ptp, struct ptp_tx_ts *tx,
 	htx->sending = false;
 }  /* save_tx_ts */
 
-static int get_speed_index(struct ptp_info *ptp, uint port)
+static int get_link_speed(struct ptp_info *ptp, uint port, bool *half)
 {
-	int index;
 	struct ksz_sw *sw = ptp->parent;
 	struct ksz_port_info *info = get_port_info(sw, port);
 	int speed = (media_connected == info->state) ?
 		info->tx_rate / TX_RATE_UNIT : 0;
 
+	if (half)
+		*half = (info->duplex == 1);
+	return speed;
+}  /* get_link_speed */
+
+static int get_speed_index(struct ptp_info *ptp, uint port)
+{
+	int index;
+	int speed;
+
+	speed = get_link_speed(ptp, port, NULL);
 	if (speed == 1000)
 		index = 0;
 	else if (speed == 100)
@@ -2667,6 +2677,34 @@ static void adj_clock(struct work_struct *work)
 	ptp->ops->release(ptp);
 }  /* adj_clock */
 
+static void notify_link(struct ptp_info *ptp, uint p)
+{
+	struct file_dev_info *info = ptp->notify_dev;
+	struct ksz_sw *sw = ptp->parent;
+	int speed;
+	bool half;
+	u8 buf[4];
+
+	if (!info)
+		return;
+	speed = get_link_speed(ptp, p, &half);
+
+	buf[0] = PTP_CMD_GET_LINK | PTP_CMD_RESP;
+	buf[1] = 0;
+	buf[2] = (u8) get_log_port(sw, p);
+	if (speed == 10)
+		buf[3] = 0x1;
+	else if (speed == 100)
+		buf[3] = 0x2;
+	else if (speed == 1000)
+		buf[3] = 0x4;
+	else
+		buf[3] = 0;
+	if (half)
+		buf[3] |= 0x80;
+	file_dev_setup_msg(info, buf, 4, NULL, NULL);
+}  /* notify_link */
+
 static void set_latency(struct work_struct *work)
 {
 	struct ptp_info *ptp = container_of(work, struct ptp_info, set_latency);
@@ -2687,6 +2725,9 @@ static void set_latency(struct work_struct *work)
 			index = get_speed_index(ptp, p);
 			set_ptp_ingress(ptp, p, ptp->rx_latency[p][index]);
 			set_ptp_egress(ptp, p, ptp->tx_latency[p][index]);
+			if (ptp->notifications & 1) {
+				notify_link(ptp, p);
+			}
 		}
 	}
 	ptp->ops->release(ptp);
@@ -7534,6 +7575,28 @@ static int ptp_dev_req(struct ptp_info *ptp, char *arg,
 				file_dev_setup_msg(dev, data, 4, NULL, NULL);
 			file_dev_setup_msg(info, data, 4, NULL, NULL);
 			break;
+		case DEV_INFO_NOTIFY:
+			if (len >= 4) {
+				struct file_dev_info *dev_info = info;
+				uint *notify = (uint *) data;
+
+				_chk_ioctl_size(len, 4, 0, &req_size, &result,
+					       &req->param, data, info);
+				dev_info->notifications[DEV_MOD_PTP] = *notify;
+				ptp->notifications |= *notify;
+				ptp->notify_dev = dev_info;
+
+				if ((ptp->notifications & 1)) {
+					struct ksz_sw *sw = ptp->parent;
+					uint n, p;
+
+					for (n = 1; n <= ptp->ports; n++) {
+						p = get_phy_port(sw, n);
+						notify_link(ptp, p);
+					}
+				}
+			}
+			break;
 		case DEV_INFO_RESET:
 			if (output < 3) {
 				result = proc_ptp_hw_access(ptp,
@@ -8122,6 +8185,10 @@ static void free_dev_info(struct file_dev_info *info)
 		}
 		if (ptp->gps_dev == info)
 			ptp->gps_dev = NULL;
+		if (ptp->notify_dev == info)
+			ptp->notify_dev = NULL;
+		file_dev_clear_notify(ptp->dev[minor], info, DEV_MOD_PTP,
+				      &ptp->notifications);
 		file_gen_dev_release(info, &ptp->dev[minor]);
 	}
 }  /* free_dev_info */

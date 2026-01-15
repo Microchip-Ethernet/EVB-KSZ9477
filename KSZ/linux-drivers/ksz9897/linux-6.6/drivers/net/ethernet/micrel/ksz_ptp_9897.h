@@ -1,7 +1,7 @@
 /**
  * Microchip PTP common header
  *
- * Copyright (c) 2015-2025 Microchip Technology Inc.
+ * Copyright (c) 2015-2026 Microchip Technology Inc.
  *	Tristram Ha <Tristram.Ha@microchip.com>
  *
  * Copyright (c) 2010-2015 Micrel, Inc.
@@ -512,6 +512,7 @@ struct ptp_cfg_options {
 
 #define PTP_CMD_RESP			0x01
 #define PTP_CMD_GET_MSG			0x00
+#define PTP_CMD_GET_LINK		0x10
 #define PTP_CMD_GET_OUTPUT		0xE0
 #define PTP_CMD_GET_EVENT		0xF0
 
@@ -988,9 +989,11 @@ struct ptp_info {
 	u8 cascade_total;
 	u8 cascade_tso;
 	int dev_major;
+	uint notifications;
 	struct file_dev_info *dev[2];
 	struct file_dev_info *tsi_dev[MAX_TIMESTAMP_UNIT];
 	struct file_dev_info *tso_dev[MAX_TRIG_UNIT];
+	struct file_dev_info *notify_dev;
 	char dev_name[2][20];
 	wait_queue_head_t wait_ts[MAX_PTP_PORT];
 	wait_queue_head_t wait_intr;

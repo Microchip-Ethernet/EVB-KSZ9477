@@ -2608,7 +2608,6 @@ static int ptp_hwtstamp_ioctl(struct ptp_info *ptp, struct ifreq *ifr,
 			u16 mode = ptp->mode;
 
 			mode &= ~(PTP_1STEP | PTP_TC_P2P | PTP_MASTER);
-			mode |= PTP_MASTER;
 			if (ptp->tx_en & 2) {
 				mode |= PTP_1STEP;
 				if (ptp->tx_en & 4)
